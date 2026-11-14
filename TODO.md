@@ -1,5 +1,7 @@
 # CDD 1.0 详细待办（工程 backlog）
 
+> **进度快照（2026-11-15，atomic/thread/mem 扩展）**：`std.atomic` 支持 16 字节/`int128`/`float128`、1/2/4/8/16 字节 POD 聚合、`atomic_ref<T>`、`atomic_flag`；聚合原子通过同大小 iN carrier + 临时对象往返，`Atomic<T>` 的 value 固定 16 字节对齐。`std.thread` 新增 `Mutex` 与 `ConditionVariable`（wait/signal/broadcast），pthread 存储 64 字节。`std.mem` 新增 `placement_new<T>`、`placement_alloc`、`aligned_malloc`/`alignmalloc`。x86-64 宿主支持 `cx16` 时驱动启用 `+cx16`，并链接 `libatomic` 兜底。新增 8 个 e2e 测试；全量 **1909/1909** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。设计/计划：`docs/superpowers/plans/2026-11-14-atomic-thread-mem.md`。
+
 > **进度快照（2026-11-12，闭包逃逸与一等存储）**：按引用/`this` 捕获闭包返回不再硬性拒绝，改为 **W3006** 生命周期警告；返回仍复制闭包 struct 的原始指针，不延长捕获存储。实例方法支持 `auto` 返回（类内/类外；类外定义会同步类内声明与 LLVM 原型；静态方法仍拒绝）。新增 **`decltype(expr)`** 类型查询，使名义闭包类型可用于 `using`、结构体字段、数组、普通参数；`auto arr[]`/`auto arr[N]` 从首个 brace 初始化器推导元素类型；字段/数组元素/右值闭包可直接调用（`obj.f(args)`、`arr[i](args)`、`make()(args)`）。闭包仍无 type erasure、堆提升或引用计数。全量 **1901/1901** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。设计/计划：`docs/superpowers/{specs,plans}/2026-11-12-closure-first-class*`。
 
 > **进度快照（2026-11-12，CDD 身份统一改名）**：语言身份统一为 **CDD（C dot dot）**；源文件后缀统一为 **`.cdd`**。CLI/CMake 项目/库目标/安装路径统一为 `cdd`/`CDD`/`cdd_lib`/`share/cdd/libs`，C++ 命名空间统一为 `cdd`，内部 helper 统一为 `cdd_utf8`/`cdd.*`/`__cdd_*`，`compile_time.build.compiler` 返回 `"cdd"`，vcpkg 包名为 `cdd`。全部旧后缀源文件已 `git mv` 为 `.cdd`，测试/示例/标准库/文档/历史设计计划同步；工作区目录 `My_LLVM_C` 与公开 `std` 命名空间保持不变。全量 **1888/1888** 通过；`build/bin/cdd examples/all_features.cdd` 输出 `ALL FEATURES OK`。设计/计划：`docs/superpowers/specs/2026-11-12-cdd-identity-design.md`、`docs/superpowers/plans/2026-11-12-cdd-rename.md`。
@@ -320,7 +322,8 @@
 - `[ ]` **MEM-04** 限定符：`const/volatile/restrict/atomic` 语义。
 - `[ ]` **MEM-05** `[[nonnull]]`：调用处检查、函数内假设。
 - `[~]` **MEM-06** `malloc/calloc/realloc/free` 声明与标准库包装。**声明在 `std.c`；包装在 `std.mem`**（2026-10-17：`alloc/alloc_zeroed/resize/dealloc/aligned_alloc/aligned_free`，STD-05；2026-11-01 后端切 mimalloc）。
-- `[~]` **MEM-07** allocator 接口、arena、pool、placement 分配。**2026-11-01**：`std.mem::Allocator`/`Arena`/`Pool` 完成（mimalloc 后端）；placement 分配待补。- `[ ]` **MEM-08** 无隐藏分配；无隐藏控制流（不插入异常/GC/析构）。
+- `[x]` **MEM-07** allocator 接口、arena、pool、placement 分配。**完成**（2026-11-01 / 2026-11-15）：`std.mem::Allocator`/`Arena`/`Pool` 完成（mimalloc 后端）；新增 `placement_new<T>`、`placement_alloc`、`aligned_malloc`/`alignmalloc`。
+- `[ ]` **MEM-08** 无隐藏分配；无隐藏控制流（不插入异常/GC/析构）。
 - `[ ]` **MEM-09** ABI：`[[repr(C)]]`、`[[packed]]`、`[[align(64)]]`；位域布局（DEC-08）。
 - `[x]` **MEM-10** FFI：与 C 函数/结构体/回调互操作（绑定层见 MOD-09）。已支持：`extern` 声明、函数指针形参（含无名与嵌套回调）、`T*`↔`void*` 传参与 C 风格类型转换 `(int*)p`/`((struct S*)p)->f`；libc `qsort/bsearch/atexit` 可直接传入用户函数作为回调。结构体**按值**传参/返回见 MEM-14。
 - `[ ]` **MEM-11** 调用约定：C 调用约定（可选其他）。
@@ -429,7 +432,7 @@
 - `[ ]` **STD-04** 整数运算与溢出辅助。
 
 ### std.mem
-- `[x]` **STD-05** `malloc/calloc/realloc/free` 包装；Allocator 接口；Arena/Pool；placement 分配；对齐工具。**完成**（2026-11-01）：后端切换 mimalloc（`mi_*`，静态链接 + override）；`libs/std/mem.cdd` 提供 `alloc/alloc_zeroed/resize/dealloc/bytes_*/align_*/aligned_*` + `Allocator`/`Arena`/`Pool`（模块导出类型已可用）。placement 分配仍属后续。
+- `[x]` **STD-05** `malloc/calloc/realloc/free` 包装；Allocator 接口；Arena/Pool；placement 分配；对齐工具。**完成**（2026-11-01 / 2026-11-15）：后端切换 mimalloc（`mi_*`，静态链接 + override）；`libs/std/mem.cdd` 提供 `alloc/alloc_zeroed/resize/dealloc/bytes_*/align_*/aligned_*` + `Allocator`/`Arena`/`Pool`（模块导出类型已可用），并新增 `placement_new<T>`、`placement_alloc`、`aligned_malloc`/`alignmalloc`。
 
 ### 容器库 `std.vec` / `std.deque` / `std.hashmap` / `std.hashset` 〔新〕
 - `[x]` **STD-06** `Vec`/`ArrayList`（增长、容量、索引、迭代）。**完成**：`std::Vec<T>`（`import std.vec;`；reserve/push/pop/get/get_ptr/insert/remove/contains/index_of）；可在 `constexpr` 求值器中执行并物化为只读常量表。
@@ -462,8 +465,8 @@
 - `[x]` **STD-23** `std.c`：手写 libc 绑定层（配合 MOD-09）。`libs/std/c.cdd`（内嵌兜底）已扩展：`abort`、`dprintf`（stderr，fd=2）、`fopen/fclose/fread/fwrite/fgets/fputs/fgetc/fputc/fprintf`、`scanf`。
 
 ### std.atomic / std.thread
-- `[x]` **STD-24** 原子类型封装、load/store/CAS/fence、内存序常量。**完成**（2026-11-01）：`std::Atomic<T>` + per-order 自由函数 + 显式 CAS；类型/对齐限制见 `docs/spec/stdlib.md` §18。
-- `[x]` **STD-25** `Thread`、join/detach、`thread_local` 支持；可选 mutex/condvar。**完成**（2026-11-01，v1）：pthread 生命周期/ID/TLS/压力测试；mutex/condvar 仍为可选后续，不阻塞 v1。
+- `[x]` **STD-24** 原子类型封装、load/store/CAS/fence、内存序常量。**完成**（2026-11-01 / 2026-11-15）：`std::Atomic<T>` + per-order 自由函数 + 显式 CAS；新增 16 字节/`int128`/`float128`、1/2/4/8/16 字节 POD 聚合、`atomic_ref<T>`、`atomic_flag`；类型/对齐限制见 `docs/spec/stdlib.md` §18。
+- `[x]` **STD-25** `Thread`、join/detach、`thread_local` 支持；可选 mutex/condvar。**完成**（2026-11-01 / 2026-11-15）：pthread 生命周期/ID/TLS/压力测试；新增 `Mutex` 与 `ConditionVariable`（signal/broadcast）；跨平台线程后端仍为后续。
 - `[~]` **STD-26** `(新)` 扩展点库约定：`to_string`/`to_hash`/`equals` 标准签名与示例（落实 STD-09/FUN-14）。（接口草案见 `docs/spec/semantics.md`）
 - `[x]` **STD-27** `(新)` `panic/assert/abort` 语义与实现策略：**不可恢复、不可捕获、直接 `abort`**（DEC-21 已冻结）；诊断输出到 stderr 且带 `file:line`；`assert`/`panic` 为内建（用户同名声明优先）。规范见 `docs/spec/stdlib.md`。与 `[[nonnull]]` 的关系（复用终止路径）待 MEM-* 实现。
 
@@ -591,7 +594,7 @@
 - `[x]` **P1-09** std.mem / std.string / std.format / std.math / **std.collections**（STD-05~14）。字符串库 + format 体系完成（2026-10-09）：FMT-06~11 全落地、FMT-12 单缓冲、STD-10 组合库、STD-11 核心；E2020~22 新诊断；顺带修复既有编译器 bug 两枚——`&&`/`||` 按位降级（真值截断 + 无短路）与派生→基类赋值整结构 store 溢出（潜在栈腐败）。spec `docs/superpowers/specs/2026-10-09-p109-string-format-design.md`，plan `docs/superpowers/plans/2026-10-09-p109-string-format.md`。模块导出类型/模板已可用；独立 StrBuilder 为可选优化；`replace`/字典序不做（ASCII 大小写已由 std.ascii 提供）；std.mem/math/collections 已补齐。**终审 I4（string 值拷贝别名双 free）已收口**（2026-10-11）：string 拥有型值语义 + string_view 硬改名，spec `docs/superpowers/specs/2026-10-11-string-ownership-design.md`，plan `docs/superpowers/plans/2026-10-11-string-ownership.md`，e2e 16 用例（全量 1229 绿）。**std.mem 纯函数层完成**（2026-10-17，STD-05 范围 a：alloc/alloc_zeroed/resize/dealloc/align_up/align_down/is_aligned/aligned_alloc/aligned_free，7 e2e，全量 1358 绿；Allocator/Arena/Pool 接口草案挂账于「模块导出类型」语言缺口，见 stdlib.md §11.1）。**std.math/std.bit 完成**（2026-10-17，STD-13/14：libs/std/bit.cdd 纯语言位工具 7 e2e + libs/std/math.cdd libc 绑定/常量/位级分类 5 e2e，顺带修复 namespace 内 C 名 extern 符号前缀化缺口，全量 1370 绿；spec/plan `docs/superpowers/specs|plans/2026-10-17-stdmath-bit*`）。**std.collections/扩展库完成**（2026-11-01）：Vec/Deque/HashMap/HashSet + hash/sort/parse/ascii/path/fs/time/os/testing；mem 切 mimalloc + Allocator/Arena/Pool；全量 1657/1657（2 个既有 Skip；移除 `libsafec` 自身测试后）。
 
 ### P2：工程化与并发
-- `[x]` **P2-01** atomic / thread_local / std.thread（CON、STD-24/25）。**完成**（2026-11-01）：std.atomic/std.thread v1；mutex/condvar、跨平台后端与 16 字节原子留待后续。
+- `[x]` **P2-01** atomic / thread_local / std.thread（CON、STD-24/25）。**完成**（2026-11-01 / 2026-11-15）：std.atomic/std.thread v1；16 字节/聚合原子、`atomic_ref`/`atomic_flag`、mutex/condition variable 已完成；跨平台后端仍留待后续。
 - `[~]` **P2-02** 标准库补齐：parse/sort/algorithm/hash/bit/ascii/unicode/path/fs/time/os/testing/c（STD-15~23）。parse/sort/hash/ascii/path/fs/time/os/testing 基础层完成；unicode/完整算法/完整 fs/os 待补。
 - `[ ]` **P2-03** 增量编译与模块缓存（MOD-10）。
 - `[ ]` **P2-04** ABI/FFI 完整测试（CG-18）。

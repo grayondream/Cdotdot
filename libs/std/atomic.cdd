@@ -248,7 +248,9 @@ void atomic_signal_fence_seq_cst() {
 // ----- Atomic<T> -----
 
 template<typename T> struct Atomic {
-    T value;
+    // Keep the value at offset 0 and 16-byte aligned so 8/16-byte carriers
+    // (including POD aggregates) are always naturally aligned.
+    [[align(16)]] T value;
 
     void init(T initial) {
         this->value = initial;
@@ -540,18 +542,159 @@ template<typename T> struct Atomic {
     bool is_lock_free() {
         compile_time.static_assert(
             compile_time.size_of(T) == 1 || compile_time.size_of(T) == 2 ||
-                compile_time.size_of(T) == 4 || compile_time.size_of(T) == 8,
-            "Atomic<T> supports only 1/2/4/8-byte scalar types");
+                compile_time.size_of(T) == 4 || compile_time.size_of(T) == 8 ||
+                compile_time.size_of(T) == 16,
+            "Atomic<T> supports only 1/2/4/8/16-byte POD types");
         return true;
     }
 
     bool is_always_lock_free() {
         compile_time.static_assert(
             compile_time.size_of(T) == 1 || compile_time.size_of(T) == 2 ||
-                compile_time.size_of(T) == 4 || compile_time.size_of(T) == 8,
-            "Atomic<T> supports only 1/2/4/8-byte scalar types");
+                compile_time.size_of(T) == 4 || compile_time.size_of(T) == 8 ||
+                compile_time.size_of(T) == 16,
+            "Atomic<T> supports only 1/2/4/8/16-byte POD types");
         return true;
     }
 };
+
+// ----- atomic_ref<T> -----
+// Atomic operations on an existing, caller-owned object. The reference does
+// not copy or own the pointee; the caller must keep it alive and aligned.
+template<typename T> struct atomic_ref {
+    T* ptr;
+
+    void init(T* p) {
+        this->ptr = p;
+    }
+
+    T* get() {
+        return this->ptr;
+    }
+
+    T load() {
+        return std::atomic_load_seq_cst(this->ptr);
+    }
+
+    void store(T desired) {
+        std::atomic_store_seq_cst(this->ptr, desired);
+    }
+
+    T exchange(T desired) {
+        return std::atomic_exchange_seq_cst(this->ptr, desired);
+    }
+
+    bool compare_exchange_weak(T* expected, T desired) {
+        return std::atomic_compare_exchange_weak_seq_cst(
+            this->ptr, expected, desired);
+    }
+
+    bool compare_exchange_strong(T* expected, T desired) {
+        return std::atomic_compare_exchange_strong_seq_cst(
+            this->ptr, expected, desired);
+    }
+
+    T fetch_add(isize delta) {
+        compile_time.if ((compile_time.is_integer(T) &&
+                          !compile_time.is_bool(T) &&
+                          !compile_time.is_enum(T)) ||
+                         compile_time.is_pointer(T)) {
+            return std::atomic_fetch_add_seq_cst(this->ptr, delta);
+        } else {
+            panic("atomic_ref<T>::fetch_add requires integer or pointer T");
+            return this->load();
+        }
+    }
+
+    T fetch_sub(isize delta) {
+        compile_time.if ((compile_time.is_integer(T) &&
+                          !compile_time.is_bool(T) &&
+                          !compile_time.is_enum(T)) ||
+                         compile_time.is_pointer(T)) {
+            return std::atomic_fetch_sub_seq_cst(this->ptr, delta);
+        } else {
+            panic("atomic_ref<T>::fetch_sub requires integer or pointer T");
+            return this->load();
+        }
+    }
+
+    T fetch_and(T operand) {
+        compile_time.if (compile_time.is_integer(T) &&
+                         !compile_time.is_bool(T) &&
+                         !compile_time.is_enum(T)) {
+            return std::atomic_fetch_and_seq_cst(this->ptr, operand);
+        } else {
+            panic("atomic_ref<T>::fetch_and requires non-bool integer T");
+            return this->load();
+        }
+    }
+
+    T fetch_or(T operand) {
+        compile_time.if (compile_time.is_integer(T) &&
+                         !compile_time.is_bool(T) &&
+                         !compile_time.is_enum(T)) {
+            return std::atomic_fetch_or_seq_cst(this->ptr, operand);
+        } else {
+            panic("atomic_ref<T>::fetch_or requires non-bool integer T");
+            return this->load();
+        }
+    }
+
+    T fetch_xor(T operand) {
+        compile_time.if (compile_time.is_integer(T) &&
+                         !compile_time.is_bool(T) &&
+                         !compile_time.is_enum(T)) {
+            return std::atomic_fetch_xor_seq_cst(this->ptr, operand);
+        } else {
+            panic("atomic_ref<T>::fetch_xor requires non-bool integer T");
+            return this->load();
+        }
+    }
+
+    bool is_lock_free() {
+        compile_time.static_assert(
+            compile_time.size_of(T) == 1 || compile_time.size_of(T) == 2 ||
+                compile_time.size_of(T) == 4 || compile_time.size_of(T) == 8 ||
+                compile_time.size_of(T) == 16,
+            "atomic_ref<T> supports only 1/2/4/8/16-byte POD types");
+        return true;
+    }
+
+    bool is_always_lock_free() {
+        return this->is_lock_free();
+    }
+};
+
+// ----- atomic_flag -----
+// A lock-free boolean flag with test-and-set semantics.
+struct atomic_flag {
+    uint8 value;
+
+    void init() {
+        this->value = 0;
+    }
+
+    void clear() {
+        __cdd_atomic_store(&this->value, (uint8)0, std::MemoryOrderSeqCst);
+    }
+
+    bool test_and_set() {
+        return __cdd_atomic_exchange(
+                   &this->value, (uint8)1, std::MemoryOrderSeqCst) != 0;
+    }
+
+    bool test() {
+        return __cdd_atomic_load(&this->value, std::MemoryOrderSeqCst) != 0;
+    }
+
+    bool is_lock_free() {
+        return true;
+    }
+
+    bool is_always_lock_free() {
+        return true;
+    }
+};
+
 
 } // namespace std

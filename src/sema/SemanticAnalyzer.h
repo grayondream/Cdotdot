@@ -155,6 +155,9 @@ private:
                           ClassType** defining = nullptr, int depth = 0);
     bool isMethodCall(ExprAST& expr);
     bool tryAnalyzeAtomicBuiltin(CallExprAST& node);
+    // Atomic carrier: scalar sizes plus POD aggregate sizes 1/2/4/8/16.
+    bool atomicCarrierBits(Type* type, unsigned& bits);
+    bool isAtomicAggregateType(Type* type);
     bool tryAnalyzePrintCall(CallExprAST& node);
 
     // P1-09 (FMT-07): builtin `format(fmt, args...) -> string`.

@@ -3697,6 +3697,124 @@ bool SemanticAnalyzer::lowerToString(CallExprAST& node, size_t argIndex, Type* a
 // Internal atomic builtins are recognized only when the user has not declared
 // a function of the same name. They are deliberately unspellable in normal
 // source (double-underscore `__cdd_` prefix) and exist for libs/std/atomic.cdd.
+bool SemanticAnalyzer::isAtomicAggregateType(Type* type) {
+    Type* t = stripTypedef(type);
+    if (!t) return false;
+    if (t->isAtomic) return false;
+    switch (t->kind) {
+        case TypeKind::Bool:
+        case TypeKind::Char:
+        case TypeKind::Int8:
+        case TypeKind::UInt8:
+        case TypeKind::Int16:
+        case TypeKind::UInt16:
+        case TypeKind::Int32:
+        case TypeKind::UInt32:
+        case TypeKind::Int64:
+        case TypeKind::UInt64:
+        case TypeKind::Int128:
+        case TypeKind::UInt128:
+        case TypeKind::Float16:
+        case TypeKind::Float32:
+        case TypeKind::Float64:
+        case TypeKind::Float128:
+        case TypeKind::ISize:
+        case TypeKind::USize:
+        case TypeKind::Pointer:
+        case TypeKind::Enum:
+        case TypeKind::Str:
+        case TypeKind::Slice:
+            return true;
+        case TypeKind::String:
+        case TypeKind::Function:
+        case TypeKind::Void:
+            return false;
+        case TypeKind::Optional:
+            return isAtomicAggregateType(
+                static_cast<OptionalType*>(t)->elementType);
+        case TypeKind::Result: {
+            auto* rt = static_cast<ResultType*>(t);
+            return isAtomicAggregateType(rt->successType) &&
+                   isAtomicAggregateType(rt->errorType);
+        }
+        case TypeKind::Array: {
+            auto* at = static_cast<ArrayType*>(t);
+            return at->size > 0 && isAtomicAggregateType(at->elementType);
+        }
+        case TypeKind::Struct:
+        case TypeKind::Class: {
+            Type* base = t->base;
+            std::string baseName;
+            if (t->kind == TypeKind::Struct) {
+                auto* st = static_cast<StructType*>(t);
+                if (!st->isComplete) return false;
+                baseName = st->baseClass;
+            } else {
+                auto* ct = static_cast<ClassType*>(t);
+                if (!ct->isComplete) return false;
+                baseName = ct->baseClass;
+            }
+            if (!base && !baseName.empty()) base = resolveTypeByName(baseName);
+            if (base && !isAtomicAggregateType(base)) return false;
+            const auto& src = t->kind == TypeKind::Struct
+                ? (static_cast<StructType*>(t)->semanticFields.empty()
+                       ? static_cast<StructType*>(t)->fields
+                       : static_cast<StructType*>(t)->semanticFields)
+                : (static_cast<ClassType*>(t)->semanticFields.empty()
+                       ? static_cast<ClassType*>(t)->fields
+                       : static_cast<ClassType*>(t)->semanticFields);
+            for (const auto& f : src) {
+                if (f.name.empty() || f.flexibleArray) continue;
+                if (!isAtomicAggregateType(f.type)) return false;
+            }
+            return true;
+        }
+        case TypeKind::Union: {
+            auto* ut = static_cast<UnionType*>(t);
+            if (!ut->isComplete) return false;
+            for (const auto& m : ut->members) {
+                if (m.name.empty() || m.flexibleArray) continue;
+                if (!isAtomicAggregateType(m.type)) return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool SemanticAnalyzer::atomicCarrierBits(Type* type, unsigned& bits) {
+    Type* t = stripTypedef(type);
+    if (!t) return false;
+    switch (t->kind) {
+        case TypeKind::Int128:
+        case TypeKind::UInt128:
+        case TypeKind::Float128:
+            bits = 128;
+            return true;
+        case TypeKind::Struct:
+        case TypeKind::Class:
+        case TypeKind::Union:
+        case TypeKind::Array: {
+            if (!isAtomicAggregateType(t)) return false;
+            auto layout = ctEval().layoutSizeAlign(t);
+            if (!layout) return false;
+            uint64_t size = layout->first;
+            if (!(size == 1 || size == 2 || size == 4 || size == 8 ||
+                  size == 16)) {
+                return false;
+            }
+            // Public Atomic<T> forces 16-byte alignment on its value field;
+            // the internal builtins require the caller to provide that
+            // alignment (AtomicRef documents the same contract).
+            bits = static_cast<unsigned>(size * 8);
+            return true;
+        }
+        default:
+            return atomicValueBits(t, bits);
+    }
+}
+
 bool SemanticAnalyzer::tryAnalyzeAtomicBuiltin(CallExprAST& node) {
     AtomicBuiltin kind = atomicBuiltinForName(node.callee);
     if (kind == AtomicBuiltin::None) return false;
@@ -3798,10 +3916,10 @@ bool SemanticAnalyzer::tryAnalyzeAtomicBuiltin(CallExprAST& node) {
                           ? stripTypedef(pointerType->base)
                           : nullptr;
     unsigned bits = 0;
-    if (!valueType || !atomicValueBits(valueType, bits)) {
+    if (!valueType || !atomicCarrierBits(valueType, bits)) {
         emitError("atomic builtin requires a pointer to a supported atomic "
-                  "scalar (1/2/4/8-byte integer, bool, pointer, float16/32/64, "
-                  "or enum)",
+                  "value (1/2/4/8/16-byte scalar, or POD aggregate of "
+                  "1/2/4/8/16 bytes with matching alignment)",
                   *node.args[0]);
         return fail();
     }

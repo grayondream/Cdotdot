@@ -219,34 +219,89 @@ TEST_F(StdAtomicTest, LockFreeQueries) {
     )", "std_atomic_lockfree.cdd"), 0);
 }
 
-TEST_F(StdAtomicTest, UnsupportedSizeRejected) {
+TEST_F(StdAtomicTest, WideAndAggregateAtomics) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.atomic;
+        struct Pair { int32 a; int32 b; };
+        struct Wide { int64 a; int64 b; };
+        int32 main() {
+            std::Atomic<int128> big = {0};
+            big.store((int128)7);
+            int128 be = (int128)7;
+            if (!big.compare_exchange_strong(&be, (int128)9)) return 1;
+            if (big.load() != (int128)9) return 2;
+            if (big.fetch_add(1) != (int128)9) return 3;
+            if (big.load() != (int128)10) return 4;
+
+            std::Atomic<float128> f = {(float128)1.5};
+            f.store((float128)2.5);
+            if (f.load() != (float128)2.5) return 5;
+            if (f.exchange((float128)3.5) != (float128)2.5) return 6;
+
+            std::Atomic<Pair> p = {{1, 2}};
+            Pair pn = {3, 4};
+            Pair po = p.exchange(pn);
+            if (po.a != 1 || po.b != 2) return 7;
+            Pair pc = p.load();
+            if (pc.a != 3 || pc.b != 4) return 8;
+
+            std::Atomic<Wide> w = {{5, 6}};
+            Wide we = {5, 6};
+            Wide wn = {7, 8};
+            if (!w.compare_exchange_strong(&we, wn)) return 9;
+            Wide wc = w.load();
+            if (wc.a != 7 || wc.b != 8) return 10;
+
+            if (!big.is_lock_free() || !p.is_lock_free() ||
+                !w.is_lock_free()) return 11;
+            return 0;
+        }
+    )", "std_atomic_wide.cdd"), 0);
+}
+
+TEST_F(StdAtomicTest, AtomicRefAndFlag) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.atomic;
+        int32 main() {
+            int32 x = 1;
+            std::atomic_ref<int32> r = {&x};
+            if (r.load() != 1) return 1;
+            r.store(2);
+            if (x != 2) return 2;
+            if (r.fetch_add(3) != 2) return 3;
+            if (r.exchange(9) != 5) return 4;
+            int32 expected = 9;
+            if (!r.compare_exchange_strong(&expected, 11)) return 5;
+            if (x != 11) return 6;
+
+            std::atomic_flag f = {0};
+            if (f.test()) return 7;
+            if (f.test_and_set()) return 8;
+            if (!f.test()) return 9;
+            f.clear();
+            if (f.test()) return 10;
+            return 0;
+        }
+    )", "std_atomic_ref_flag.cdd"), 0);
+}
+
+TEST_F(StdAtomicTest, UnsupportedAggregateLayoutRejected) {
     std::vector<std::string> errors;
     int rc = runWithImports(R"(
         import std.atomic;
+        struct Twelve { int32 a; int32 b; int32 c; };
         int32 main() {
-            std::Atomic<int128> a = {0};
-            return (int32)a.value;
+            std::Atomic<Twelve> a;
+            return a.is_lock_free() ? 0 : 1;
         }
-    )", "std_atomic_bad_size.cdd", &errors);
+    )", "std_atomic_bad_layout.cdd", &errors);
     EXPECT_EQ(rc, -1);
     ASSERT_FALSE(errors.empty());
     bool mentionsLimit = false;
     for (const auto& e : errors) {
-        if (e.find("1/2/4/8") != std::string::npos) mentionsLimit = true;
+        if (e.find("1/2/4/8/16") != std::string::npos) mentionsLimit = true;
     }
     EXPECT_TRUE(mentionsLimit);
-
-    std::vector<std::string> aggregateErrors;
-    int aggregateRc = runWithImports(R"(
-        import std.atomic;
-        struct Pair { int32 a; int32 b; };
-        int32 main() {
-            std::Atomic<Pair> a;
-            return a.is_lock_free() ? 0 : 1;
-        }
-    )", "std_atomic_bad_struct.cdd", &aggregateErrors);
-    EXPECT_EQ(aggregateRc, -1);
-    EXPECT_FALSE(aggregateErrors.empty());
 }
 
 TEST_F(StdAtomicTest, SeqCstConvenience) {

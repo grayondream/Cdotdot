@@ -14,6 +14,7 @@
 #include <set>
 #include <cstdlib>
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -80,12 +81,23 @@ createTargetMachine(llvm::Module& module) {
     }
 
     llvm::TargetOptions options;
+    // 16-byte atomics lower to cmpxchg16b when the host supports cx16; without
+    // it LLVM falls back to libatomic calls (linked below).
+    llvm::StringMap<bool> hostFeatures;
+#if LLVM_VERSION_MAJOR >= 20
+    hostFeatures = llvm::sys::getHostCPUFeatures();
+#else
+    llvm::sys::getHostCPUFeatures(hostFeatures);
+#endif
+    std::string targetFeatures =
+        hostFeatures.lookup("cx16") ? "+cx16" : "";
 #if LLVM_VERSION_MAJOR >= 19
     auto tm = target->createTargetMachine(
-        llvmTriple, "generic", "", options, llvm::Reloc::PIC_);
+        llvmTriple, "generic", targetFeatures, options, llvm::Reloc::PIC_);
 #else
     auto tm = target->createTargetMachine(
-        llvmTriple.str(), "generic", "", options, llvm::Reloc::PIC_);
+        llvmTriple.str(), "generic", targetFeatures, options,
+        llvm::Reloc::PIC_);
 #endif
     if (!tm) {
         LOGE("Failed to create TargetMachine");
@@ -508,6 +520,11 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
     // std.thread binds pthread; glibc 2.34+ folds it into libc, but keep the
     // explicit library for older toolchains and deterministic behavior.
     linkLibs.push_back("pthread");
+    // 16-byte atomics may lower to libatomic on targets without inline
+    // cmpxchg16b support.
+#if defined(__linux__)
+    linkLibs.push_back("atomic");
+#endif
 
     Linker linker;
     int ret = linker.link({objectPath}, outputFile, linkLibs, linkPaths);

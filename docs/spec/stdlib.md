@@ -213,10 +213,16 @@ type  := 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 's'
 | `usize align_down(usize n, usize align)` | 向下取整到 2 的幂倍数 |
 | `bool is_aligned(void* p, usize align)` | 指针按 2 的幂对齐检测 |
 | `void* aligned_alloc(usize align, usize size)` | `mi_malloc_aligned`（失败 null） |
+| `void* aligned_malloc(usize size, usize align)` | size-first 别名；等价于 `aligned_alloc(align,size)` |
+| `void* alignmalloc(usize size, usize align)` | `aligned_malloc` 的短别名 |
 | `void  aligned_free(void* p)` | `mi_free` |
+| `void* placement_alloc(void* buffer, usize capacity, usize size, usize align)` | 在调用方缓冲区内切出对齐子区间；越界/非法对齐返回 null |
+| `template<typename T> T* placement_new(void* buffer, T value)` | 在调用方存储中构造 POD 值；不分配、不析构 |
 
 `align_up/down/is_aligned` 的 `align` 须为 2 的幂（非 2 的幂行为未定义）；
-`aligned_alloc` 的 `align` 必须为 2 的幂（违反返回 null）。
+`aligned_alloc`/`aligned_malloc` 的 `align` 必须为 2 的幂（违反返回 null）。
+`placement_alloc` 只做地址计算，不拥有缓冲区；`placement_new` 的存储须已对齐到
+`alignof(T)`，生命周期由调用方管理。
 
 ### 11.1 Allocator / Arena / Pool `[impl]`
 
@@ -388,28 +394,48 @@ enum MemoryOrder : int32 {
 
 ### 18.2 类型与布局
 
-- 支持 1/2/4/8 字节整数、`bool`、指针、`float16/32/64`、底层为 1/2/4/8 字节的
-  enum。
-- `Atomic<T>` 只有一个 `T` 字段，大小/对齐与 `T` 相同；不加锁字段。
+- 支持 1/2/4/8/16 字节整数（含 `int128`/`uint128`）、`bool`、指针、
+  `float16/32/64/128`、底层为 1/2/4/8/16 字节的 enum，以及大小为
+  1/2/4/8/16 字节的 POD 聚合（struct/class/union/array）。
+- 聚合原子要求完整、非 owning（不含 `string`）、非柔性数组、非嵌套
+  `atomic`；不满足大小/POD 约束时编译期诊断，不会静默退化。
+- `Atomic<T>` 的 `value` 字段固定在偏移 0 并强制 16 字节对齐，保证 8/16 字节
+  carrier 的自然对齐；因此小类型 `Atomic<T>` 的 `sizeof` 也会按 16 字节对齐。
 - `bool` 的原子访问经 i8 carrier（LLVM 不接受 `atomic i1`）；float/pointer/enum
-  经同宽整数 carrier + bitcast。
+  经同宽整数 carrier + bitcast；16 字节值经 i128 carrier。聚合值通过同大小
+  临时对象与 iN carrier 往返，保留 padding。
+- x86-64 宿主支持 `cx16` 时驱动为生成代码启用 `+cx16`（`cmpxchg16b`）；
+  否则由 `libatomic` 提供 16 字节原子操作。
 - `fetch_add/sub` 支持整数和指针（指针按元素字节数步进）；`fetch_and/or/xor`
-  支持非 bool 整数。bool/enum/float 的 RMW 方法是文档化误用：模板方法仍可
-  实例化，调用时 `panic`。
-- 不支持 16 字节/`int128`/`float128`/聚合；`is_lock_free()`/`is_always_lock_free()`
-  在 1/2/4/8 字节返回 `true`，不支持的类型触发 `compile_time.static_assert`。
+  支持非 bool 整数。bool/enum/float/聚合的 RMW 方法是文档化误用：模板方法
+  仍可实例化，调用时 `panic`。
+- `is_lock_free()`/`is_always_lock_free()` 对 1/2/4/8/16 字节 carrier 返回
+  `true`；其他大小触发 `compile_time.static_assert`。
+- `atomic_ref<T>` 对调用方已有对象执行原子操作，不复制/拥有对象；调用方必须
+  保证对象存活且按 carrier 大小对齐。`atomic_flag` 提供 `init/clear/test/
+  test_and_set`，无锁。
 - 现有 `atomic T` 限定符保持不变（整数标量、seq_cst load/store 与
   atomicrmw 子集）；本模块提供显式序和 CAS/fence。
 
 ```cdd
 import std.atomic;
+struct Pair { int32 a; int32 b; };
 std::Atomic<int64> counter = {0};
+std::Atomic<Pair> pair = {{1, 2}};
 int32 main() {
     counter.store(1);
     counter.fetch_add(2);                         // seq_cst
     counter.fetch_add_order(3, std::MemoryOrderRelaxed);
+    Pair next = {3, 4};
+    Pair old = pair.exchange(next);
+    int32 x = 0;
+    std::atomic_ref<int32> r = {&x};
+    r.store(7);
+    std::atomic_flag f = {0};
+    if (f.test_and_set()) return 1;
+    f.clear();
     int64 expected = 6;
-    return counter.compare_exchange_strong(&expected, 7) ? 0 : 1;
+    return counter.compare_exchange_strong(&expected, 7) ? 0 : 2;
 }
 ```
 
@@ -433,15 +459,21 @@ int32 main() {
 | `std::this_thread_yield()` | `void` | `sched_yield` |
 | `std::this_thread_sleep_ms(ms)` | `void` | `usleep` 分块，避免乘法溢出 |
 | `std::thread_equal(a,b)` | `bool` | `pthread_equal` |
+| `std::Mutex` | `struct { usize storage[8]; bool initialized; int32 last_error; }` | pthread mutex 包装 |
+| `Mutex::init/destroy/lock/try_lock/unlock/error` | — | 显式生命周期；失败返回 false 并写 `last_error` |
+| `std::ConditionVariable` | `struct { usize storage[8]; bool initialized; int32 last_error; }` | pthread condvar 包装 |
+| `ConditionVariable::init/destroy/wait(std::Mutex*)/signal/broadcast/error` | — | `wait` 必须持有已初始化的 `Mutex`；成功返回 true |
 
 状态机：`init` → `started` → `joined` 或 `detached`。重复 `start`、重复 `join`、
 detach 后 `join` 均返回 `false` 并写 `last_error`。`Thread` 无析构函数；离开作用域
 前必须 `join` 或 `detach`。`Thread` 拷贝是普通结构体拷贝，不转移所有权。
+`Mutex`/`ConditionVariable` 同样无析构函数；必须显式 `destroy`。pthread 对象以
+64 字节 `usize` 存储承载，Linux x86-64 的 40/48 字节布局由静态测试覆盖。
 
 `thread_local` 在 v1 按每线程副本工作（已由 `StdThreadTest.ThreadLocalIsPerThread`
-覆盖）。不提供 mutex/condition_variable/jthread/线程取消；这些是后续条目。
-线程入口只接受 `void* (*)(void*)` + 单个 `void*` 参数；错误用 `bool`/
-`last_error`，不使用异常。
+覆盖）。已提供 mutex/condition variable；跨平台线程后端、`jthread`/取消、多参数
+入口仍是后续条目。线程入口只接受 `void* (*)(void*)` + 单个 `void*` 参数；错误用
+`bool`/`last_error`，不使用异常。
 
 ## 20. 内建与标准库的边界 `[impl]`
 
@@ -455,13 +487,14 @@ detach 后 `join` 均返回 `false` 并写 `last_error`。`Thread` 无析构函�
 
 ## 21. 待办 `[plan]`
 
-- `std.mem`：placement 分配、`AlignedAllocator`/可失败分配策略细化。
+- `std.mem`：`AlignedAllocator`/可失败分配策略细化（placement 与 size-first
+  aligned malloc 已完成）。
 - `std.vec` / `std.deque` / `std.hashmap` / `std.hashset`：`List`/`BTree`、`Vec::shrink_to_fit`、元素析构/清理辅助。
 - `std.unicode`、完整 `std.string` 字典序/`replace`、`std.path::normalize`。
 - `std.fs`：目录遍历、`stat` 元数据、原子写入；`std.os`：argv/进程控制。
 - `std.testing` + `cdd test` runner（TOOL-01）。
-- `std.atomic`：16 字节/`int128`/`float128`、聚合原子、`atomic_ref`/`atomic_flag`、
-  compile_time atomic 语义；任意 CAS 组合的可读模板常量写法。
-- `std.thread`：mutex/condition_variable、跨平台线程后端、`jthread`/取消、
-  多参数/C 捕获 lambda 入口。
+- `std.atomic`：compile_time atomic 语义；任意 CAS 组合的可读模板常量写法。
+  （16 字节/`int128`/`float128`、POD 聚合、`atomic_ref`/`atomic_flag` 已完成。）
+- `std.thread`：跨平台线程后端、`jthread`/取消、多参数/C 捕获 lambda 入口。
+  （mutex/condition variable 已完成。）
 - `assert` 的 Release 释放模式若需要，随 DEC-06/07 裁决；当前**始终启用**。

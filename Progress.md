@@ -1359,3 +1359,14 @@
 - 闭包调用：`CallExprAST` 支持表达式 callee 的闭包签名；codegen 对左值字段/数组元素取地址，对右值闭包存临时 alloca。`MethodCallExprAST` 将闭包字段调用改写为 `CallExprAST` 的 expression-callee 路径，支持 `obj.f(args)`、`ptr->f(args)`。这同时覆盖 `make()(args)` 链式调用。
 - 测试：新增/更新 LambdaE2E（逃逸允许、W3006、类内/类外 auto 方法、this 逃逸、`decltype` 字段/参数/字段数组、`auto` 闭包数组、rvalue 闭包调用）、ParserDeclTest（`decltype` 别名/字段）、WarningAnalysisTest（W3006）；全量由 1888 增至 **1901/1901** 通过。
 - 验证：`cmake --build build -j$(nproc)` 成功；`ctest --test-dir build -j8` **1901/1901**；`build/bin/cdd examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+
+## 2026-11-15 — std.atomic / std.thread / std.mem 扩展
+
+- 背景：用户要求补齐 `std.atomic` 的 16 字节/`int128`/`float128`、聚合原子、`atomic_ref`/`atomic_flag`，`std.thread` 的 mutex/condition variable，以及 `std.mem` 的 placement 分配与 size-first aligned malloc。实现计划：`docs/superpowers/plans/2026-11-14-atomic-thread-mem.md`。
+- compiler：`atomicValueBits` 扩展 `Int128/UInt128/Float128`；新增 `SemanticAnalyzer::atomicCarrierBits` / `isAtomicAggregateType`，允许 1/2/4/8/16 字节的完整 POD 聚合（struct/class/union/array，拒绝 `string`/柔性数组/嵌套 atomic）。`CodegenContext::getAtomicCarrierType` 为聚合返回同大小 iN；`valueTo/FromAtomicCarrier` 对聚合经临时 alloca 往返，避免 LLVM 非法 `bitcast iN ↔ struct`。
+- 16 字节 lowering：x86-64 宿主支持 `cx16` 时 `CompilerDriver::createTargetMachine` 传 `+cx16`，16 字节 load/store/exchange/CAS/atomicrmw 走 `cmpxchg16b`；CMake 与驱动链接 `libatomic` 作为无 `cx16` 目标兜底。
+- `std.atomic`：`Atomic<T>` 支持 16 字节/POD 聚合，`value` 固定偏移 0 且 `[[align(16)]]`；新增 `atomic_ref<T>`（指针式、非拥有）与 `atomic_flag`（`init/clear/test/test_and_set`）；`is_lock_free`/`is_always_lock_free` 接受 1/2/4/8/16。
+- `std.thread`：新增 `Mutex` 与 `ConditionVariable`，以 64 字节 `usize` 存储承载 pthread mutex/cond（Linux x86-64 分别 40/48 字节）；`ConditionVariable::wait` 接收 `std::Mutex*`，支持 signal/broadcast，错误经 `last_error`。
+- `std.mem`：新增 `aligned_malloc(size, align)` / `alignmalloc(size, align)` size-first 别名；`placement_new<T>(void*, T)` 在调用方存储构造 POD；`placement_alloc(buffer, capacity, size, align)` 在缓冲区内切出对齐子区间并做越界检查。
+- 测试：新增 StdAtomicTest.WideAndAggregateAtomics / AtomicRefAndFlag / UnsupportedAggregateLayoutRejected，StdThreadTest.MutexProtectsCounter / MutexTryLockAndDestroy / ConditionVariableSignalAndBroadcast，StdMemTest.AlignedMallocAliases / PlacementNewScalarAndAggregate / PlacementAllocStaysInBuffer；全量由 1901 增至 **1909/1909** 通过。
+- 验证：`cmake --build build -j$(nproc)` 成功；`ctest --test-dir build -j8` **1909/1909**；`build/bin/cdd examples/all_features.cdd` 输出 `ALL FEATURES OK`。

@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -53,6 +54,10 @@ public:
     // CT-07: fields_of 的字段布局（聚合类型：字段名/偏移/大小）。
     // 供 sema 的 analyzeReflectionCall 调用（LayoutBuilder 单一来源）。
     std::vector<ReflectField> evalReflectFields(Type* t, ASTNode& at);
+
+    // Atomic carrier support: size/alignment in bytes for scalar or aggregate
+    // types. Returns nullopt for incomplete/unknown types. No diagnostics.
+    std::optional<std::pair<uint64_t, uint64_t>> layoutSizeAlign(Type* t);
 
 private:
     // 递归深度上限（防编译期爆栈）；超限诊断一次（钉死文案，spec §3）。

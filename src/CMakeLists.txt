@@ -8,6 +8,15 @@ add_library(cdd_lib ${SOURCES})
 find_package(Threads REQUIRED)
 target_link_libraries(cdd_lib PUBLIC Threads::Threads)
 
+# 16-byte atomics can lower to libatomic when the target has no inline
+# cmpxchg16b. Keep the symbols available to JIT and generated programs.
+if(UNIX AND NOT APPLE)
+    find_library(ATOMIC_LIBRARY atomic)
+    if(ATOMIC_LIBRARY)
+        target_link_libraries(cdd_lib PUBLIC ${ATOMIC_LIBRARY})
+    endif()
+endif()
+
 target_include_directories(cdd_lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # mimalloc is the process allocator (JIT/tests) and is linked into programs

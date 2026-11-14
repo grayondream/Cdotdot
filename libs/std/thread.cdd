@@ -14,6 +14,16 @@ extern int32 pthread_join(usize thread, void** retval);
 extern int32 pthread_detach(usize thread);
 extern usize pthread_self();
 extern int32 pthread_equal(usize a, usize b);
+extern int32 pthread_mutex_init(void* mutex, void* attr);
+extern int32 pthread_mutex_destroy(void* mutex);
+extern int32 pthread_mutex_lock(void* mutex);
+extern int32 pthread_mutex_trylock(void* mutex);
+extern int32 pthread_mutex_unlock(void* mutex);
+extern int32 pthread_cond_init(void* cond, void* attr);
+extern int32 pthread_cond_destroy(void* cond);
+extern int32 pthread_cond_wait(void* cond, void* mutex);
+extern int32 pthread_cond_signal(void* cond);
+extern int32 pthread_cond_broadcast(void* cond);
 extern int32 usleep(uint32 usec);
 extern int32 sched_yield();
 extern int64 sysconf(int32 name);
@@ -88,6 +98,158 @@ struct Thread {
 
     usize get_id() {
         return this->handle;
+    }
+
+    int32 error() {
+        return this->last_error;
+    }
+};
+
+// Opaque pthread storage. On Linux x86-64 pthread_mutex_t is 40 bytes and
+// pthread_cond_t is 48 bytes; 64 bytes of usize storage covers both with the
+// required pointer alignment.
+struct Mutex {
+    usize storage[8];
+    bool initialized;
+    int32 last_error;
+
+    void init() {
+        this->initialized = false;
+        this->last_error = 0;
+        int32 rc = pthread_mutex_init((void*)&this->storage[0], null);
+        if (rc == 0) {
+            this->initialized = true;
+        } else {
+            this->last_error = rc;
+        }
+    }
+
+    bool destroy() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_mutex_destroy((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        this->initialized = false;
+        return true;
+    }
+
+    bool lock() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_mutex_lock((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
+    }
+
+    bool try_lock() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_mutex_trylock((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
+    }
+
+    bool unlock() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_mutex_unlock((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
+    }
+
+    int32 error() {
+        return this->last_error;
+    }
+};
+
+struct ConditionVariable {
+    usize storage[8];
+    bool initialized;
+    int32 last_error;
+
+    void init() {
+        this->initialized = false;
+        this->last_error = 0;
+        int32 rc = pthread_cond_init((void*)&this->storage[0], null);
+        if (rc == 0) {
+            this->initialized = true;
+        } else {
+            this->last_error = rc;
+        }
+    }
+
+    bool destroy() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_cond_destroy((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        this->initialized = false;
+        return true;
+    }
+
+    bool wait(std::Mutex* mtx) {
+        if (!this->initialized || mtx == null || !mtx->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_cond_wait((void*)&this->storage[0],
+                                     (void*)&mtx->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
+    }
+
+    bool signal() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_cond_signal((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
+    }
+
+    bool broadcast() {
+        if (!this->initialized) {
+            this->last_error = -1;
+            return false;
+        }
+        int32 rc = pthread_cond_broadcast((void*)&this->storage[0]);
+        if (rc != 0) {
+            this->last_error = rc;
+            return false;
+        }
+        return true;
     }
 
     int32 error() {

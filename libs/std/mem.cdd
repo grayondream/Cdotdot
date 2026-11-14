@@ -91,6 +91,47 @@ void aligned_free(void* p) {
     mi_free(p);
 }
 
+// Size-first aliases (common malloc-family spelling). `alignmalloc` is kept
+// as a short compatibility name for callers that use that spelling.
+void* aligned_malloc(usize size, usize align) {
+    return aligned_alloc(align, size);
+}
+
+void* alignmalloc(usize size, usize align) {
+    return aligned_alloc(align, size);
+}
+
+// ----- placement construction (caller-owned storage, no allocation) -----
+
+// Carve an aligned sub-range out of `buffer`. Returns null when the buffer is
+// null, the alignment is not a power of two, or the range does not fit.
+void* placement_alloc(void* buffer, usize capacity, usize size, usize align) {
+    if (buffer == null || align == 0 || (align & (align - 1)) != 0) {
+        return null;
+    }
+    usize base = (usize)buffer;
+    usize start = align_up(base, align);
+    if (start < base) {
+        return null;
+    }
+    usize offset = start - base;
+    if (offset > capacity || size > capacity - offset) {
+        return null;
+    }
+    return (void*)start;
+}
+
+// Construct a value in caller-provided storage. This is the POD analogue of
+// placement new; it performs no allocation and does not run destructors.
+template<typename T> T* placement_new(void* buffer, T value) {
+    if (buffer == null) {
+        return null;
+    }
+    T* p = (T*)buffer;
+    *p = value;
+    return p;
+}
+
 // ----- Allocator interface (explicit context, no hidden global state) -----
 
 struct Allocator {

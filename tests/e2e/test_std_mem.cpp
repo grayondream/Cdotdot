@@ -257,4 +257,61 @@ TEST_F(StdMemTest, PoolReusesBlocks) {
     )", "mem_pool.cdd"), 0);
 }
 
+TEST_F(StdMemTest, AlignedMallocAliases) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.mem;
+        int32 main() {
+            void* p = std::aligned_malloc(32, 16);
+            if (p == null) return 1;
+            if (!std::is_aligned(p, 16)) return 2;
+            std::aligned_free(p);
+
+            void* q = std::alignmalloc(32, 32);
+            if (q == null) return 3;
+            if (!std::is_aligned(q, 32)) return 4;
+            std::aligned_free(q);
+
+            if (std::aligned_malloc(32, 24) != null) return 5;
+            return 0;
+        }
+    )", "mem_aligned_malloc.cdd"), 0);
+}
+
+TEST_F(StdMemTest, PlacementNewScalarAndAggregate) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.mem;
+        struct Pair { int32 a; int32 b; };
+        int32 main() {
+            int32 buf[4];
+            int32* x = std::placement_new<int32>((void*)buf, 42);
+            if (x == null || *x != 42) return 1;
+
+            Pair pbuf;
+            Pair pv = {7, 8};
+            Pair* y = std::placement_new<Pair>((void*)&pbuf, pv);
+            if (y == null || y->a != 7 || y->b != 8) return 2;
+            return 0;
+        }
+    )", "mem_placement_new.cdd"), 0);
+}
+
+TEST_F(StdMemTest, PlacementAllocStaysInBuffer) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.mem;
+        int32 main() {
+            char buf[64];
+            void* p = std::placement_alloc((void*)buf, 64, 16, 16);
+            if (p == null) return 1;
+            if (!std::is_aligned(p, 16)) return 2;
+            usize off = (usize)p - (usize)buf;
+            if (off + 16 > 64) return 3;
+
+            if (std::placement_alloc((void*)buf, 8, 16, 16) != null) return 4;
+            if (std::placement_alloc((void*)buf, 64, 16, 24) != null) return 5;
+            if (std::placement_alloc(null, 64, 16, 16) != null) return 6;
+            return 0;
+        }
+    )", "mem_placement_alloc.cdd"), 0);
+}
+
 }  // namespace

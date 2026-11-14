@@ -765,6 +765,20 @@ const LayoutResult* CompileTimeEvaluator::layoutFor(Type* t) {
     return &inserted.first->second;
 }
 
+std::optional<std::pair<uint64_t, uint64_t>>
+CompileTimeEvaluator::layoutSizeAlign(Type* type) {
+    Type* t = stripTypedef(type);
+    if (!t) return std::nullopt;
+    if (auto* lr = layoutFor(t)) {
+        return std::pair<uint64_t, uint64_t>{lr->size, lr->align};
+    }
+    llvm::Type* lt = toLLVMType(t);
+    if (!lt || !lt->isSized()) return std::nullopt;
+    const llvm::DataLayout& dl = m_module->getDataLayout();
+    return std::pair<uint64_t, uint64_t>{
+        dl.getTypeAllocSize(lt), dl.getABITypeAlign(lt).value()};
+}
+
 std::vector<FieldInfo> CompileTimeEvaluator::collectFields(Type* t, bool includeBase) {
     std::vector<FieldInfo> out;
     t = stripTypedef(t);

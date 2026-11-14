@@ -264,4 +264,95 @@ TEST_F(StdThreadTest, StartJoinPassesArgument) {
     )", "std_thread_start.cdd"), 0);
 }
 
+TEST_F(StdThreadTest, MutexProtectsCounter) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.thread;
+        std::Mutex m;
+        int32 counter = 0;
+        void* worker(void* arg) {
+            for (int32 i = 0; i < 10000; i = i + 1) {
+                m.lock();
+                counter = counter + 1;
+                m.unlock();
+            }
+            return null;
+        }
+        int32 main() {
+            m.init();
+            std::Thread t0; std::Thread t1; std::Thread t2; std::Thread t3;
+            t0.init(); t1.init(); t2.init(); t3.init();
+            if (!t0.start(worker, null)) return 1;
+            if (!t1.start(worker, null)) return 2;
+            if (!t2.start(worker, null)) return 3;
+            if (!t3.start(worker, null)) return 4;
+            if (!t0.join()) return 5;
+            if (!t1.join()) return 6;
+            if (!t2.join()) return 7;
+            if (!t3.join()) return 8;
+            int32 v = counter;
+            if (!m.destroy()) return 9;
+            return v == 40000 ? 0 : 10;
+        }
+    )", "std_thread_mutex.cdd"), 0);
+}
+
+TEST_F(StdThreadTest, MutexTryLockAndDestroy) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.thread;
+        int32 main() {
+            std::Mutex m;
+            m.init();
+            if (!m.try_lock()) return 1;
+            if (!m.unlock()) return 2;
+            if (!m.lock()) return 3;
+            if (m.try_lock()) return 4;
+            if (!m.unlock()) return 5;
+            if (!m.destroy()) return 6;
+            if (m.lock()) return 7;
+            return 0;
+        }
+    )", "std_thread_mutex_try.cdd"), 0);
+}
+
+TEST_F(StdThreadTest, ConditionVariableSignalAndBroadcast) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.thread;
+        std::Mutex m;
+        std::ConditionVariable cv;
+        bool ready = false;
+        bool go = false;
+        int32 released = 0;
+        void* waiter(void* arg) {
+            m.lock();
+            ready = true;
+            cv.signal();
+            while (!go) {
+                cv.wait(&m);
+            }
+            released = released + 1;
+            m.unlock();
+            return null;
+        }
+        int32 main() {
+            m.init();
+            cv.init();
+            std::Thread t;
+            t.init();
+            if (!t.start(waiter, null)) return 1;
+            m.lock();
+            while (!ready) {
+                if (!cv.wait(&m)) return 2;
+            }
+            go = true;
+            if (!cv.broadcast()) return 3;
+            m.unlock();
+            if (!t.join()) return 4;
+            if (released != 1) return 5;
+            if (!cv.destroy()) return 6;
+            if (!m.destroy()) return 7;
+            return 0;
+        }
+    )", "std_thread_condvar.cdd"), 0);
+}
+
 } // namespace

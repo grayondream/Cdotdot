@@ -823,6 +823,26 @@ llvm::Type* CodegenContext::getAtomicCarrierType(Type* type, unsigned& bits) {
         case TypeKind::Pointer:
             bits = 64;
             return iN(64);
+        case TypeKind::Int128:
+        case TypeKind::UInt128:
+        case TypeKind::Float128:
+            bits = 128;
+            return iN(128);
+        case TypeKind::Struct:
+        case TypeKind::Class:
+        case TypeKind::Union:
+        case TypeKind::Array: {
+            llvm::Type* aggregate = getLLVMType(t);
+            if (!aggregate || !aggregate->isSized()) return nullptr;
+            uint64_t size =
+                module->getDataLayout().getTypeAllocSize(aggregate);
+            if (size != 1 && size != 2 && size != 4 && size != 8 &&
+                size != 16) {
+                return nullptr;
+            }
+            bits = static_cast<unsigned>(size * 8);
+            return iN(bits);
+        }
         case TypeKind::Enum: {
             llvm::Type* underlying = getLLVMType(t);
             if (underlying && underlying->isIntegerTy()) {
@@ -855,6 +875,16 @@ llvm::Value* CodegenContext::valueToAtomicCarrier(llvm::Value* value,
         t = static_cast<TypedefType*>(t)->aliasedType;
     }
     llvm::Type* orig = t ? getLLVMType(t) : value->getType();
+    // LLVM cannot bitcast an integer carrier directly to/from a struct or
+    // array. Round-trip through a temporary of the aggregate type so padding
+    // is preserved and the IR stays legal.
+    if (orig && orig->isAggregateType()) {
+        llvm::Value* tmp = builder.CreateAlloca(orig, nullptr, "atomic.agg");
+        builder.CreateStore(value, tmp);
+        llvm::Value* castPtr = builder.CreateBitCast(
+            tmp, llvm::PointerType::get(*context, 0), "atomic.agg.ptr");
+        return builder.CreateLoad(carrier, castPtr, "atomic.agg.load");
+    }
     if (orig && orig->isIntegerTy(1) && value->getType()->isIntegerTy(1)) {
         return builder.CreateZExt(value, carrier, "atomic.bool");
     }
@@ -884,6 +914,13 @@ llvm::Value* CodegenContext::valueFromAtomicCarrier(llvm::Value* value,
     }
     llvm::Type* orig = t ? getLLVMType(t) : value->getType();
     if (!orig || orig == value->getType()) return value;
+    if (orig->isAggregateType()) {
+        llvm::Value* tmp = builder.CreateAlloca(orig, nullptr, "atomic.agg");
+        llvm::Value* castPtr = builder.CreateBitCast(
+            tmp, llvm::PointerType::get(*context, 0), "atomic.agg.ptr");
+        builder.CreateStore(value, castPtr);
+        return builder.CreateLoad(orig, tmp, "atomic.agg.value");
+    }
     if (orig->isIntegerTy(1)) {
         return builder.CreateTrunc(value, orig, "atomic.bool");
     }
