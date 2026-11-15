@@ -1,6 +1,12 @@
 # CDD 1.0 详细待办（工程 backlog）
 
+> **进度快照（2026-11-15，MIT LICENSE 补充）**：用户补充根目录 MIT `LICENSE`，文档同步——文件规范命名为 `LICENSE`，版权行填为 `Copyright (c) 2026 grayondream`；`README.md` / `README_zh.md` 的 at-a-glance 与 License / 许可证段落改为 MIT，并添加 MIT badge。两个 README 的相对链接检查 0 缺失，`git diff --check` 无输出。本轮只改文档/许可证。
+
 > **进度快照（2026-11-15，atomic/thread/mem 扩展）**：`std.atomic` 支持 16 字节/`int128`/`float128`、1/2/4/8/16 字节 POD 聚合、`atomic_ref<T>`、`atomic_flag`；聚合原子通过同大小 iN carrier + 临时对象往返，`Atomic<T>` 的 value 固定 16 字节对齐。`std.thread` 新增 `Mutex` 与 `ConditionVariable`（wait/signal/broadcast），pthread 存储 64 字节。`std.mem` 新增 `placement_new<T>`、`placement_alloc`、`aligned_malloc`/`alignmalloc`。x86-64 宿主支持 `cx16` 时驱动启用 `+cx16`，并链接 `libatomic` 兜底。新增 8 个 e2e 测试；全量 **1909/1909** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。设计/计划：`docs/superpowers/plans/2026-11-14-atomic-thread-mem.md`。
+
+> **进度快照（2026-11-15，README 正式化重写）**：根目录 `README.md` 按正式 GitHub 项目入口文档重写——补充项目状态、设计原则与非目标、环境要求、构建/安装、CLI 选项、模块、标准库分类、语言 tour、仓库布局、编译架构、测试、文档索引、限制、贡献指南、许可证与中文简介；删除 `constexpr` 与“stable ABI”等过时/过度承诺，明确 pre-1.0、Linux x86-64、ABI 未冻结、无 CI。新增 3 个已实际编译运行的示例，并核对 README 相对链接 0 缺失。本轮只改文档，不改代码/测试；全量基线仍为 **1909/1909**。
+
+> **进度快照（2026-11-15，中文 README 拆分）**：新增 `README_zh.md`，完整承载中文项目说明；`README.md` 顶部加入 `English | 简体中文` 语言切换，移除末尾内嵌中文简介及其目录项。两个 README 的相对链接、目录锚点与 fenced code block 检查均通过，`git diff --check` 无输出。本轮只改文档。
 
 > **进度快照（2026-11-12，闭包逃逸与一等存储）**：按引用/`this` 捕获闭包返回不再硬性拒绝，改为 **W3006** 生命周期警告；返回仍复制闭包 struct 的原始指针，不延长捕获存储。实例方法支持 `auto` 返回（类内/类外；类外定义会同步类内声明与 LLVM 原型；静态方法仍拒绝）。新增 **`decltype(expr)`** 类型查询，使名义闭包类型可用于 `using`、结构体字段、数组、普通参数；`auto arr[]`/`auto arr[N]` 从首个 brace 初始化器推导元素类型；字段/数组元素/右值闭包可直接调用（`obj.f(args)`、`arr[i](args)`、`make()(args)`）。闭包仍无 type erasure、堆提升或引用计数。全量 **1901/1901** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。设计/计划：`docs/superpowers/{specs,plans}/2026-11-12-closure-first-class*`。
 

@@ -1370,3 +1370,43 @@
 - `std.mem`：新增 `aligned_malloc(size, align)` / `alignmalloc(size, align)` size-first 别名；`placement_new<T>(void*, T)` 在调用方存储构造 POD；`placement_alloc(buffer, capacity, size, align)` 在缓冲区内切出对齐子区间并做越界检查。
 - 测试：新增 StdAtomicTest.WideAndAggregateAtomics / AtomicRefAndFlag / UnsupportedAggregateLayoutRejected，StdThreadTest.MutexProtectsCounter / MutexTryLockAndDestroy / ConditionVariableSignalAndBroadcast，StdMemTest.AlignedMallocAliases / PlacementNewScalarAndAggregate / PlacementAllocStaysInBuffer；全量由 1901 增至 **1909/1909** 通过。
 - 验证：`cmake --build build -j$(nproc)` 成功；`ctest --test-dir build -j8` **1909/1909**；`build/bin/cdd examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+
+## 2026-11-15 — README 正式化重写
+
+- 背景：用户要求把根目录 `README.md` 改造成符合正式 GitHub 项目习惯的入口文档，而不是当前偏随意的说明。
+- 改动：
+  - 重写 README 结构：项目简介、状态声明、设计原则与非目标、环境要求、构建/安装、Hello CDD、测试、CLI 选项、模块、标准库、语言 tour、仓库布局、编译架构、文档索引、限制、贡献指南、许可证、致谢、中文简介。
+  - 修正过时与过度承诺：删除 `constexpr` 宣传，改为 `compile_time`/`compile_only`；删除“stable ABI”表述，明确 ABI 尚未冻结；明确 pre-1.0、Linux x86-64、无 CI、手动内存模型、无 RAII/异常/GC。
+  - 增加真实可运行示例：`hello.cdd`、`vec_demo.cdd`、`tour.cdd`；增加 22 个 `std` 模块的分类表、CLI 选项表、平台支持表与常见问题指引。
+  - 增加 `LICENSE` 缺失说明；未替用户选择许可证。
+- 验证：
+  - `build/bin/cdd /tmp/hello.cdd -o /tmp/hello && /tmp/hello` → `Hello, CDD!`
+  - `build/bin/cdd /tmp/vec_demo.cdd -o /tmp/vec_demo && /tmp/vec_demo` → `42`
+  - `build/bin/cdd /tmp/tour.cdd -o /tmp/tour && /tmp/tour` → `2`
+  - `cmake --install build --prefix /tmp/cdd-install` 后运行 `/tmp/cdd-install/bin/cdd /tmp/hello.cdd` → `Hello, CDD!`
+  - README 相对链接检查 0 缺失；`git diff --check` 无输出。
+- 遗留：
+  - 仓库仍无 `LICENSE`；README 的 License 段落为 TBD。
+  - 仓库仍无 CI workflow；README 明确当前验证为本地执行。
+
+## 2026-11-15 — 拆分中文 README
+
+- 背景：用户要求中文内容单独放在 `README_zh.md`，不再内嵌在英文 README 末尾。
+- 改动：
+  - 新增 `README_zh.md`，完整翻译英文 README 的项目状态、设计原则、非目标、构建/安装、CLI、模块、标准库、语言 tour、仓库结构、编译架构、测试、文档、限制、贡献、许可证与致谢。
+  - `README.md` 顶部加入 `English | 简体中文` 语言切换；移除末尾内嵌的中文简介及其目录项。
+  - `README_zh.md` 顶部加入返回英文 README 的链接，并注明中英文不一致时以英文版为准。
+- 验证：
+  - 两个 README 的相对链接检查均为 0 缺失；fenced code block 均成对；中文/英文目录锚点检查 0 缺失。
+  - `git diff --check` 无输出。
+
+## 2026-11-15 — 补充 MIT LICENSE
+
+- 背景：用户补充根目录 MIT `LICENSE`，要求同步修正文档中的许可证状态。
+- 改动：
+  - 将许可证文件规范命名为 `LICENSE`，并把占位版权行填为 `Copyright (c) 2026 grayondream`。
+  - `README.md` / `README_zh.md` 的 at-a-glance 与 License / 许可证段落同步为 MIT，并添加 MIT badge。
+  - 移除“仓库没有 LICENSE / 许可证 TBD”的现行说明；历史 Progress 条目保留为时间线。
+- 验证：
+  - 两个 README 的相对链接检查 0 缺失，`LICENSE` 链接存在。
+  - `git diff --check` 无输出。
