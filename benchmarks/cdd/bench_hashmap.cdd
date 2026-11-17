@@ -1,0 +1,57 @@
+// Runtime benchmark: open-addressing int32 hash table with real lookups.
+// 8M inserts followed by 8M lookups (half hits, half misses).
+// Pair: benchmarks/cpp/bench_hashmap.cpp (same algorithm and result).
+module bench_hashmap;
+
+int32 main() {
+    int32 cap = 16777216;
+    int32 mask = cap - 1;
+    int32 ops = 8000000;
+    int32* keys = (int32*)malloc(cap * 4);
+    int32* vals = (int32*)malloc(cap * 4);
+    int32* probe = (int32*)malloc(ops * 4);
+    for (int32 i = 0; i < cap; i = i + 1) {
+        keys[i] = -1;
+        vals[i] = 0;
+    }
+    uint32 seed = 987654321;
+    for (int32 i = 0; i < ops; i = i + 1) {
+        seed = seed * 1664525 + 1013904223;
+        int32 key = static_cast<int32>(seed & 0x7fffffff);
+        probe[i] = key;
+        uint32 h = static_cast<uint32>(key) * 2654435761u;
+        int32 idx = static_cast<int32>(h & 0xffffff);
+        while (keys[idx] != -1 && keys[idx] != key) {
+            idx = (idx + 1) & mask;
+        }
+        if (keys[idx] == -1) {
+            keys[idx] = key;
+            vals[idx] = 1;
+        } else {
+            vals[idx] = vals[idx] + 1;
+        }
+    }
+    int64 sum = 0;
+    for (int32 i = 0; i < ops; i = i + 1) {
+        seed = seed * 1664525 + 1013904223;
+        int32 key;
+        if ((i & 1) == 0) {
+            key = probe[i];
+        } else {
+            key = static_cast<int32>(seed & 0x7fffffff);
+        }
+        uint32 h = static_cast<uint32>(key) * 2654435761u;
+        int32 idx = static_cast<int32>(h & 0xffffff);
+        while (keys[idx] != -1 && keys[idx] != key) {
+            idx = (idx + 1) & mask;
+        }
+        if (keys[idx] == key) {
+            sum = sum + static_cast<int64>(vals[idx]);
+        }
+    }
+    println("{}", sum);
+    free(keys);
+    free(vals);
+    free(probe);
+    return 0;
+}

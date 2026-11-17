@@ -1,0 +1,7 @@
+// Startup benchmark: empty process, measures loader/startup overhead.
+// Pair: benchmarks/cpp/bench_empty.cpp.
+module bench_empty;
+
+int32 main() {
+    return 0;
+}

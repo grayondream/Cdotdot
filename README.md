@@ -340,6 +340,7 @@ than exceptions.
 | `libs/std/` | Standard library written in CDD |
 | `examples/` | `all_features.cdd`, the end-to-end feature tour |
 | `tests/` | Unit, integration, e2e, driver, and specification-conformance tests |
+| `benchmarks/` | Performance baseline (CDD vs clang++/g++, runtime, compile time, code size) |
 | `docs/spec/` | Normative language specification |
 | `docs/superpowers/` | Design notes and historical implementation plans |
 | `scripts/` | Build scripts |
@@ -390,6 +391,16 @@ build/bin/cdd examples/all_features.cdd -o /tmp/all_features
 
 The feature tour must exit with status 0 and print `ALL FEATURES OK` as its last
 line.
+
+The performance baseline lives in [`benchmarks/`](benchmarks/README.md). A quick
+smoke run is:
+
+```bash
+python3 benchmarks/run.py --quick
+```
+
+The full baseline and its methodology are documented in
+[`benchmarks/BASELINE.md`](benchmarks/BASELINE.md).
 
 Automated CI is not configured in this repository yet; verification is
 currently local. See [TODO.md](TODO.md) for the test/CI backlog.

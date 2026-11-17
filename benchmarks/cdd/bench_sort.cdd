@@ -1,0 +1,61 @@
+// Runtime benchmark: recursive quicksort over 8M int32 values (LCG data).
+// Pair: benchmarks/cpp/bench_sort.cpp (same algorithm and result).
+module bench_sort;
+
+void insertion_sort(int32* a, int32 lo, int32 hi) {
+    for (int32 i = lo + 1; i < hi; i = i + 1) {
+        int32 v = a[i];
+        int32 j = i - 1;
+        while (j >= lo && a[j] > v) {
+            a[j + 1] = a[j];
+            j = j - 1;
+        }
+        a[j + 1] = v;
+    }
+}
+
+void quick_sort(int32* a, int32 lo, int32 hi) {
+    while (hi - lo > 16) {
+        int32 mid = lo + (hi - lo) / 2;
+        int32 pivot = a[mid];
+        int32 i = lo;
+        int32 j = hi - 1;
+        while (i <= j) {
+            while (a[i] < pivot) { i = i + 1; }
+            while (a[j] > pivot) { j = j - 1; }
+            if (i <= j) {
+                int32 t = a[i];
+                a[i] = a[j];
+                a[j] = t;
+                i = i + 1;
+                j = j - 1;
+            }
+        }
+        if (j - lo < hi - i) {
+            quick_sort(a, lo, j + 1);
+            lo = i;
+        } else {
+            quick_sort(a, i, hi);
+            hi = j + 1;
+        }
+    }
+    insertion_sort(a, lo, hi);
+}
+
+int32 main() {
+    int32 n = 8000000;
+    int32* a = (int32*)malloc(n * 4);
+    uint32 seed = 123456789;
+    for (int32 i = 0; i < n; i = i + 1) {
+        seed = seed * 1664525 + 1013904223;
+        a[i] = static_cast<int32>(seed >> 1);
+    }
+    quick_sort(a, 0, n);
+    int64 sum = 0;
+    for (int32 i = 0; i < n; i = i + 1) {
+        sum = sum + static_cast<int64>(a[i]);
+    }
+    println("{}", sum);
+    free(a);
+    return 0;
+}

@@ -1,0 +1,17 @@
+// stdlib benchmark: owning string growth through repeated append.
+// Pair: benchmarks/cpp/bench_str_append.cpp (same algorithm and result).
+module bench_str_append;
+
+int32 main() {
+    string s = string.new("");
+    for (int32 i = 0; i < 8000000; i = i + 1) {
+        s.append("0123456789abcdef");
+    }
+    int64 sum = 0;
+    for (usize i = 0; i < s.len(); i = i + 1) {
+        sum = sum + static_cast<int64>(s[i]);
+    }
+    println("{}", sum);
+    s.destroy();
+    return 0;
+}

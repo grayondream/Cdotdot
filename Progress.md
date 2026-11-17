@@ -1410,3 +1410,51 @@
 - 验证：
   - 两个 README 的相对链接检查 0 缺失，`LICENSE` 链接存在。
   - `git diff --check` 无输出。
+
+## 2026-11-16 — 性能基线（TST-10）
+
+- 背景：用户要求建立完整性能基线，分两部分：C++ 作为性能目标参照，CDD 当前状态作为后续优化对照。对应 TODO `TST-10`，并为 `P3-01` 提供度量基础。
+- 改动（新增 `benchmarks/`，未改编译器源码）：
+  - `benchmarks/cdd/*.cdd` 与 `benchmarks/cpp/*.cpp`：9 组同算法、同数据类型、同规模的配对负载——core 6（fib 递归、2e8 字节筛、768³ float64 matmul、5-body nbody、8M quicksort、开放寻址 hashmap）、stdlib 2（`string` append、`Vec<int32>` push）、alloc 1（6M×64B malloc/free 乱序释放）。
+  - `benchmarks/corpus/gen.py`：生成 300/1200 函数合成语料，隔离前端/优化器/目标文件吞吐。
+  - `benchmarks/run.py`：全流程构建、校验和比对、运行时计时（自动选择最闲 CPU、`taskset` 绑核、2 预热 + 7 次中位数、实现间交错）、`perf` 硬件计数、`-c -O2` 编译计时（1 预热 + 5 次）、对象 `.text`/可执行文件体积；输出 JSON + Markdown。
+  - `benchmarks/compare.py`：对比两次基线 JSON，输出 Δ 时间、Δ CDD/参照比值、Δ 编译时间与代码体积。
+  - `benchmarks/README.md`、`benchmarks/BASELINE.md`、`benchmarks/results/2026-11-16-baseline.{json,md}`：方法学、当前数据、复现方式与 caveat。
+  - `README.md` / `README_zh.md` 仓库结构与测试段落补 `benchmarks/` 入口；`TODO.md` TST-10 → `[x]`，P3-01 → `[~]`。
+- 基线结果（Ryzen 5 5600X，LLVM 21.1.8，`clang++-22 -O2` / `g++-15 -O2`，shared desktop load≈5.0，自动绑核 CPU 2）：
+  - 运行时几何平均（CDD/参照，<1 为 CDD 更快）：core **1.11x vs clang、1.24x vs gcc**；stdlib **0.31x**；alloc **0.31x**。
+  - 主要差距：`bench_matmul` 2.87x（CDD 无别名/向量化信息）；`bench_fib` 1.07x vs clang、1.95x vs gcc；`bench_hashmap` 0.70x、`bench_sieve` 0.90x（CDD 更快）。
+  - 编译时间：`corpus_300` CDD 233ms vs clang 259ms、gcc 504ms；`corpus_1200` CDD 893ms vs clang 994ms、gcc 2090ms。
+  - 代码体积：对象 `.text` 与 clang/gcc 同量级；可执行文件约 16x（CDD 静态链 mimalloc，约 255–269 KiB vs 15–16 KiB）。
+- 验证：
+  - `python3 benchmarks/run.py --quick` 与 `--full --baseline-md` 均退出 0；9 组负载 CDD 与两个 C++ 参照校验和全部一致。
+  - 运行时 7 次样本区间较紧（如 fib 244–255ms、matmul 206–222ms）；`python3 -m py_compile benchmarks/run.py` 通过；`compare.py` 自比较输出 0.0% Δ。
+  - `git status` 仅新增 `benchmarks/` 与 README/TODO/Progress 修改；`benchmarks/.work/` 已忽略。
+- 发现（未在本轮修复，已写入 `benchmarks/README.md`）：
+  - 从 `uint8`/`uint32` 到更宽类型的显式转换走符号扩展而非零扩展：`static_cast<int64>(uint8 250)` → `-6`，`static_cast<uint64>(uint32 2654435761)` → `18446744072069020081`；基准代码已避开这两条路径（`println` 的无符号打印路径正常）。
+
+## 2026-11-17 — 性能基线扩展（TST-10 richer baseline）
+
+- 背景：用户要求“更丰富的 baseline”。在 2026-11-16 的 9 负载版本上扩展覆盖面、观测维度和统计严谨性，仍以 C++ 为性能目标、CDD 当前状态为后续优化对照。
+- 改动：
+  - 新增 7 组 CDD/C++ 配对负载：`bench_nqueens`（13 皇后回溯）、`bench_binary_search`（16M 数组上 2M 次二分）、`bench_mandelbrot`（1000² float64）、`bench_class`（4M 对象 × 64 轮按值方法调用）、`bench_hashmap_std`（`std::HashMap` 4M put/get）、`bench_deque`（`std::Deque` 32M push/pop）、`bench_empty`（startup）。总计 16 负载：core 10、stdlib 4、alloc 1、startup 1。
+  - `run.py`：全量改为 5 预热 + 9 次中位数；新增 p10/p90/stdev/CV、峰值 RSS（运行时与编译器）、对象 `.rodata/.data/.bss/.debug` 分节、`strip --strip-all` 后可执行体积、CDD/clang LLVM IR 字节/行数、`perf task-clock` 有效 GHz；新增 6 负载 × O0/O1/O2/O3 矩阵；编译语料扩展为 100/300/600/1200 并输出 `ms/fn`。
+  - C++ 参照统一加 `-g`（CDD 默认带调试信息），使编译时间/对象体积更可比；运行时间不受影响。
+  - `compare.py`：新增峰值内存、O 级别矩阵对比、`--fail-regression PCT` 回归门禁；README/BASELINE 同步扩展方法学、读法与 caveat。
+  - `TODO.md`：TST-10 更新为 richer baseline；CG-15 记录 `-O0` 崩溃缺陷；P3-01 基线日期更新。
+- 当前基线结果（Ryzen 5 5600X，LLVM 21.1.8，`clang++-22 -O2 -g` / `g++-15 -O2 -g`，idle load≈1.0，绑核 CPU 0）：
+  - 运行时几何平均（CDD/参照，<1 为 CDD 更快）：core **1.06x vs clang、1.15x vs gcc**；stdlib **0.41x / 0.43x**；alloc **0.30x / 0.30x**；startup **0.69x / 1.01x**。
+  - 主要差距：`bench_matmul` 2.94x、`bench_class` 1.18x、`bench_fib` 1.06x vs clang；主要领先：`bench_hashmap` 0.66x、`bench_nqueens` 0.85x、`bench_sieve` 0.90x。
+  - 编译：`corpus_1200` CDD 842ms vs clang 1424ms / gcc 2375ms（0.70 / 1.19 / 1.98 ms/函数）；小源码固定开销约 10–20ms。
+  - 体积：对象 `.text` 与参照同量级；使用分配器的可执行文件约 255–275 KiB（mimalloc 静态链接），fib/mandelbrot 等不触发分配的工作负载约 16.5 KiB；strip 后 CDD 约 222 KiB vs C++ 约 14 KiB。
+  - 内存：运行时 RSS 与参照同量级（如 sieve 196 MiB、hashmap 166 MiB）；`Vec`/`Deque` 约 182 MiB vs 132 MiB；编译器峰值 RSS corpus_1200 148.6 MiB vs clang 146.4 / gcc 121.5。
+  - O 级别矩阵：matmul 在 O1 已落后 1.72x、O2 2.94x，说明主要差距来自优化阶段；fib 在 O0/O1 反而快于 clang（0.81x/0.84x），O2 转为 1.05x；nqueens O0 持平、O2 0.85x。
+- 验证：
+  - `python3 benchmarks/run.py --full --baseline-md --label 2026-11-17-baseline` 退出 0；16 组负载 CDD 与两个 C++ 参照校验和全部一致；20 个编译源全部完成。
+  - 运行时 CDD 侧 CV 多数 <3%（matmul 1.2%、hashmap_std 3.5%、fib 1.4%）；`vec_push` 7.3%、`str_append` 5.4% 偏高，参照侧 `bench_fib` 的 clang/gcc 为 6.9%/12.4%，均已在报告中标注。
+  - `python3 benchmarks/compare.py ... 2026-11-17-baseline ... 2026-11-17-baseline` 输出 0.0% Δ；`--fail-regression` 0；两个脚本 `py_compile` 通过；`git diff --check` 无输出。
+  - 新增负载均以 `--quick` 和 `--full --only` 验证过输出一致，再进入全量。
+- 发现（未修复）：
+  - **CG-15**：`cdd -O0` 生成的 `bench_matmul`、`bench_nbody`、`bench_hashmap` 运行即 SIGSEGV（rc=139），同一源码 `-O1/-O2/-O3` 正常；矩阵中记录为 error cell。
+  - **TYP-28**：`uint8`/`uint32` 显式宽化转换仍走符号扩展；基准代码继续避开该路径。
+- 备注：2026-11-16 的 9 负载基线保留为历史数据，但方法学（无 `-g`、2+7、无矩阵/RSS/IR）与本次不同，跨基线对比时只看运行时间比值，不混用编译时间/体积。

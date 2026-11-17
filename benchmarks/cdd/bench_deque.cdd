@@ -1,0 +1,27 @@
+// stdlib benchmark: std::Deque<int32> push_back/pop_front, 8M elements.
+// Pair: benchmarks/cpp/bench_deque.cpp (same algorithm and result).
+module bench_deque;
+
+import std.deque;
+
+int32 main() {
+    std::Deque<int32> d = {};
+    d.init();
+    int32 n = 32000000;
+    for (int32 i = 0; i < n; i = i + 1) {
+        if (!d.push_back(i)) {
+            return 1;
+        }
+    }
+    int64 sum = 0;
+    int32 x = 0;
+    while (!d.is_empty()) {
+        if (!d.pop_front(&x)) {
+            return 2;
+        }
+        sum = sum + static_cast<int64>(x);
+    }
+    println("{}", sum);
+    d.destroy();
+    return 0;
+}

@@ -1,0 +1,13 @@
+// Runtime benchmark: recursive calls, branches, integer returns.
+// Pair: benchmarks/cpp/bench_fib.cpp (same algorithm and result).
+module bench_fib;
+
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+int32 main() {
+    println("{}", fib(40));
+    return 0;
+}

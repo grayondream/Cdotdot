@@ -317,6 +317,7 @@ int32 main() {
 | `libs/std/` | 用 CDD 编写的标准库 |
 | `examples/` | `all_features.cdd`，端到端功能巡览 |
 | `tests/` | 单元、集成、端到端、驱动与规范一致性测试 |
+| `benchmarks/` | 性能基线（CDD vs clang++/g++，运行时间、编译时间、代码大小） |
 | `docs/spec/` | 规范性语言规范 |
 | `docs/superpowers/` | 设计记录与历史实现计划 |
 | `scripts/` | 构建脚本 |
@@ -361,6 +362,14 @@ build/bin/cdd examples/all_features.cdd -o /tmp/all_features
 ```
 
 功能巡览必须以状态 0 退出，并在最后一行打印 `ALL FEATURES OK`。
+
+性能基线位于 [`benchmarks/`](benchmarks/README.md)。快速冒烟运行：
+
+```bash
+python3 benchmarks/run.py --quick
+```
+
+完整基线与方法学见 [`benchmarks/BASELINE.md`](benchmarks/BASELINE.md)。
 
 目前仓库尚未配置自动化 CI；验证在本地执行。测试/CI 待办事项见 [TODO.md](TODO.md)。
 

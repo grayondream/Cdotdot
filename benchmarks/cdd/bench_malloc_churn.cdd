@@ -1,0 +1,30 @@
+// Allocation-sensitive benchmark: batched malloc/free of 2M x 64-byte blocks,
+// allocated in order and freed in a scrambled order.
+// Pair: benchmarks/cpp/bench_malloc_churn.cpp (same algorithm and result).
+// CDD programs link mimalloc; the C++ reference uses the platform allocator,
+// so this row is reported separately from the core tier.
+module bench_malloc_churn;
+
+int32 main() {
+    int32 n = 6000000;
+    uint8** ptrs = (uint8**)malloc(n * 8);
+    int64 sum = 0;
+    for (int32 i = 0; i < n; i = i + 1) {
+        uint8* p = (uint8*)malloc(64);
+        p[0] = static_cast<uint8>(i & 127);
+        p[63] = static_cast<uint8>((i * 3) & 127);
+        ptrs[i] = p;
+        sum = sum + static_cast<int64>(p[0]) + static_cast<int64>(p[63]);
+    }
+    for (int32 k = 0; k < n; k = k + 1) {
+        // 131 is coprime with n = 2^7 * 5^6, so this index mapping is a
+        // permutation: every block is freed exactly once.
+        int32 idx = (k * 131) % n;
+        uint8* p = ptrs[idx];
+        sum = sum + static_cast<int64>(p[0]) + static_cast<int64>(p[63]);
+        free(p);
+    }
+    println("{}", sum);
+    free(ptrs);
+    return 0;
+}

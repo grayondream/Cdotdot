@@ -217,6 +217,7 @@
 - `[x]` **TYP-25** `(新)` enum 默认底层类型、枚举常量作用域与限定访问（细化 TYP-09）。枚举常量可作值/常量表达式（含 `= -1`、`= 1+2+4`），支持限定访问 `A::Red` 与限定类型名 `cfg::Mode`（无需 `enum` 关键字）；显式底层类型 `enum E : uint8`（含 `typedef enum : uint16 {...}`）已实现。
 - `[x]` **TYP-26** `(新)` 字符串字面量类型、`str`/`String` 生命周期与所有权（细化 FMT-01/02）。2026-10-08 完成（随 P1-06）：字面量类型 = `str`；所有权/边界见 DEC-20。
 - `[~]` **TYP-27** `(新)` 聚合类型 ABI：按值传参/返回（byval/sret）、端序、默认对齐与成员内边距（细化 MEM-09）。（草案见 `docs/spec/abi.md`）
+- `[ ]` **TYP-28** `(新)` **缺陷（性能基线发现，2026-11-16）**：`static_cast` 从 `uint8`/`uint32` 到更宽类型时走 `sext` 而非 `zext`。复现：`uint8 u = 250; static_cast<int64>(u)` → `-6`；`uint32 x = 2654435761u; static_cast<uint64>(x)` → `18446744072069020081`。`println` 的无符号打印路径（`zext`）正常。`benchmarks/README.md` 已记录；基准代码已避开该路径。
 
 ---
 
@@ -494,7 +495,7 @@
 - `[x]` **CG-12** `compile_time` 常量折叠后 codegen；与 LLVM 常量集成。**已完成**（2026-10-06，随 CT-12）：表达式节点 `ctInt/ctFloat/ctHandled`，codegen 直接出 `llvm::Constant`，零运行时指令。
 - `[ ]` **CG-13** 原子操作与 `thread_local`。
 - `[ ]` **CG-14** 调试信息：DWARF、源码位置。
-- `[ ]` **CG-15** 优化级别 O0/O1/O2/O3/Os/Oz。
+- `[ ]` **CG-15** 优化级别 O0/O1/O2/O3/Os/Oz。**缺陷（2026-11-17 性能基线发现）**：`cdd -O0` 生成的 `bench_matmul`、`bench_nbody`、`bench_hashmap` 程序运行即 SIGSEGV（rc=139），同一源码 `-O1/-O2/-O3` 正常；已在 `benchmarks/BASELINE.md` 的矩阵中记录为 error cell。
 - `[ ]` **CG-16** 目标三元组与交叉编译。
 - `[ ]` **CG-17** 链接：启动代码、libc、静态/动态库；无强制运行时。
 - `[ ]` **CG-18** ABI 一致性测试（含位域、继承、模板符号）。
@@ -526,7 +527,7 @@
 - `[ ]` **TST-07** `(新)` **覆盖率**（llvm-cov）报告与阈值。
 - `[ ]` **TST-08** 跨平台测试 Linux/macOS/Windows；交叉编译测试。
 - `[ ]` **TST-09** 可选：差分测试（对照 clang/gcc）、模糊测试（解析器/comptime/格式串）。
-- `[ ]` **TST-10** 性能基准：编译速度、运行速度、代码大小（含方法学）。
+- `[x]` **TST-10** 性能基准：编译速度、运行速度、代码大小（含方法学）。**完成**（2026-11-16，**2026-11-17 扩展**）：`benchmarks/` 现含 16 个 CDD/C++ 同算法负载（core 10、stdlib 4、alloc 1、startup 1）+ 合成编译语料 100/300/600/1200 函数；`run.py` 记录 5 预热 + 9 次中位数、p10/p90/CV、绑核、perf（IPC/GHz/cache/branch）、峰值 RSS、对象分节/剥离后可执行文件体积、CDD/clang LLVM IR 体积，并对 6 个代表负载跑 `-O0..-O3` 矩阵；参照 `clang++-22 -O2 -g` 与 `g++-15 -O2 -g`；`compare.py` 支持基线对比与 `--fail-regression`；方法学与当前数据见 `benchmarks/BASELINE.md`。
 - `[ ]` **TST-11** 回归测试套件；标准库文档测试。
 - `[ ]` **TST-12** 发布流程：二进制包、变更日志（**无版本管理/edition**，见 Non-goals）。
 
@@ -608,7 +609,7 @@
 - `[ ]` **P2-06** ASan/UBSan/覆盖率（TST-05~07）。
 
 ### P3：1.0 稳定
-- `[ ]` **P3-01** 性能优化（CG-15、TST-10）。
+- `[~]` **P3-01** 性能优化（CG-15、TST-10）。**TST-10 基线完成**（2026-11-17，`benchmarks/BASELINE.md`）；CG-15 优化待做。
 - `[ ]` **P3-02** ABI 冻结（无 edition，靠 ABI 测试 + 文档）。
 - `[ ]` **P3-03** 规范定稿与文档（INF-06）。
 - `[ ]` **P3-04** 标准库稳定；迁移指南（TOOL-06）。

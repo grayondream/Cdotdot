@@ -1,0 +1,73 @@
+// Runtime benchmark: float64 math, sqrt, pairwise force loop.
+// Pair: benchmarks/cpp/bench_nbody.cpp (same algorithm and result).
+module bench_nbody;
+
+import std.math;
+
+int32 main() {
+    int32 n = 5;
+    int32 steps = 5000000;
+    float64 dt = 0.001;
+    float64* x = (float64*)malloc(n * 8);
+    float64* y = (float64*)malloc(n * 8);
+    float64* z = (float64*)malloc(n * 8);
+    float64* vx = (float64*)malloc(n * 8);
+    float64* vy = (float64*)malloc(n * 8);
+    float64* vz = (float64*)malloc(n * 8);
+    float64* mass = (float64*)malloc(n * 8);
+
+    x[0] = 0.0; y[0] = 0.0; z[0] = 0.0; mass[0] = 39.478;
+    x[1] = 4.84; y[1] = -1.16; z[1] = -0.10; mass[1] = 0.037;
+    x[2] = 8.34; y[2] = 4.12; z[2] = -0.40; mass[2] = 0.011;
+    x[3] = 12.89; y[3] = -15.11; z[3] = -0.22; mass[3] = 0.0017;
+    x[4] = 15.37; y[4] = -25.91; z[4] = 0.17; mass[4] = 0.0020;
+    for (int32 i = 0; i < n; i = i + 1) {
+        vx[i] = 0.0; vy[i] = 0.0; vz[i] = 0.0;
+    }
+    vx[1] = 1.61; vy[1] = 0.55; vz[1] = -0.03;
+    vx[2] = 1.49; vy[2] = 0.88; vz[2] = -0.03;
+    vx[3] = 1.26; vy[3] = 0.87; vz[3] = -0.02;
+    vx[4] = 1.17; vy[4] = 0.73; vz[4] = -0.01;
+
+    for (int32 step = 0; step < steps; step = step + 1) {
+        for (int32 i = 0; i < n; i = i + 1) {
+            for (int32 j = i + 1; j < n; j = j + 1) {
+                float64 dx = x[i] - x[j];
+                float64 dy = y[i] - y[j];
+                float64 dz = z[i] - z[j];
+                float64 d2 = dx * dx + dy * dy + dz * dz;
+                float64 invd = 1.0 / std::sqrt(d2);
+                float64 invd3 = invd * invd * invd;
+                float64 mi = mass[i] * invd3;
+                float64 mj = mass[j] * invd3;
+                vx[i] = vx[i] - dx * mj;
+                vy[i] = vy[i] - dy * mj;
+                vz[i] = vz[i] - dz * mj;
+                vx[j] = vx[j] + dx * mi;
+                vy[j] = vy[j] + dy * mi;
+                vz[j] = vz[j] + dz * mi;
+            }
+        }
+        for (int32 i = 0; i < n; i = i + 1) {
+            x[i] = x[i] + dt * vx[i];
+            y[i] = y[i] + dt * vy[i];
+            z[i] = z[i] + dt * vz[i];
+        }
+    }
+
+    float64 energy = 0.0;
+    for (int32 i = 0; i < n; i = i + 1) {
+        energy = energy + 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i]);
+        for (int32 j = i + 1; j < n; j = j + 1) {
+            float64 dx = x[i] - x[j];
+            float64 dy = y[i] - y[j];
+            float64 dz = z[i] - z[j];
+            energy = energy - mass[i] * mass[j] / std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+    println("{}", static_cast<int64>(energy * 1000000.0));
+    free(x); free(y); free(z);
+    free(vx); free(vy); free(vz);
+    free(mass);
+    return 0;
+}

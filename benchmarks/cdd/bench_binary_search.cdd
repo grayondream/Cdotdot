@@ -1,0 +1,37 @@
+// Runtime benchmark: branch-heavy binary search over a 16M-element array.
+// Pair: benchmarks/cpp/bench_binary_search.cpp (same algorithm and result).
+module bench_binary_search;
+
+int32 main() {
+    int32 n = 16777216;
+    int32* a = (int32*)malloc(n * 4);
+    for (int32 i = 0; i < n; i = i + 1) {
+        a[i] = i * 2;
+    }
+    uint32 seed = 123456789;
+    int64 sum = 0;
+    for (int32 q = 0; q < 2000000; q = q + 1) {
+        seed = seed * 1664525 + 1013904223;
+        int32 key = static_cast<int32>(seed & 0x1ffffff);
+        int32 lo = 0;
+        int32 hi = n - 1;
+        int32 res = -1;
+        while (lo <= hi) {
+            int32 mid = (lo + hi) >> 1;
+            int32 v = a[mid];
+            if (v == key) {
+                res = mid;
+                break;
+            }
+            if (v < key) {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        sum = sum + static_cast<int64>(res);
+    }
+    println("{}", sum);
+    free(a);
+    return 0;
+}

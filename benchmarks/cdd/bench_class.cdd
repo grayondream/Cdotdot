@@ -1,0 +1,52 @@
+// Runtime benchmark: class field access, by-value method calls, array layout.
+// Pair: benchmarks/cpp/bench_class.cpp (same algorithm and result).
+module bench_class;
+
+class IVec3 {
+public:
+    int32 x;
+    int32 y;
+    int32 z;
+
+    void set(int32 a, int32 b, int32 c) {
+        this->x = a;
+        this->y = b;
+        this->z = c;
+    }
+
+    void add(IVec3 o) {
+        this->x = (this->x + o.x) & 1023;
+        this->y = (this->y + o.y) & 1023;
+        this->z = (this->z + o.z) & 1023;
+    }
+
+    int64 dot(IVec3 o) {
+        return static_cast<int64>(this->x) * static_cast<int64>(o.x) +
+               static_cast<int64>(this->y) * static_cast<int64>(o.y) +
+               static_cast<int64>(this->z) * static_cast<int64>(o.z);
+    }
+};
+
+int32 main() {
+    int32 n = 4000000;
+    IVec3* v = (IVec3*)malloc(n * 12);
+    for (int32 i = 0; i < n; i = i + 1) {
+        v[i].set(i & 1023, (i * 3) & 1023, (i * 7) & 1023);
+    }
+    for (int32 pass = 0; pass < 64; pass = pass + 1) {
+        for (int32 i = 0; i < n; i = i + 1) {
+            int32 next = i + 1;
+            if (next == n) {
+                next = 0;
+            }
+            v[i].add(v[next]);
+        }
+    }
+    int64 sum = 0;
+    for (int32 i = 0; i < n; i = i + 1) {
+        sum = sum + v[i].dot(v[i]);
+    }
+    println("{}", sum);
+    free(v);
+    return 0;
+}
