@@ -460,6 +460,11 @@ bool SemanticAnalyzer::isConditionType(Type* type) const {
            t->kind == TypeKind::Result;
 }
 
+bool SemanticAnalyzer::isReferenceType(Type* type) const {
+    Type* t = stripTypedef(type);
+    return t && t->kind == TypeKind::Pointer && t->isReference;
+}
+
 bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     left = stripTypedef(left);
     right = stripTypedef(right);
@@ -750,6 +755,64 @@ Type* SemanticAnalyzer::checkBinaryTypes(BinaryOp op, Type* left, Type* right, E
     }
 }
 
+FunctionType* SemanticAnalyzer::findUserConversion(Type* from, Type* to,
+                                                   ClassType** owner,
+                                                   bool* exact) const {
+    if (owner) *owner = nullptr;
+    if (exact) *exact = false;
+    from = stripTypedef(from);
+    to = stripTypedef(to);
+    if (!from || !to || from->kind != TypeKind::Class) return nullptr;
+
+    FunctionType* fallback = nullptr;
+    ClassType* fallbackOwner = nullptr;
+    Type* cls = from;
+    while (cls && cls->kind == TypeKind::Class) {
+        auto* ct = static_cast<ClassType*>(cls);
+        for (const auto& entry : ct->methods) {
+            if (entry.first.rfind("operator$", 0) != 0 || !entry.second) continue;
+            if (!canAccessMember(ct, ct->memberAccessLevel(entry.first))) continue;
+            Type* ret = stripTypedef(entry.second->returnType);
+            if (!ret) continue;
+            if (typesEqual(ret, to)) {
+                if (owner) *owner = ct;
+                if (exact) *exact = true;
+                return entry.second;
+            }
+            if (!fallback) {
+                const bool stdConv =
+                    (isArithmeticType(ret) && isArithmeticType(to)) ||
+                    (isPointerOrArray(ret) && isPointerOrArray(to));
+                if (stdConv) {
+                    fallback = entry.second;
+                    fallbackOwner = ct;
+                }
+            }
+        }
+        cls = ct->base;
+    }
+    if (owner) *owner = fallbackOwner;
+    if (exact) *exact = false;
+    return fallback;
+}
+
+bool SemanticAnalyzer::hasUserConversion(Type* from, Type* to) const {
+    return findUserConversion(from, to) != nullptr;
+}
+
+bool SemanticAnalyzer::coerceUserCondition(std::unique_ptr<ExprAST>& cond,
+                                           Type*& condType) {
+    if (!cond || !condType || isConditionType(condType)) return false;
+    if (!hasUserConversion(condType, typeCtx->getBool())) return false;
+    auto cast = std::make_unique<CastExprAST>(
+        typeCtx->getBool(), std::move(cond), CastKind::Static);
+    cast->type = typeCtx->getBool();
+    cast->isLValue = false;
+    cond = std::move(cast);
+    condType = typeCtx->getBool();
+    return true;
+}
+
 Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node) {
     if (!lhs || !rhs) return nullptr;
 
@@ -776,6 +839,7 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
     }
 
     if (isArithmeticType(lhsS) && isArithmeticType(rhsS)) return lhsRaw;
+    if (hasUserConversion(rhsS, lhsS)) return lhsRaw;
     // Arrays are non-modifiable lvalues (C99 6.5.16): assignment to an array
     // is rejected regardless of the RHS kind. Previously the generic
     // same-kind / pointer-or-array rules let `a = b` (even shape-mismatched)
@@ -939,6 +1003,24 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
                     call->defaultArgValues.push_back(dv);
                 }
             }
+        }
+    }
+
+    // `conversionRank` is intentionally context-free (it lives in Symbol.cpp),
+    // so enforce member access for user-defined conversions here.  Without
+    // this a private `operator int32()` could leak through a function call,
+    // even though explicit casts already reject it.
+    const size_t checkedArgs = std::min(args.size(), funcType->paramTypes.size());
+    for (size_t i = 0; i < checkedArgs; ++i) {
+        Type* at = stripTypedef(argTypes[i]);
+        Type* pt = stripTypedef(funcType->paramTypes[i]);
+        if (!at || !pt || at->kind != TypeKind::Class || typesEqual(at, pt)) continue;
+        if (conversionRank(at, pt) >= 0 && !hasUserConversion(at, pt)) {
+            emitError(DiagnosticCode::SemPrivateMemberAccess,
+                      "cannot use a private/protected conversion operator of class '" +
+                          static_cast<ClassType*>(at)->name + "' in this context",
+                      node);
+            return nullptr;
         }
     }
 
@@ -3143,13 +3225,11 @@ void SemanticAnalyzer::visit(VariableExprAST& node) {
         sym = lookup(originalName);
     }
     if (sym) {
-        // PAR-11: in a `this`-capturing lambda a bare field name beats a
-        // same-named file/module-scope symbol; block-scope locals (including
-        // static/thread_local/extern) still win because isFileOrModuleSymbol
-        // ignores static storage.
-        const bool fieldPriority = !lambdaFrames.empty() &&
-                                   lambdaFrames.back().capturesThis &&
-                                   currentClass != nullptr;
+        // A bare member name resolves to the implicit `this` receiver.  This
+        // applies to ordinary instance methods too, not only `this`-capturing
+        // lambdas: a file/module symbol of the same name must not shadow a
+        // class field inside the method body.
+        const bool fieldPriority = currentClass != nullptr && !m_inStaticMethod;
         if (fieldPriority && isFileOrModuleSymbol(sym) &&
             desugarImplicitThis(node, originalName)) {
             return;
@@ -3420,6 +3500,16 @@ void SemanticAnalyzer::visit(BinaryExprAST& node) {
                 }
                 if (method) delete method;
             }
+            // Contextual bool for logical operators (`f && g`, `f || g`).
+            if ((node.op == BinaryOp::And || node.op == BinaryOp::Or) &&
+                (isConditionType(leftType) ||
+                 hasUserConversion(leftType, typeCtx->getBool())) &&
+                (isConditionType(rightType) ||
+                 hasUserConversion(rightType, typeCtx->getBool()))) {
+                node.type = typeCtx->getInt32();
+                node.isLValue = false;
+                return;
+            }
             emitError("no matching " + binaryOpToString(node.op) + " operator for types '" 
                 + typeToString(leftType) + "' and '" + typeToString(rightType) + "'", node);
             node.type = nullptr;
@@ -3545,9 +3635,14 @@ void SemanticAnalyzer::visit(UnaryExprAST& node) {
                 }
                 if (method) delete method;
             }
-            // No overload: `!aggregate` has no built-in meaning (coerceToBool
-            // cannot lower an aggregate) — diagnose instead of emitting bad IR.
+            // No overload: `!aggregate` uses a contextually converted bool
+            // (`operator bool`, or one user conversion + standard bool).
             if (node.op == UnaryOp::Not) {
+                if (hasUserConversion(operandType, typeCtx->getBool())) {
+                    node.type = typeCtx->getInt32();
+                    node.isLValue = false;
+                    return;
+                }
                 emitError("invalid operand to unary '!': '" + typeToString(operandType) + "'", node);
                 node.type = nullptr;
                 node.isLValue = false;
@@ -4269,7 +4364,8 @@ bool SemanticAnalyzer::tryAnalyzeAssertCall(CallExprAST& node) {    node.type = 
     if (!condType) {
         return true; // already reported
     }
-    if (!isConditionType(condType)) {
+    if (!isConditionType(condType) &&
+        !coerceUserCondition(node.args[0], condType)) {
         emitError("'assert' condition must be a scalar or optional/result, got '" + typeToString(condType) + "'", node);
         return true;
     }
@@ -5248,7 +5344,8 @@ void SemanticAnalyzer::visit(TernaryExprAST& node) {
     Type* thenType = getExprType(*node.then);
     Type* elseType = getExprType(*node.elseExpr);
 
-    if (condType && !isConditionType(condType)) {
+    if (condType && !isConditionType(condType) &&
+        !coerceUserCondition(node.cond, condType)) {
         emitError("ternary condition must be scalar or optional/result, but got '" + typeToString(condType) + "'", node);
     }
 
@@ -5294,6 +5391,11 @@ void SemanticAnalyzer::visit(CastExprAST& node) {
         bool explicitViewToPointer =
             (from->kind == TypeKind::Str || from->kind == TypeKind::String) &&
             to->kind == TypeKind::Pointer;
+        // SG-11: user-defined conversion operator `operator T()`, including
+        // one user conversion followed by a standard arithmetic/pointer
+        // conversion. Private operators are filtered by findUserConversion.
+        const bool userConversion = from->kind == TypeKind::Class &&
+                                     hasUserConversion(from, to);
         switch (node.castKind) {
             case CastKind::Static:
                 // Arithmetic <-> arithmetic (incl. enum, which are integers) or
@@ -5301,7 +5403,7 @@ void SemanticAnalyzer::visit(CastExprAST& node) {
                 // reinterpret_cast (or a C-style cast).
                 ok = (isArithmeticType(from) && isArithmeticType(to)) ||
                      (isPointerOrArray(from) && isPointerOrArray(to)) ||
-                     explicitViewToPointer;
+                     explicitViewToPointer || userConversion;
                 what = "static_cast";
                 break;
             case CastKind::Reinterpret:
@@ -5319,23 +5421,25 @@ void SemanticAnalyzer::visit(CastExprAST& node) {
                      (isPointerOrArray(from) && isPointerOrArray(to)) ||
                      (isPointerOrArray(from) && isIntegerType(to)) ||
                      (isIntegerType(from) && isPointerOrArray(to)) ||
-                     explicitViewToPointer ||
+                     explicitViewToPointer || userConversion ||
                      typesCompatible(exprType, node.castType);
                 what = "cast";
                 break;
         }
         if (!ok) {
+            // A C-style cast is an escape hatch only for conversions that have
+            // a defined lowering. An aggregate <-> scalar cast without a
+            // conversion operator has no valid IR representation; it used to
+            // warn and then store the aggregate into a scalar slot.
             std::string msg;
             if (node.castKind == CastKind::CStyle) {
-                // Preserve the historical C-style cast wording.
                 msg = "incompatible cast from '" + typeToString(exprType) + "' to '" +
                       typeToString(node.castType) + "'";
-                emitWarning(DiagnosticCode::SemIncompatibleCast, msg, node);
             } else {
                 msg = std::string(what) + ": incompatible cast from '" +
                       typeToString(exprType) + "' to '" + typeToString(node.castType) + "'";
-                emitError(DiagnosticCode::SemIncompatibleCast, msg, node);
             }
+            emitError(DiagnosticCode::SemIncompatibleCast, msg, node);
         }
     }
     node.type = node.castType;
@@ -5423,8 +5527,13 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
                 auto* ft = static_cast<FunctionType*>(method->type);
                 node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
                 node.memberOperator = true;
-                node.type = ft->returnType;
-                node.isLValue = false;
+                if (ft->returnType && ft->returnType->isReference) {
+                    node.type = ft->returnType->base;
+                    node.isLValue = true;
+                } else {
+                    node.type = ft->returnType;
+                    node.isLValue = false;
+                }
                 delete method;
                 return;
             }
@@ -6147,6 +6256,21 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
     }
 
     auto* funcType = static_cast<FunctionType*>(method->type);
+    for (size_t i = 0; i < argTypes.size() && i + 1 < funcType->paramTypes.size(); ++i) {
+        Type* at = stripTypedef(argTypes[i]);
+        Type* pt = stripTypedef(funcType->paramTypes[i + 1]);
+        if (!at || !pt || at->kind != TypeKind::Class || typesEqual(at, pt)) continue;
+        if (conversionRank(at, pt) >= 0 && !hasUserConversion(at, pt)) {
+            emitError(DiagnosticCode::SemPrivateMemberAccess,
+                      "cannot use a private/protected conversion operator of class '" +
+                          static_cast<ClassType*>(at)->name + "' in this context",
+                      node);
+            node.type = nullptr;
+            node.isLValue = false;
+            delete method;
+            return;
+        }
+    }
     // Store the declared parameter types (incl. this) so codegen mangles
     // against the definition site — required for decayed arguments.
     node.resolvedParamTypes = funcType->paramTypes;
@@ -6660,8 +6784,7 @@ bool SemanticAnalyzer::checkEnclosingLambdaCapture(const std::string& name,
 // PAR-11: `this`-capturing lambdas expose bare fields as `this->field`.
 bool SemanticAnalyzer::desugarImplicitThis(VariableExprAST& node,
                                            const std::string& name) {
-    if (lambdaFrames.empty() || !lambdaFrames.back().capturesThis ||
-        !currentClass) {
+    if (!currentClass || m_inStaticMethod) {
         return false;
     }
     if (!findFieldOwner(currentClass, name)) return false;
@@ -7537,7 +7660,8 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
 
     if (node.value) {
         if (currentFunction && retValType &&
-            !typesCompatible(currentFunction->returnType, retValType)) {
+            !typesCompatible(currentFunction->returnType, retValType) &&
+            !hasUserConversion(retValType, currentFunction->returnType)) {
             emitError("return type mismatch in function '" +
                           std::string(currentFunction->name) + "': expected '" +
                           typeToString(currentFunction->returnType) + "', got '" +
@@ -7551,7 +7675,8 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
 
 void SemanticAnalyzer::visit(IfStmtAST& node) {
     Type* condType = getExprType(*node.cond);
-    if (condType && !isConditionType(condType)) {
+    if (condType && !isConditionType(condType) &&
+        !coerceUserCondition(node.cond, condType)) {
         emitError("if condition must be scalar or optional/result, but got '" + typeToString(condType) + "'", node);
     }
     if (node.thenStmt) visit(*node.thenStmt);
@@ -7560,7 +7685,8 @@ void SemanticAnalyzer::visit(IfStmtAST& node) {
 
 void SemanticAnalyzer::visit(WhileStmtAST& node) {
     Type* condType = getExprType(*node.cond);
-    if (condType && !isConditionType(condType)) {
+    if (condType && !isConditionType(condType) &&
+        !coerceUserCondition(node.cond, condType)) {
         emitError("while condition must be scalar or optional/result, but got '" + typeToString(condType) + "'", node);
     }
     if (node.body) visit(*node.body);
@@ -7568,7 +7694,8 @@ void SemanticAnalyzer::visit(WhileStmtAST& node) {
 
 void SemanticAnalyzer::visit(DoWhileStmtAST& node) {
     Type* condType = getExprType(*node.cond);
-    if (condType && !isConditionType(condType)) {
+    if (condType && !isConditionType(condType) &&
+        !coerceUserCondition(node.cond, condType)) {
         emitError("do-while condition must be scalar or optional/result, but got '" + typeToString(condType) + "'", node);
     }
     if (node.body) visit(*node.body);
@@ -7579,7 +7706,8 @@ void SemanticAnalyzer::visit(ForStmtAST& node) {
     if (node.init) visit(*node.init);
     if (node.cond) {
         Type* condType = getExprType(*node.cond);
-        if (condType && !isConditionType(condType)) {
+        if (condType && !isConditionType(condType) &&
+            !coerceUserCondition(node.cond, condType)) {
             emitError("for condition must be scalar or optional/result, but got '" + typeToString(condType) + "'", node);
         }
     }
@@ -7610,6 +7738,11 @@ void SemanticAnalyzer::visit(ContinueStmtAST& node) {}
 void SemanticAnalyzer::visit(NullStmtAST& node) {}
 
 void SemanticAnalyzer::visit(VarDeclAST& node) {
+    if (isReferenceType(node.type)) {
+        emitError("reference types are only supported as the return type of operator[]", node);
+        node.type = nullptr;
+        return;
+    }
     const bool savedCtInit = m_inCompileTimeInitializer;
     if (node.isCompileTime) m_inCompileTimeInitializer = true;
     struct CtInitGuard {
@@ -7849,11 +7982,23 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
     // C static local: initialization must be a compile-time constant; the
     // storage itself is emitted at module scope by codegen.
     if (node.isStaticLocal && node.initExpr) {
+        // A brace initializer needs its declared aggregate type before the
+        // compile-time evaluator can turn it into a constant.  The ordinary
+        // initializer path below assigns this later; static locals fold here.
+        if (auto* initList =
+                dynamic_cast<InitializerListExprAST*>(node.initExpr.get())) {
+            initList->type = node.type;
+            for (auto& e : initList->initializers) getExprType(*e);
+        }
         auto folded = evaluateConstexpr(node.initExpr.get());
         if (!folded) {
             emitError("static local variable '" + node.name +
                           "' must be initialized with a constant expression",
                       node);
+        } else if (folded->type == ConstValue::AGGREGATE) {
+            node.foldedAggregate = folded->aggregate;
+        } else if (folded->type == ConstValue::CONTAINER) {
+            node.foldedContainer = folded->container;
         } else {
             FoldedValue fv;
             fv.type = static_cast<FoldedValue::Type>(folded->type);
@@ -7861,6 +8006,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                 case ConstValue::INT: fv.intVal = folded->intVal; break;
                 case ConstValue::DOUBLE: fv.doubleVal = folded->doubleVal; break;
                 case ConstValue::CHAR: fv.charVal = folded->charVal; break;
+                default: break;
             }
             node.foldedValue = fv;
         }
@@ -8041,7 +8187,8 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                     return;
                 }
             }
-            if (initType && !typesCompatible(node.type, initType)) {
+            if (initType && !typesCompatible(node.type, initType) &&
+                !hasUserConversion(initType, node.type)) {
                 emitError("type mismatch in initialization of '" + node.name + "': expected '" 
                     + typeToString(node.type) + "', got '" + typeToString(initType) + "'", node);
             }
@@ -8071,6 +8218,11 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
 }
 
 void SemanticAnalyzer::visit(ArrayDeclAST& node) {
+    if (isReferenceType(node.elementType)) {
+        emitError("reference types are only supported as the return type of operator[]", node);
+        node.elementType = nullptr;
+        return;
+    }
     // P1-05 / ANN-06: 数组变量注解验证。
     validateAnnotations(node.annotations, node, "variable");
     // AGG-11 评审 I2: array declarations are var declarations (DS5) — a
@@ -8374,6 +8526,12 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
     // P1-05 / ANN-06: struct/class 与字段注解验证——class 的 repr(C) 目标
     // 不符（spec：仅 struct/union）。
     validateAnnotations(node.annotations, node, node.isClassDecl ? "class" : "struct");
+    for (const auto& field : node.fields) {
+        if (isReferenceType(field.type)) {
+            emitError("reference types are only supported as the return type of operator[]", node);
+            break;
+        }
+    }
 
     // P1-05 / ANN-02/03: 布局注解折叠进 Type（LayoutBuilder 消费）。
     {
@@ -8934,6 +9092,42 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     // Capture method-ness before the out-of-class static path clears
     // className/oocClass; Auto-return rejection must still see it.
     const bool isMethodDecl = currentClass != nullptr || !node.className.empty();
+    if (isReferenceType(node.returnType) &&
+        !(isMethodDecl && methodLookupName == "operator[]")) {
+        emitError("reference types are only supported as the return type of operator[]", node);
+    }
+    if (!isMethodDecl && oocOriginalName == "main") {
+        Type* mainRet = stripTypedef(node.returnType);
+        if (!mainRet || mainRet->kind == TypeKind::Void ||
+            !isIntegerType(mainRet)) {
+            emitError("main must return an integer type", node);
+        }
+        if (!node.params.empty()) {
+            bool argsOk = node.params.size() == 2;
+            if (argsOk) {
+                Type* argcTy = stripTypedef(node.params[0]->type);
+                Type* argvTy = stripTypedef(node.params[1]->type);
+                Type* argvInner =
+                    (argvTy && argvTy->kind == TypeKind::Pointer)
+                        ? stripTypedef(argvTy->base)
+                        : nullptr;
+                argsOk = argcTy && argcTy->kind == TypeKind::Int32 &&
+                         argvInner && argvInner->kind == TypeKind::Pointer &&
+                         argvInner->base &&
+                         stripTypedef(argvInner->base)->kind == TypeKind::Char;
+            }
+            if (!argsOk) {
+                emitError("main must take no parameters or (int32 argc, char** argv)",
+                          node);
+            }
+        }
+    }
+    for (const auto& p : node.params) {
+        if (isReferenceType(p->type)) {
+            emitError("reference types are only supported as the return type of operator[]", node);
+            break;
+        }
+    }
     if (!node.className.empty()) {
         oocClass = typeCtx->getClass(node.className);
         if (!oocClass) {
@@ -10177,6 +10371,10 @@ bool SemanticAnalyzer::isMethodCall(ExprAST& expr) {
 
 // 新增AST节点的visit方法实现
 void SemanticAnalyzer::visit(UsingDeclAST& node) {
+    if (isReferenceType(node.aliasedType)) {
+        emitError("reference types are only supported as the return type of operator[]", node);
+        return;
+    }
     // PAR-24: using 是唯一别名形式——注解目标校验、弃用折叠与内联 enum
     // 枚举量注册都与原 typedef 语义对齐。
     validateAnnotations(node.annotations, node, "using");

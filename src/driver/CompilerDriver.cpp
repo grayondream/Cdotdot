@@ -392,10 +392,6 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
         return 1;
     }
 
-    if (syntaxOnly) {
-        return 0;
-    }
-
     // Inject std.c (MOD-09 / STD-23) before semantic analysis so its
     // declarations precede user code. The binding layer is a standard-library
     // file (libs/std/c.cdd), never compiler-embedded source.
@@ -429,6 +425,12 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
     if (!analyzer.getErrors().empty() ||
         (werror && !analyzer.getWarnings().empty())) {
         return 1;
+    }
+
+    // `-fsyntax-only` stops after parsing + semantic analysis; no IR or
+    // object emission.
+    if (syntaxOnly) {
+        return 0;
     }
 
     CodegenContext codegenCtx;
@@ -553,7 +555,7 @@ void CompilerDriver::printHelp() const {
               << "  -Wall           Enable all warnings\n"
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
-              << "  -fsyntax-only   Syntax check only\n"
+              << "  -fsyntax-only   Parse and semantic-check only (no codegen)\n"
               << "  -l <lib>        Link library\n"
               << "  -L <path>       Library search path\n"
               << "  -h, --help      Show this help message\n";

@@ -110,6 +110,10 @@ public:
     // AGG-10: class-body `static` method — no `this` insertion; sema rewrites
     // the name to the desugared `Class_method` global symbol.
     bool isStatic = false;
+    // SG-11 / conversion operator: `operator T()` has no written return type;
+    // returnType is the target type and this flag lets sema/codegen find it.
+    bool isConversionOperator = false;
+    Type* conversionType = nullptr;
     // PAR-03: out-of-class method definition `RetType Class::method(...) {...}`.
     // Non-empty = the qualifying class name; sema binds the body to the method
     // declared in that class (inserting `this` like an in-class definition).

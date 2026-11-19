@@ -73,6 +73,18 @@
 > **进度快照（2026-11-01，容器文件拆分）**：`std.collections` 按容器拆为 `libs/std/collections/{vec,deque,hashmap,hashset}.cdd` 独立模块（`std.collections.vec` 等可直接导入）；`libs/std/collections.cdd` 保留为汇总入口，既有 `import std.collections;` 用法不变。新增直接导入测试。全量 **1658/1658** 通过（2 个既有 `GTEST_SKIP`）。**后续拍平**：文件移至 `libs/std/{vec,deque,hashmap,hashset}.cdd`，模块名改为 `std.vec` 等，汇总模块移除。
 > **进度快照（2026-11-01，constexpr 容器）**：`constexpr` 求值器可执行 `Vec`/`Deque`/`HashMap`/`HashSet`（循环/赋值/`&out`/标量与 `string_view` 元素），`constexpr` 容器变量物化为只读常量数组 + 常量结构体（含 HashMap/HashSet 的开放寻址表与回调函数指针）；物化表禁止修改/可变拷贝。顺带修复 `typeToMangled` 缺失 `Str`/`String` 与模板函数类型内 `TypeVar` 未替换两个阻塞缺陷。全量 **1699/1699** 通过（2 个既有 `GTEST_SKIP`）。
 > **进度快照（2026-11-01，容器模块拍平）**：容器实现从 `libs/std/collections/` 移至 `libs/std/{vec,deque,hashmap,hashset}.cdd`，模块名改为 `std.vec` / `std.deque` / `std.hashmap` / `std.hashset`；移除 `libs/std/collections.cdd` 汇总入口，`import std.collections;` 不再提供。测试与 `docs/spec/{stdlib,compile_time}.md` 同步为扁平导入。全量 **1699/1699** 通过（2 个既有 `GTEST_SKIP`），`examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+> **进度快照（2026-11-18，P0/P1 语法缺陷修复）**：修复局部 record/class 方法导致编译器 SIGSEGV（codegen 未恢复 insertion point）、转换运算符 `operator T()`（显式/隐式/布尔条件）、TYP-28 无符号宽化 cast、CG-15 `-O0` 循环局部 alloca 栈增长、模块非导出类型泄漏、static 局部聚合初始化、成员 `operator[]` 写穿（新增 `T&` 参考返回）、实例方法裸成员名、`main(argc, argv)` 入口符号。全量 **1918/1918** 通过（新增 9 个回归测试）；`-fsyntax-only` 当时仍只做解析（2026-11-19 已修复）。
+
+> **进度快照（2026-11-19，剩余缺陷修复完成）**：在 2026-11-19 复核清单基础上按“全部修复”处理：
+> - **C 风格 cast**：聚合 ↔ 标量且无 `operator T()` 时改为 `E2006` 硬错误；不再生成 `store %Agg, ptr %scalar` 这类类型不匹配 IR。算术/指针 C 风格转换保持。
+> - **用户转换序列**：支持一次用户转换后接标准算术/指针转换；`static_cast<int64>(c)`、`int64 x=c`、函数实参/返回等使用 `operator int32()` 后再宽化。codegen 由 `CodegenContext::tryUserConversion` 统一处理，目标为 bool 时走 `coerceToBool`。
+> - **上下文 bool**：`!f`、`f && f`/`f || f`、`f ? a : b`、`assert(f)` 以及 `operator int32` 的 `if(c)` 均可用；私有转换运算符按 `canAccessMember` 拒绝（含函数/方法实参）。
+> - **`T&`**：普通引用变量/形参/字段/别名及非 `operator[]` 返回均报错；成员 `operator[]` 的 `T&` 返回仍支持写穿。
+> - **`main`**：必须是整数返回类型，`void main` 报错；函数体自然结束按返回类型隐式返回 0；形参只允许无参或 `(int32, char**)`。
+> - **`-fsyntax-only`**：现在执行 parse + sema，不再只做 lex/parse。
+> - **模块隐藏类型诊断**：隐藏类型名现在报 `unknown type 'Hidden'`，不再退化成 `expected ';' after expression statement`。
+> - 新增/更新回归测试；全量 **1932/1932** 通过；`examples/all_features.cdd` 仍为 `ALL FEATURES OK`。2026-11-18 的性能基线不受影响。
+
 > **进度快照（2026-11-01，std.atomic / std.thread）**：新增 `libs/std/atomic.cdd`（`Atomic<T>`、`MemoryOrder*`、per-order 自由函数、显式 CAS、fence）与 `libs/std/thread.cdd`（pthread `Thread` 生命周期、`hardware_concurrency`、`this_thread_*`、`thread_equal`）。编译器新增内部 `__cdd_atomic_*` 内建（LLVM 整数 carrier：bool i8、float/pointer/enum bitcast，自然对齐）并修复模板 `atomic T`、i64 字段对齐、bool `atomic i1`；支持关键字模块路径分量 `std.atomic`。v1 限制：1/2/4/8 字节标量/指针/float16/32/64/enum，无 16 字节/聚合；线程仅 Linux x86-64 pthread，无 mutex/condvar。新增 27 个测试；全量 **1726/1726** 通过（2 个既有 `GTEST_SKIP`），`examples/all_features.cdd` 输出 `ALL FEATURES OK`。评审收口：relaxed fence 合法化、Consume 分派、模板/union/typedef/16 字节 atomic 编译期拒绝。
 >
 > **进度快照（2026-10-27，语法缺口补充审计）**：在 §24 基础上继续补漏，新增 **§25**（SG-12 ~ SG-23、SG-B07 ~ SG-B09），覆盖数组/位域常量表达式、声明符递归与函数类型形参、静态成员类外定义、C 字面量、asm、模块/控制流/类模板扩展。新补项中 P1 为 SG-12、SG-14；SG-12、SG-13、SG-14、SG-15、SG-16、SG-17 与 SG-B07、SG-B09 已修复（SG-15 于 2026-10-28）；SG-18、SG-19 已全部修复；SG-20 ~ SG-23 仍挂账（SG-B07 ~ SG-B09 已全部修复）。
@@ -217,7 +229,7 @@
 - `[x]` **TYP-25** `(新)` enum 默认底层类型、枚举常量作用域与限定访问（细化 TYP-09）。枚举常量可作值/常量表达式（含 `= -1`、`= 1+2+4`），支持限定访问 `A::Red` 与限定类型名 `cfg::Mode`（无需 `enum` 关键字）；显式底层类型 `enum E : uint8`（含 `typedef enum : uint16 {...}`）已实现。
 - `[x]` **TYP-26** `(新)` 字符串字面量类型、`str`/`String` 生命周期与所有权（细化 FMT-01/02）。2026-10-08 完成（随 P1-06）：字面量类型 = `str`；所有权/边界见 DEC-20。
 - `[~]` **TYP-27** `(新)` 聚合类型 ABI：按值传参/返回（byval/sret）、端序、默认对齐与成员内边距（细化 MEM-09）。（草案见 `docs/spec/abi.md`）
-- `[ ]` **TYP-28** `(新)` **缺陷（性能基线发现，2026-11-16）**：`static_cast` 从 `uint8`/`uint32` 到更宽类型时走 `sext` 而非 `zext`。复现：`uint8 u = 250; static_cast<int64>(u)` → `-6`；`uint32 x = 2654435761u; static_cast<uint64>(x)` → `18446744072069020081`。`println` 的无符号打印路径（`zext`）正常。`benchmarks/README.md` 已记录；基准代码已避开该路径。
+- `[x]` **TYP-28** `(新)` **缺陷（性能基线发现，2026-11-16，已修复 2026-11-18）**：`static_cast` 从 `uint8`/`uint32` 到更宽类型时走 `sext` 而非 `zext`。复现：`uint8 u = 250; static_cast<int64>(u)` → `-6`；`uint32 x = 2654435761u; static_cast<uint64>(x)` → `18446744072069020081`。根因：`CastExprAST::codegen` 调用了不带源类型的 `castValue`；现改为 `castValue(val, expr->type, target)`，并新增 `ArithmeticConversionE2E.ExplicitWideningCastPreservesUnsigned`。
 
 ---
 
@@ -315,7 +327,7 @@
 - `[x]` **FUN-09** `(新)` 默认参数（**不做**命名参数，见 DEC-04）。**完成**（2026-10-19）：`T name = const-expr` 仅尾随参数、值须编译期常量；`OverloadSet::resolve` 区间化（`[minArgs, paramCount]`）+ 并列偏好少默认；调用点折叠暂存 + codegen 补参（CallExprAST/MethodCallExprAST）。
 - `[ ]` **FUN-10** `(已实现)` `defer`；补测试与文档。
 - `[x]` **FUN-11** `(已实现)` `constexpr` 函数/常量；与 `compile_time` 关系已定（DEC-05：并存 + 共享内核，2026-10-06）。
-- `[ ]` **FUN-12** `(新)` 程序入口约定：`main` 签名/参数/返回值，JIT 与原生一致（见 DEC-19）。
+- `[~]` **FUN-12** `(新)` 程序入口约定：`main` 签名/参数/返回值，JIT 与原生一致（见 DEC-19）。**部分完成（2026-11-18）**：`main(int32 argc, char** argv)` 现在按 C 符号 `main` 出码并可链接运行；`CompilerDriverTest.MainWithArgsLinksAndRuns` 覆盖。JIT 入口统一与返回值约定仍待收口。
 - `[ ]` **FUN-13** `(新)` 重载解析实现入口与诊断（实现 SEM-16）。
 - `[~]` **FUN-14** `(新)` `to_string`/`to_hash`/`equals` 扩展点的精确签名与查找规则（自由函数/成员方法两条路径）。（草案见 `docs/spec/semantics.md`）
 
@@ -495,7 +507,7 @@
 - `[x]` **CG-12** `compile_time` 常量折叠后 codegen；与 LLVM 常量集成。**已完成**（2026-10-06，随 CT-12）：表达式节点 `ctInt/ctFloat/ctHandled`，codegen 直接出 `llvm::Constant`，零运行时指令。
 - `[ ]` **CG-13** 原子操作与 `thread_local`。
 - `[ ]` **CG-14** 调试信息：DWARF、源码位置。
-- `[ ]` **CG-15** 优化级别 O0/O1/O2/O3/Os/Oz。**缺陷（2026-11-17 性能基线发现）**：`cdd -O0` 生成的 `bench_matmul`、`bench_nbody`、`bench_hashmap` 程序运行即 SIGSEGV（rc=139），同一源码 `-O1/-O2/-O3` 正常；已在 `benchmarks/BASELINE.md` 的矩阵中记录为 error cell。
+- `[~]` **CG-15** 优化级别 O0/O1/O2/O3/Os/Oz。**缺陷（2026-11-17 性能基线发现，已修复 2026-11-18）**：`cdd -O0` 生成的 `bench_matmul`、`bench_nbody`、`bench_hashmap` 程序运行即 SIGSEGV（rc=139），同一源码 `-O1/-O2/-O3` 正常。根因：循环体局部变量的 `alloca` 位于循环内，O0 不做 mem2reg，栈帧逐迭代增长；现统一经 `CodegenContext::createEntryAlloca` 放入函数 entry block。新增 `CompilerDriverTest.O0LoopLocalsDoNotGrowStack`；三个 O0 基准已恢复。
 - `[ ]` **CG-16** 目标三元组与交叉编译。
 - `[ ]` **CG-17** 链接：启动代码、libc、静态/动态库；无强制运行时。
 - `[ ]` **CG-18** ABI 一致性测试（含位域、继承、模板符号）。
@@ -527,7 +539,7 @@
 - `[ ]` **TST-07** `(新)` **覆盖率**（llvm-cov）报告与阈值。
 - `[ ]` **TST-08** 跨平台测试 Linux/macOS/Windows；交叉编译测试。
 - `[ ]` **TST-09** 可选：差分测试（对照 clang/gcc）、模糊测试（解析器/comptime/格式串）。
-- `[x]` **TST-10** 性能基准：编译速度、运行速度、代码大小（含方法学）。**完成**（2026-11-16，**2026-11-17 扩展**）：`benchmarks/` 现含 16 个 CDD/C++ 同算法负载（core 10、stdlib 4、alloc 1、startup 1）+ 合成编译语料 100/300/600/1200 函数；`run.py` 记录 5 预热 + 9 次中位数、p10/p90/CV、绑核、perf（IPC/GHz/cache/branch）、峰值 RSS、对象分节/剥离后可执行文件体积、CDD/clang LLVM IR 体积，并对 6 个代表负载跑 `-O0..-O3` 矩阵；参照 `clang++-22 -O2 -g` 与 `g++-15 -O2 -g`；`compare.py` 支持基线对比与 `--fail-regression`；方法学与当前数据见 `benchmarks/BASELINE.md`。
+- `[x]` **TST-10** 性能基准：编译速度、运行速度、代码大小（含方法学）。**完成**（2026-11-16，**2026-11-17 扩展，2026-11-18 修复版**）：`benchmarks/` 现含 16 个 CDD/C++ 同算法负载（core 10、stdlib 4、alloc 1、startup 1）+ 合成编译语料 100/300/600/1200 函数；`run.py` 记录 5 预热 + 9 次中位数、p10/p90/CV、绑核、perf（IPC/GHz/cache/branch）、峰值 RSS、对象分节/剥离后可执行文件体积、CDD/clang LLVM IR 体积，并对 6 个代表负载跑 `-O0..-O3` 矩阵；参照 `clang++-22 -O2 -g` 与 `g++-15 -O2 -g`；`compare.py` 支持基线对比与 `--fail-regression`；方法学与当前数据见 `benchmarks/BASELINE.md`。
 - `[ ]` **TST-11** 回归测试套件；标准库文档测试。
 - `[ ]` **TST-12** 发布流程：二进制包、变更日志（**无版本管理/edition**，见 Non-goals）。
 
@@ -609,7 +621,7 @@
 - `[ ]` **P2-06** ASan/UBSan/覆盖率（TST-05~07）。
 
 ### P3：1.0 稳定
-- `[~]` **P3-01** 性能优化（CG-15、TST-10）。**TST-10 基线完成**（2026-11-17，`benchmarks/BASELINE.md`）；CG-15 优化待做。
+- `[~]` **P3-01** 性能优化（CG-15、TST-10）。**TST-10 基线完成**（2026-11-18 修复版，`benchmarks/BASELINE.md`）；CG-15 优化待做。
 - `[ ]` **P3-02** ABI 冻结（无 edition，靠 ABI 测试 + 文档）。
 - `[ ]` **P3-03** 规范定稿与文档（INF-06）。
 - `[ ]` **P3-04** 标准库稳定；迁移指南（TOOL-06）。
@@ -806,11 +818,11 @@ class C { public: template<typename T> T id(T x); }; // 成员模板
 
 ### 24.4 不是语法缺口（语义 / ABI / codegen 边界）
 
-- **SG-B01 `static` 局部聚合初始化列表**：`static S s = {1};` 能解析，但 sema 报 `static local variable 's' must be initialized with a constant expression`。需要聚合常量折叠，不是 parser 缺口。关联 PAR-13/AGG。
-- **SG-B02 成员 `operator[]` 写穿**：`v[0] = 1;` 报 `no matching operator[] for types 'class V' and 'int32'`；当前成员 `operator[]` 路径只提交值，未形成可写左值。关联 SEM-17、CG。
-- **SG-B03 类方法内裸成员名**：方法体内 `return x;` 仍需写 `this->x`；这是名称查找/语言设计现状，不是语法解析。
-- **SG-B04 `-fsyntax-only` 只验证解析**：未知注解（如 `[[nodiscard]]`）可能 parse 通过、完整编译报 E2010；不能用 `-fsyntax-only` 证明特性可用。
-- **SG-B05 模块类型可见性**：非导出模块类型名仍可能被导入者看到；属 MOD 可见性，不是语法。
+- **SG-B01 `static` 局部聚合初始化列表 `[fixed 2026-11-18]`**：`static S s = {1};` 现在由 sema 先把 initializer-list 的类型绑定到声明类型，再折叠为 `foldedAggregate`，codegen 物化为模块级常量；新增 `DemoRegressionE2E.StaticLocalAggregateInitializer`。关联 PAR-13/AGG。
+- **SG-B02 成员 `operator[]` 写穿 `[fixed 2026-11-18]`**：新增参考返回后缀 `T&`（LLVM 表示为指针）与 `operator[]` 参考返回支持；`int32& operator[](int32)` 的调用结果是可写左值，`v[0] = 1` 可直接工作。新增 `DemoRegressionE2E.ReferenceReturnSubscriptIsWritable`。注意：通用引用变量/参数仍未开放，当前仅用于返回类型。关联 SEM-17、CG。
+- **SG-B03 类方法内裸成员名 `[fixed 2026-11-18]`**：实例方法内的裸字段名现在优先解析为隐式 `this->name`，并优先于同名文件/模块变量；静态方法仍拒绝 `this`。新增 `DemoRegressionE2E.BareMemberNameUsesImplicitThis`。
+- **SG-B04 `-fsyntax-only` 只验证解析 `[fixed 2026-11-19]`**：现在 parse 后继续执行 sema；未知注解等语义错误会让 `-fsyntax-only` 退出 1。新增 `CompilerDriverTest.SyntaxOnlyRunsSemanticChecks`。
+- **SG-B05 模块类型可见性 `[fixed 2026-11-18]`**：`Type` 增加 `moduleName`/`exported` 元数据；parser 在完成每个模块后标记用户类型，并在类型查找时过滤非导出跨模块类型。新增 `ModuleVisibilityTest.NonExportedTypeIsHidden`。
 - **SG-B06 聚合按值 ABI**：struct/class/union 的 byval/sret、对齐等由 MEM-14/TYP-27 跟踪，不是语法。
 
 ### 24.5 明确不做（不计入缺口）
@@ -1017,9 +1029,8 @@ struct M { mutable int32 x; };                                   // 解析失败
 struct D { int32 x = 1; };                                       // 默认成员初始化失败
 ```
 
-- 当前：class 的成员运算符分支能解析 `operator[]`/`operator()`；struct 的成员循环没有对应分支，尽管 struct 方法本身可用。
-- 另外：类成员 `operator[]`/`operator()` 的调用绑定不完整，读/写都可能报 `no matching operator...`（SG-B02 的写穿只是其中一例）。
-- `mutable`、默认成员初始化不在 `class-member`/`field-decl` 文法中；若要吸收需先定义初始化发生在何时。
+- 当前（2026-11-18 复核）：struct/class 共用 record 文法后，`operator[]`/`operator()` 的声明与读取调用均可工作；`T&` 参考返回使 `operator[]` 写穿可用（SG-B02 已修复）。
+- 仍未实现：`mutable`、默认成员初始化；`operator[]`/`operator()` 之外的特殊成员与访问控制扩展未逐项验证。
 - 关联：PAR-04、SEM-17、AGG-08、SG-B02、SG-B08。
 
 #### SG-23 模板类静态成员与类外模板成员定义 `[ext][P2]`
@@ -1040,7 +1051,7 @@ template<typename T> T V<T>::f() { return this->x; }  // 解析失败
 ### 25.4 不是语法缺口（语义 / codegen 边界）
 
 - **SG-B07 类外静态成员函数定义 `[fixed]`**：`struct S { static int32 f(); }; int32 S::f(){ return 1; }` 曾能解析但 sema 报 `method 'f' is not declared in class 'S'`。已让 sema 在 `staticMemberIndex` 中查找并绑定到脱糖后的全局符号，不再插入 `this`；新增 `SyntaxGapsE2E.OutOfClassStaticMethodDefinition`。关联 AGG-10、MOD-08、FUN-04。
-- **SG-B08 成员 `operator[]` / `operator()` 调用绑定 `[fixed]`**：sema 先尝试自由函数，再按类方法表解析成员运算符，并以对象地址作为隐式 `this`；`c[0]` 读取与 `c(1)` 调用均已打通。新增 `SyntaxGapsE2E.MemberSubscriptOperatorRead`、`MemberCallOperator`。写穿仍受语言无引用返回类型限制（SG-B02），不属于本次调用绑定缺口。关联 SEM-17、CG。
+- **SG-B08 成员 `operator[]` / `operator()` 调用绑定 `[fixed]`**：sema 先尝试自由函数，再按类方法表解析成员运算符，并以对象地址作为隐式 `this`；`c[0]` 读取与 `c(1)` 调用均已打通。新增 `SyntaxGapsE2E.MemberSubscriptOperatorRead`、`MemberCallOperator`。写穿（SG-B02）已于 2026-11-18 通过 `T&` 参考返回补齐；新增 `DemoRegressionE2E.ReferenceReturnSubscriptIsWritable`。关联 SEM-17、CG。
 - **SG-B09 全局 `string_view` 字面量 codegen 崩溃 `[fixed]`**：`string_view s = "abc"; int32 main(){return 0;}` 用 `-c` 编译曾段错误（`-fsyntax-only` 通过）；`"\x41"`、`"\u{41}"` 同样触发。根因：全局初始化时 IRBuilder 没有 insertion block，`CreateGlobalString` 未显式传 Module，解引用空 block。已改为传 `&ctx.getModule()`；新增 `SyntaxGapsE2E.GlobalStringViewLiteralDoesNotCrash`。关联 LEX-06、CG、MEM。
 
 ### 25.5 建议顺序与验收

@@ -188,7 +188,7 @@ cdd [options] <input.cdd>
 | `--no-prelude` | 不自动注入 `std.c` libc 绑定层 |
 | `-Wall` | 打开所有警告 |
 | `-Werror` | 将警告视为错误 |
-| `-fsyntax-only` | 只做词法、语法和 import 检查；跳过语义分析与代码生成 |
+| `-fsyntax-only` | 做词法、语法、import 与语义检查；跳过代码生成 |
 | `-l <lib>` | 链接库（可重复） |
 | `-L <path>` | 添加库搜索路径（可重复） |
 | `-h`, `--help` | 显示命令行帮助 |

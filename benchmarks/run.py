@@ -941,7 +941,7 @@ def render_markdown(report: dict, specs: list[dict]) -> str:
 
     add(f"# CDD Performance Baseline — {report['label']}")
     add("")
-    add(f"Generated: `{report['generated_at']}`  ")
+    add(f"Generated: `{report['generated_at']}`")
     add(f"Command: `{report['command']}`")
     add("")
     add("## Environment")
@@ -1367,9 +1367,6 @@ def render_markdown(report: dict, specs: list[dict]) -> str:
         "is not a strict cross-language code-size metric.")
     add("- Peak RSS is sampled once per implementation; allocator caching and the "
         "static mimalloc arena make it sensitive to run order.")
-    add("- `cdd -O0` currently crashes on `bench_matmul`, `bench_nbody`, and "
-        "`bench_hashmap` (SIGSEGV); those matrix cells are reported as errors. "
-        "This is tracked under `CG-15` and is independent of the `-O2` results.")
     add("- `startup` hardware counters are dominated by process setup and are only "
         "informative for the wall-clock column.")
     add("")

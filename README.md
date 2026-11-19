@@ -203,7 +203,7 @@ cdd [options] <input.cdd>
 | `--no-prelude` | Do not inject the automatic `std.c` libc binding layer |
 | `-Wall` | Enable all warnings |
 | `-Werror` | Treat warnings as errors |
-| `-fsyntax-only` | Run lexer, parser, and import checks only; skip semantic analysis and codegen |
+| `-fsyntax-only` | Run lexer, parser, import, and semantic checks; skip codegen |
 | `-l <lib>` | Link a library (repeatable) |
 | `-L <path>` | Add a library search path (repeatable) |
 | `-h`, `--help` | Show the command-line help |

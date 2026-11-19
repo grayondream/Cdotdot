@@ -150,12 +150,122 @@ TEST_F(CastOperatorsE2E, ReinterpretCastIntToPointerIsAllowed) {
     EXPECT_EQ(r.errors, 0);
 }
 
-TEST_F(CastOperatorsE2E, CStyleCastStillWarnsButCompiles) {
+TEST_F(CastOperatorsE2E, CStyleIncompatibleAggregateCastIsRejected) {
+    // A C-style cast is an escape hatch for scalar/pointer conversions, not a
+    // licence to store an aggregate into a scalar slot (or vice versa).
     AnalyzeResult r = analyzeSource(
-        "struct S { int32 a; };"
-        "int32 main() { int32 x = 5; struct S s = (struct S)x; return 0; }");
-    EXPECT_EQ(r.errors, 0);
-    EXPECT_GT(r.warnings, 0);
+        "struct CSAgg { int32 a; };"
+        "int32 main() { int32 x = 5; struct CSAgg s = (struct CSAgg)x; return 0; }");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, CStyleClassToScalarWithoutConversionIsRejected) {
+    AnalyzeResult r = analyzeSource(
+        "class CSC { public: int32 v; };"
+        "int32 main() { CSC c; c.v = 7; int32 x = (int32)c; return x - 7; }");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, StaticCastUsesConversionThenWidens) {
+    EXPECT_EQ(runSource(R"(
+        class SCWiden {
+        public:
+            int32 v;
+            operator int32() { return this->v; }
+        };
+        int32 main() {
+            SCWiden c; c.v = 41;
+            int64 x = static_cast<int64>(c);
+            return x == 41 ? 0 : 1;
+        }
+    )"), 0);
+}
+
+TEST_F(CastOperatorsE2E, ImplicitConversionThenWidens) {
+    EXPECT_EQ(runSource(R"(
+        class ICWiden {
+        public:
+            int32 v;
+            operator int32() { return this->v; }
+        };
+        int32 main() {
+            ICWiden c; c.v = 41;
+            int64 x = c;
+            return x == 41 ? 0 : 1;
+        }
+    )"), 0);
+}
+
+TEST_F(CastOperatorsE2E, PrivateConversionOperatorIsInaccessible) {
+    AnalyzeResult r = analyzeSource(R"(
+        class PrivConv {
+            int32 v;
+            operator int32() { return v; }
+        public:
+            void set(int32 x) { v = x; }
+        };
+        int32 main() {
+            PrivConv c;
+            c.set(42);
+            int32 x = static_cast<int32>(c);
+            return x - 42;
+        }
+    )");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, UserConversionInLogicalAndTernaryConditions) {
+    EXPECT_EQ(runSource(R"(
+        class CtxFlag {
+        public:
+            bool on;
+            operator bool() { return this->on; }
+        };
+        int32 main() {
+            CtxFlag f; f.on = true;
+            if (!f) return 1;
+            if (!(f && f)) return 2;
+            if (!(f || false)) return 3;
+            if (!(f ? true : false)) return 4;
+            assert(f);
+            return 0;
+        }
+    )"), 0);
+}
+
+TEST_F(CastOperatorsE2E, IntegerConversionIsUsableAsCondition) {
+    EXPECT_EQ(runSource(R"(
+        class CtxInt {
+        public:
+            int32 v;
+            operator int32() { return this->v; }
+        };
+        int32 main() {
+            CtxInt c; c.v = 1;
+            if (c) return 0;
+            return 1;
+        }
+    )"), 0);
+}
+
+TEST_F(CastOperatorsE2E, GeneralReferenceTypesAreRejected) {
+    AnalyzeResult r = analyzeSource(
+        "int32 main() { int32 x = 7; int32& r = x; return r; }");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, ReferenceParametersAreRejected) {
+    AnalyzeResult r = analyzeSource(
+        "void setref(int32& r) { r = 9; }"
+        "int32 main() { int32 x = 7; setref(x); return x; }");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, ReferenceReturnOutsideSubscriptIsRejected) {
+    AnalyzeResult r = analyzeSource(
+        "int32& getref() { static int32 x = 7; return x; }"
+        "int32 main() { return getref(); }");
+    EXPECT_GT(r.errors, 0);
 }
 
 TEST_F(CastOperatorsE2E, StaticCastToFunctionPointerTypeId) {
@@ -178,4 +288,44 @@ TEST_F(CastOperatorsE2E, ReinterpretCastToPointerToArrayTypeId) {
             return (*p)[1] - 4;
         }
     )"), 0);
+}
+
+TEST_F(CastOperatorsE2E, PrivateConversionOperatorCannotBePassedToFunction) {
+    AnalyzeResult r = analyzeSource(R"(
+        class PrivArgConv {
+            int32 v;
+            operator int32() { return v; }
+        public:
+            void set(int32 x) { v = x; }
+        };
+        int32 take(int32 x) { return x; }
+        int32 main() {
+            PrivArgConv p;
+            p.set(42);
+            return take(p) - 42;
+        }
+    )");
+    EXPECT_GT(r.errors, 0);
+}
+
+TEST_F(CastOperatorsE2E, PrivateConversionOperatorCannotBePassedToMethod) {
+    AnalyzeResult r = analyzeSource(R"(
+        class PrivArgConv2 {
+            int32 v;
+            operator int32() { return v; }
+        public:
+            void set(int32 x) { v = x; }
+        };
+        class Receiver {
+        public:
+            int32 take(int32 x) { return x; }
+        };
+        int32 main() {
+            PrivArgConv2 p;
+            p.set(42);
+            Receiver r;
+            return r.take(p) - 42;
+        }
+    )");
+    EXPECT_GT(r.errors, 0);
 }

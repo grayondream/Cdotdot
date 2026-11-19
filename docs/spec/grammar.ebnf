@@ -213,7 +213,9 @@ method-definition   = type , identifier , '::' , identifier , '(' , [ parameter-
 (* [impl] SEM-17：运算符重载（自由函数形式）
    `type operator OP (params) { ... }`；OP ∈ + - * / % == != < > <= >= && || & | ^ << >> ~ ! ++ --
                                              | '[]' | '()' *)
-operator-decl       = type , 'operator' , operator-symbol , '(' , [ parameter-list ] , ')' , block ;
+operator-decl       = ( type , 'operator' , operator-symbol
+                      | 'operator' , type ) , '(' , [ parameter-list ] , ')' , block ;
+                      (* [impl] 2026-11-18: 转换运算符 `operator T()`；方法名内部为 operator$<mangled-T> *)
 operator-symbol     = '+' | '-' | '*' | '/' | '%' | '==' | '!=' | '<' | '>' | '<=' | '>='
                     | '&&' | '||' | '&' | '|' | '^' | '<<' | '>>' | '~' | '!' | '++' | '--'
                     | '[' , ']' | '(' , ')' ;
@@ -241,10 +243,12 @@ function-pointer-type = type , '(' , '*' , identifier , ')'
 
 type                = [ 'const' | 'volatile' | 'atomic' ] , base-type
                       , [ 'const' | 'volatile' | 'atomic' ] , { pointer-suffix }
+                      , [ reference-suffix ]
                       , [ slice-suffix | optional-suffix ] ;
 (* [impl] 2026-10-26: 限定符可前置或后置——`const int32` / `int32 const`。 *)
 pointer-suffix      = '*' , { 'const' | 'volatile' | 'atomic' | 'restrict' } ;
 pointer-qualifier   = 'const' | 'volatile' | 'restrict' ;
+reference-suffix    = '&' ;  (* [impl] 2026-11-18/19: 仅允许作为成员 operator[] 的返回类型；LLVM 表示为指针 *)
 (* [impl] PAR-06：`restrict` 只作为指针后缀限定符接受（`T* restrict`）；
    前导位置不作限定符解析。语义见 MEM-04。 *)
 slice-suffix        = '[' , ']' ;                                   (* [impl] SliceType; 可叠加: T[][] = slice of slice *)

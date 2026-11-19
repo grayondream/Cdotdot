@@ -1,21 +1,21 @@
-# CDD Performance Baseline — 2026-11-17-baseline
+# CDD Performance Baseline — 2026-11-18-fixed
 
-Generated: `2026-11-17T22:43:23`  
-Command: `/home/ares/apps/conda/bin/python3 benchmarks/run.py --full --baseline-md --label 2026-11-17-baseline`
+Generated: `2026-11-18T22:25:18`
+Command: `/home/ares/apps/conda/bin/python3 benchmarks/run.py --full --baseline-md --label 2026-11-18-fixed`
 
 ## Environment
 
 | Item | Value |
 |---|---|
 | CPU | AMD Ryzen 5 5600X 6-Core Processor |
-| CPU count / pinned | 12 / 0 |
+| CPU count / pinned | 12 / 3 |
 | Governor | powersave |
-| Load average (1/5/15 min) | 0.82 / 1.23 / 1.33 |
-| Load average at end | 1.87 / 1.74 / 1.51 |
+| Load average (1/5/15 min) | 6.94 / 6.36 / 4.32 |
+| Load average at end | 2.34 / 3.06 / 3.47 |
 | Selected core busy at start | 0.0% |
 | Kernel | 7.0.0-43-generic (x86_64) |
-| CDD | `/media/nvm1/workspace/Cdotdot/build/bin/cdd` (3278352 bytes, build type `Release`) |
-| CDD commit | `388e62c` master (dirty worktree) |
+| CDD | `/media/nvm1/workspace/Cdotdot/build/bin/cdd` (3300160 bytes, build type `Release`) |
+| CDD commit | `c79cd5f` master (dirty worktree) |
 | LLVM (llvm-config) | 21.1.8 |
 | clang | Ubuntu clang version 22.1.2 (1ubuntu1) |
 | gcc | g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0 |
@@ -25,61 +25,61 @@ Method: `-O2` for every compiler, 5 warmup + 9 measured runs (median) for runtim
 ## Headline
 
 - `core` geometric mean: **1.06x** vs clang, **1.15x** vs gcc
-- `stdlib` geometric mean: **0.41x** vs clang, **0.43x** vs gcc
+- `stdlib` geometric mean: **0.39x** vs clang, **0.41x** vs gcc
 - `alloc` geometric mean: **0.30x** vs clang, **0.30x** vs gcc
-- `startup` geometric mean: **0.69x** vs clang, **1.01x** vs gcc
-- Largest core gap vs clang: `bench_matmul` at **2.94x**; largest core win: `bench_hashmap` at **0.66x**.
+- `startup` geometric mean: **0.71x** vs clang, **1.01x** vs gcc
+- Largest core gap vs clang: `bench_matmul` at **2.91x**; largest core win: `bench_hashmap` at **0.70x**.
 
 ## Runtime (median, lower is better; ratio = CDD / reference)
 
 | Benchmark | Tier | CDD (ms) | clang (ms) | gcc (ms) | CDD/clang | CDD/gcc | checksum |
 |---|---|---|---|---|---|---|---|
-| bench_fib | core | 240.8 | 228.1 | 125.3 | 1.06x | 1.92x | 102334155 |
-| bench_sieve | core | 1072.6 | 1192.3 | 1190.1 | 0.90x | 0.90x | 11078937 |
-| bench_matmul | core | 207.8 | 70.7 | 73.4 | 2.94x | 2.83x | 2876 |
-| bench_nbody | core | 285.9 | 298.0 | 295.3 | 0.96x | 0.97x | 1690136770432667 |
-| bench_sort | core | 470.0 | 451.1 | 461.1 | 1.04x | 1.02x | 8588201207136256 |
-| bench_hashmap | core | 206.3 | 314.9 | 294.9 | 0.66x | 0.70x | 4000000 |
-| bench_nqueens | core | 342.1 | 400.6 | 345.4 | 0.85x | 0.99x | 73712 |
-| bench_binary_search | core | 697.0 | 687.6 | 665.1 | 1.01x | 1.05x | 8382020676000 |
-| bench_mandelbrot | core | 382.4 | 382.6 | 380.8 | 1.00x | 1.00x | 172812923 |
-| bench_class | core | 263.4 | 222.9 | 227.4 | 1.18x | 1.16x | 67884192 |
-| bench_str_append | stdlib | 60.8 | 237.8 | 239.8 | 0.26x | 0.25x | 8976000000 |
-| bench_vec_push | stdlib | 53.6 | 135.6 | 136.7 | 0.40x | 0.39x | 1535999952000000 |
-| bench_hashmap_std | stdlib | 348.2 | 1532.8 | 1401.1 | 0.23x | 0.25x | 3999998000000 |
-| bench_deque | stdlib | 128.2 | 107.6 | 94.5 | 1.19x | 1.36x | 511999984000000 |
-| bench_malloc_churn | alloc | 149.3 | 498.6 | 497.0 | 0.30x | 0.30x | 1524000000 |
-| bench_empty | startup | 1.0 | 1.5 | 1.0 | 0.69x | 1.01x |  |
+| bench_fib | core | 242.0 | 228.1 | 125.1 | 1.06x | 1.93x | 102334155 |
+| bench_sieve | core | 1085.7 | 1214.8 | 1214.0 | 0.89x | 0.89x | 11078937 |
+| bench_matmul | core | 204.3 | 70.2 | 71.4 | 2.91x | 2.86x | 2876 |
+| bench_nbody | core | 292.5 | 294.1 | 293.0 | 0.99x | 1.00x | 1690136770432667 |
+| bench_sort | core | 462.7 | 448.0 | 453.6 | 1.03x | 1.02x | 8588201207136256 |
+| bench_hashmap | core | 207.8 | 294.9 | 293.1 | 0.70x | 0.71x | 4000000 |
+| bench_nqueens | core | 335.2 | 426.1 | 345.6 | 0.79x | 0.97x | 73712 |
+| bench_binary_search | core | 684.8 | 687.2 | 668.4 | 1.00x | 1.02x | 8382020676000 |
+| bench_mandelbrot | core | 378.5 | 379.4 | 378.2 | 1.00x | 1.00x | 172812923 |
+| bench_class | core | 259.6 | 229.2 | 229.3 | 1.13x | 1.13x | 67884192 |
+| bench_str_append | stdlib | 58.6 | 244.0 | 243.7 | 0.24x | 0.24x | 8976000000 |
+| bench_vec_push | stdlib | 53.7 | 137.1 | 137.6 | 0.39x | 0.39x | 1535999952000000 |
+| bench_hashmap_std | stdlib | 335.3 | 1585.2 | 1419.3 | 0.21x | 0.24x | 3999998000000 |
+| bench_deque | stdlib | 127.1 | 108.2 | 95.0 | 1.17x | 1.34x | 511999984000000 |
+| bench_malloc_churn | alloc | 152.9 | 517.6 | 504.4 | 0.30x | 0.30x | 1524000000 |
+| bench_empty | startup | 1.0 | 1.4 | 1.0 | 0.71x | 1.01x |  |
 
 ### Geometric mean by tier
 
 | Tier | CDD/clang | CDD/gcc |
 |---|---|---|
 | core (10) | 1.06x | 1.15x |
-| stdlib (4) | 0.41x | 0.43x |
+| stdlib (4) | 0.39x | 0.41x |
 | alloc (1) | 0.30x | 0.30x |
-| startup (1) | 0.69x | 1.01x |
+| startup (1) | 0.71x | 1.01x |
 
 ### Run-to-run stability (CV %, lower is better)
 
 | Benchmark | CDD CV | clang CV | gcc CV |
 |---|---|---|---|
-| bench_fib | 1.4% | 6.9% | 12.4% |
-| bench_sieve | 2.6% | 1.9% | 2.5% |
-| bench_matmul | 1.2% | 3.1% | 2.5% |
-| bench_nbody | 0.3% | 0.6% | 0.6% |
-| bench_sort | 1.0% | 2.9% | 2.9% |
-| bench_hashmap | 3.9% | 5.2% | 3.7% |
-| bench_nqueens | 1.0% | 4.4% | 3.6% |
-| bench_binary_search | 3.2% | 2.9% | 4.1% |
-| bench_mandelbrot | 2.1% | 1.3% | 0.2% |
-| bench_class | 2.7% | 2.8% | 3.1% |
-| bench_str_append | 5.4% | 0.6% | 1.4% |
-| bench_vec_push | 7.3% | 1.3% | 1.4% |
-| bench_hashmap_std | 3.5% | 3.1% | 3.2% |
-| bench_deque | 0.4% | 0.7% | 0.6% |
-| bench_malloc_churn | 3.1% | 1.4% | 3.0% |
-| bench_empty | 4.4% | 3.2% | 3.1% |
+| bench_fib | 2.1% | 2.5% | 3.9% |
+| bench_sieve | 0.4% | 0.3% | 0.8% |
+| bench_matmul | 1.0% | 4.3% | 2.1% |
+| bench_nbody | 28.4% | 11.3% | 9.6% |
+| bench_sort | 0.6% | 0.9% | 0.6% |
+| bench_hashmap | 2.8% | 2.9% | 1.4% |
+| bench_nqueens | 2.3% | 1.1% | 1.5% |
+| bench_binary_search | 0.9% | 1.0% | 1.2% |
+| bench_mandelbrot | 0.3% | 0.1% | 0.0% |
+| bench_class | 1.3% | 3.2% | 2.1% |
+| bench_str_append | 8.4% | 1.4% | 1.1% |
+| bench_vec_push | 7.4% | 2.5% | 1.0% |
+| bench_hashmap_std | 1.7% | 1.3% | 0.9% |
+| bench_deque | 0.2% | 0.5% | 0.3% |
+| bench_malloc_churn | 4.3% | 1.7% | 1.5% |
+| bench_empty | 3.0% | 26.9% | 4.6% |
 
 ## Optimization-level matrix (runtime median ms)
 
@@ -87,32 +87,30 @@ Method: `-O2` for every compiler, 5 warmup + 9 measured runs (median) for runtim
 
 | Benchmark | O | CDD | clang | gcc | CDD/clang | CDD/gcc |
 |---|---|---|---|---|---|---|
-| bench_fib | O0 | 376.5 | 464.3 | 414.9 | 0.81x | 0.91x |
-| bench_fib | O1 | 186.4 | 223.0 | 339.3 | 0.84x | 0.55x |
-| bench_fib | O2 | 240.6 | 229.5 | 126.1 | 1.05x | 1.91x |
-| bench_fib | O3 | 241.4 | 227.8 | 121.6 | 1.06x | 1.98x |
-| bench_matmul | O0 | - | - | - | - | - |
-| bench_matmul | O1 | 208.5 | 121.3 | 128.8 | 1.72x | 1.62x |
-| bench_matmul | O2 | 208.4 | 71.0 | 72.0 | 2.94x | 2.89x |
-| bench_matmul | O3 | 206.5 | 70.1 | 64.7 | 2.95x | 3.19x |
-| bench_nbody | O0 | - | - | - | - | - |
-| bench_nbody | O1 | 324.5 | 276.3 | 280.3 | 1.17x | 1.16x |
-| bench_nbody | O2 | 285.1 | 293.7 | 292.7 | 0.97x | 0.97x |
-| bench_nbody | O3 | 281.9 | 282.3 | 302.8 | 1.00x | 0.93x |
-| bench_hashmap | O0 | - | - | - | - | - |
-| bench_hashmap | O1 | 199.6 | 302.9 | 326.8 | 0.66x | 0.61x |
-| bench_hashmap | O2 | 195.3 | 288.5 | 282.6 | 0.68x | 0.69x |
-| bench_hashmap | O3 | 211.4 | 291.3 | 277.1 | 0.73x | 0.76x |
-| bench_nqueens | O0 | 902.2 | 918.2 | 856.1 | 0.98x | 1.05x |
-| bench_nqueens | O1 | 340.5 | 396.0 | 360.7 | 0.86x | 0.94x |
-| bench_nqueens | O2 | 336.6 | 399.8 | 345.6 | 0.84x | 0.97x |
-| bench_nqueens | O3 | 337.2 | 300.6 | 331.8 | 1.12x | 1.02x |
-| bench_str_append | O0 | 156.9 | 2372.9 | 2170.4 | 0.07x | 0.07x |
-| bench_str_append | O1 | 58.0 | 252.4 | 252.4 | 0.23x | 0.23x |
-| bench_str_append | O2 | 57.0 | 240.0 | 243.7 | 0.24x | 0.23x |
-| bench_str_append | O3 | 57.4 | 242.8 | 239.7 | 0.24x | 0.24x |
-
-Cells with build/run errors: `bench_matmul O0 cdd`, `bench_nbody O0 cdd`, `bench_hashmap O0 cdd`.
+| bench_fib | O0 | 381.1 | 474.7 | 402.3 | 0.80x | 0.95x |
+| bench_fib | O1 | 200.8 | 218.2 | 334.9 | 0.92x | 0.60x |
+| bench_fib | O2 | 250.8 | 242.0 | 124.5 | 1.04x | 2.01x |
+| bench_fib | O3 | 253.4 | 241.4 | 121.4 | 1.05x | 2.09x |
+| bench_matmul | O0 | 729.5 | 843.1 | 865.9 | 0.87x | 0.84x |
+| bench_matmul | O1 | 229.6 | 141.5 | 133.1 | 1.62x | 1.72x |
+| bench_matmul | O2 | 205.1 | 70.2 | 71.2 | 2.92x | 2.88x |
+| bench_matmul | O3 | 250.1 | 75.8 | 70.5 | 3.30x | 3.55x |
+| bench_nbody | O0 | 601.4 | 1127.6 | 1352.0 | 0.53x | 0.44x |
+| bench_nbody | O1 | 284.2 | 276.5 | 280.1 | 1.03x | 1.01x |
+| bench_nbody | O2 | 309.9 | 302.6 | 307.9 | 1.02x | 1.01x |
+| bench_nbody | O3 | 285.1 | 280.3 | 300.8 | 1.02x | 0.95x |
+| bench_hashmap | O0 | 504.9 | 662.1 | 532.8 | 0.76x | 0.95x |
+| bench_hashmap | O1 | 211.9 | 312.0 | 352.3 | 0.68x | 0.60x |
+| bench_hashmap | O2 | 203.1 | 294.4 | 293.9 | 0.69x | 0.69x |
+| bench_hashmap | O3 | 201.2 | 299.1 | 291.4 | 0.67x | 0.69x |
+| bench_nqueens | O0 | 803.7 | 908.7 | 845.3 | 0.88x | 0.95x |
+| bench_nqueens | O1 | 334.1 | 400.0 | 357.7 | 0.84x | 0.93x |
+| bench_nqueens | O2 | 340.0 | 368.6 | 342.5 | 0.92x | 0.99x |
+| bench_nqueens | O3 | 335.2 | 296.4 | 330.1 | 1.13x | 1.02x |
+| bench_str_append | O0 | 145.6 | 2422.1 | 2185.7 | 0.06x | 0.07x |
+| bench_str_append | O1 | 59.0 | 250.9 | 251.0 | 0.24x | 0.23x |
+| bench_str_append | O2 | 61.9 | 249.7 | 250.3 | 0.25x | 0.25x |
+| bench_str_append | O3 | 70.9 | 252.0 | 250.1 | 0.28x | 0.28x |
 
 This matrix is diagnostic: it shows whether a gap is already present at `-O0` (front-end/codegen shape) or only appears after optimization.
 
@@ -120,26 +118,26 @@ This matrix is diagnostic: it shows whether a gap is already present at `-O0` (f
 
 | Source | CDD `-c` | CDD syntax | clang `-c` | gcc `-c` | clang syntax | gcc syntax |
 |---|---|---|---|---|---|---|
-| bench_fib | 15.7 | 9.9 | 32.2 | 42.5 | 22.6 | 10.6 |
-| bench_sieve | 20.8 | 10.6 | 42.7 | 34.6 | 28.4 | 14.5 |
-| bench_matmul | 19.2 | 10.5 | 44.4 | 39.8 | 28.3 | 14.7 |
-| bench_nbody | 28.6 | 11.2 | 173.4 | 141.2 | 148.0 | 92.1 |
-| bench_sort | 23.8 | 10.5 | 51.5 | 47.5 | 28.1 | 14.6 |
-| bench_hashmap | 19.0 | 10.5 | 42.1 | 40.1 | 28.0 | 14.5 |
-| bench_nqueens | 19.1 | 10.3 | 41.7 | 35.0 | 28.6 | 14.4 |
-| bench_binary_search | 17.4 | 10.3 | 42.6 | 34.2 | 28.0 | 14.4 |
-| bench_mandelbrot | 17.2 | 10.1 | 34.3 | 26.8 | 22.8 | 10.8 |
-| bench_class | 20.5 | 10.5 | 46.4 | 39.1 | 28.8 | 14.7 |
-| bench_str_append | 17.9 | 10.1 | 186.5 | 150.7 | 156.7 | 104.9 |
-| bench_vec_push | 52.0 | 11.9 | 151.5 | 113.5 | 123.2 | 74.4 |
-| bench_hashmap_std | 76.0 | 12.8 | 209.2 | 177.7 | 147.7 | 95.9 |
-| bench_deque | 51.9 | 12.4 | 162.0 | 135.2 | 112.2 | 70.6 |
-| bench_malloc_churn | 17.1 | 10.2 | 39.7 | 33.0 | 27.8 | 14.5 |
-| bench_empty | 13.2 | 9.6 | 22.0 | 12.3 | 16.6 | 6.1 |
-| corpus_100 | 82.2 | 13.1 | 122.9 | 190.3 | 23.3 | 9.3 |
-| corpus_300 | 217.2 | 17.1 | 332.8 | 553.4 | 33.7 | 14.6 |
-| corpus_600 | 423.9 | 23.7 | 667.9 | 1127.4 | 49.8 | 22.6 |
-| corpus_1200 | 841.9 | 37.3 | 1423.6 | 2374.6 | 80.9 | 38.2 |
+| bench_fib | 17.0 | 11.0 | 33.4 | 43.5 | 23.7 | 10.8 |
+| bench_sieve | 22.0 | 11.1 | 43.4 | 35.8 | 29.6 | 14.8 |
+| bench_matmul | 20.3 | 11.1 | 45.2 | 41.5 | 30.0 | 15.1 |
+| bench_nbody | 30.3 | 12.0 | 180.6 | 148.3 | 154.5 | 96.7 |
+| bench_sort | 24.9 | 11.1 | 51.5 | 48.0 | 28.9 | 14.8 |
+| bench_hashmap | 19.9 | 11.2 | 42.5 | 40.4 | 28.7 | 14.7 |
+| bench_nqueens | 20.0 | 10.7 | 42.0 | 35.3 | 28.3 | 14.5 |
+| bench_binary_search | 18.3 | 10.9 | 42.0 | 35.0 | 28.9 | 14.7 |
+| bench_mandelbrot | 18.3 | 11.0 | 35.1 | 27.2 | 23.7 | 10.8 |
+| bench_class | 21.3 | 11.2 | 47.0 | 39.4 | 29.5 | 14.9 |
+| bench_str_append | 18.7 | 10.9 | 191.5 | 149.7 | 156.9 | 104.7 |
+| bench_vec_push | 52.9 | 12.4 | 152.3 | 113.6 | 121.3 | 74.8 |
+| bench_hashmap_std | 76.5 | 13.3 | 208.2 | 183.2 | 146.4 | 97.0 |
+| bench_deque | 52.8 | 13.0 | 162.0 | 136.2 | 113.5 | 70.7 |
+| bench_malloc_churn | 18.6 | 11.4 | 41.8 | 34.4 | 29.9 | 15.1 |
+| bench_empty | 14.0 | 10.4 | 23.7 | 12.5 | 18.1 | 6.4 |
+| corpus_100 | 84.1 | 13.8 | 124.6 | 192.2 | 24.4 | 9.4 |
+| corpus_300 | 221.0 | 17.6 | 341.9 | 556.9 | 35.4 | 15.0 |
+| corpus_600 | 431.6 | 24.9 | 686.5 | 1140.4 | 51.6 | 23.0 |
+| corpus_1200 | 846.1 | 39.1 | 1464.9 | 2427.4 | 82.3 | 39.2 |
 
 `syntax` is CDD's `-fsyntax-only` (lexer/parser/imports, no semantic analysis) versus the reference's `-fsyntax-only` (which does include semantic analysis), so the syntax columns are diagnostic, not a fair cross-language ratio.
 
@@ -147,10 +145,10 @@ This matrix is diagnostic: it shows whether a gap is already present at `-O0` (f
 
 | Functions | CDD `-c` | clang `-c` | gcc `-c` | CDD ms/fn | clang ms/fn | gcc ms/fn |
 |---|---|---|---|---|---|
-| 100 | 82.2 | 122.9 | 190.3 | 0.82 | 1.23 | 1.90 |
-| 300 | 217.2 | 332.8 | 553.4 | 0.72 | 1.11 | 1.84 |
-| 600 | 423.9 | 667.9 | 1127.4 | 0.71 | 1.11 | 1.88 |
-| 1200 | 841.9 | 1423.6 | 2374.6 | 0.70 | 1.19 | 1.98 |
+| 100 | 84.1 | 124.6 | 192.2 | 0.84 | 1.25 | 1.92 |
+| 300 | 221.0 | 341.9 | 556.9 | 0.74 | 1.14 | 1.86 |
+| 600 | 431.6 | 686.5 | 1140.4 | 0.72 | 1.14 | 1.90 |
+| 1200 | 846.1 | 1464.9 | 2427.4 | 0.71 | 1.22 | 2.02 |
 
 `ms/fn` normalizes the fixed compiler startup cost and shows the marginal cost of one generated function.
 
@@ -166,7 +164,7 @@ This matrix is diagnostic: it shows whether a gap is already present at `-O0` (f
 | bench_hashmap | 0.3 | 0.3 | 0.5 | 0.0 | 0.0 | 0.0 | 0.5 |
 | bench_nqueens | 0.3 | 0.2 | 0.2 | 0.0 | 0.0 | 0.0 | 0.8 |
 | bench_binary_search | 0.2 | 0.3 | 0.2 | 0.0 | 0.0 | 0.0 | 0.5 |
-| bench_mandelbrot | 0.3 | 0.3 | 0.3 | 0.1 | 0.0 | 0.0 | 0.5 |
+| bench_mandelbrot | 0.3 | 0.3 | 0.3 | 0.0 | 0.0 | 0.0 | 0.5 |
 | bench_class | 0.4 | 0.4 | 0.4 | 0.0 | 0.0 | 0.0 | 0.5 |
 | bench_str_append | 0.2 | 0.4 | 0.6 | 0.0 | 0.0 | 0.0 | 0.5 |
 | bench_vec_push | 2.3 | 0.4 | 0.5 | 0.0 | 0.0 | 0.0 | 3.4 |
@@ -218,7 +216,7 @@ CDD links mimalloc statically, so its executables are much larger than the C++ r
 | bench_vec_push | 80402 | 1828 | 161109 | 1704 | 0.50x |
 | bench_hashmap_std | 111204 | 2463 | 409521 | 3952 | 0.27x |
 | bench_deque | 74592 | 1660 | 250127 | 2910 | 0.30x |
-| bench_malloc_churn | 7296 | 201 | 61282 | 705 | 0.12x |
+| bench_malloc_churn | 7292 | 201 | 61282 | 705 | 0.12x |
 | bench_empty | 1765 | 85 | 2317 | 36 | 0.76x |
 | corpus_100 | 187869 | 4290 | 378316 | 5043 | 0.50x |
 | corpus_300 | 564595 | 12690 | 1147139 | 15043 | 0.49x |
@@ -232,19 +230,19 @@ Both are LLVM IR, but front ends attach different metadata and debug information
 | Benchmark | CDD | clang | gcc | CDD/clang |
 |---|---|---|---|---|
 | bench_fib | 1.7 | 4.1 | 1.7 | 0.41x |
-| bench_sieve | 196.1 | 194.5 | 192.4 | 1.01x |
+| bench_sieve | 196.0 | 194.6 | 192.4 | 1.01x |
 | bench_matmul | 18.0 | 17.3 | 15.2 | 1.04x |
-| bench_nbody | 4.5 | 4.1 | 1.7 | 1.10x |
-| bench_sort | 34.0 | 34.3 | 32.2 | 0.99x |
-| bench_hashmap | 166.0 | 162.3 | 160.3 | 1.02x |
-| bench_nqueens | 4.0 | 4.1 | 1.7 | 0.98x |
-| bench_binary_search | 70.1 | 67.7 | 65.7 | 1.04x |
+| bench_nbody | 4.4 | 4.1 | 1.7 | 1.09x |
+| bench_sort | 34.1 | 34.3 | 32.2 | 0.99x |
+| bench_hashmap | 166.1 | 162.3 | 160.3 | 1.02x |
+| bench_nqueens | 4.0 | 4.1 | 1.7 | 0.99x |
+| bench_binary_search | 70.1 | 67.8 | 65.7 | 1.03x |
 | bench_mandelbrot | 1.7 | 4.1 | 1.7 | 0.41x |
-| bench_class | 50.0 | 49.5 | 47.5 | 1.01x |
-| bench_str_append | 185.8 | 243.7 | 243.7 | 0.76x |
-| bench_vec_push | 181.8 | 131.6 | 131.6 | 1.38x |
-| bench_hashmap_std | 166.1 | 186.6 | 186.7 | 0.89x |
-| bench_deque | 181.7 | 131.7 | 131.6 | 1.38x |
+| bench_class | 50.0 | 49.6 | 47.5 | 1.01x |
+| bench_str_append | 185.8 | 243.7 | 243.6 | 0.76x |
+| bench_vec_push | 181.8 | 131.7 | 131.6 | 1.38x |
+| bench_hashmap_std | 166.1 | 186.7 | 186.7 | 0.89x |
+| bench_deque | 181.7 | 131.7 | 131.7 | 1.38x |
 | bench_malloc_churn | 418.1 | 507.4 | 505.3 | 0.82x |
 | bench_empty | 1.4 | 3.8 | 1.4 | 0.37x |
 
@@ -255,83 +253,83 @@ Peak RSS is measured once per implementation and includes the static mimalloc ar
 | Source | CDD | clang | gcc |
 |---|---|---|---|
 | bench_fib | 81.3 | 104.7 | 31.4 |
-| bench_sieve | 87.0 | 106.6 | 32.6 |
-| bench_matmul | 86.1 | 106.9 | 34.7 |
-| bench_nbody | 87.9 | 120.5 | 64.4 |
-| bench_sort | 81.8 | 107.2 | 33.9 |
-| bench_hashmap | 81.6 | 105.8 | 32.7 |
-| bench_nqueens | 81.5 | 106.5 | 31.8 |
-| bench_binary_search | 81.9 | 106.6 | 32.2 |
-| bench_mandelbrot | 85.6 | 105.2 | 30.6 |
-| bench_class | 82.0 | 107.5 | 33.6 |
-| bench_str_append | 81.9 | 121.7 | 67.8 |
-| bench_vec_push | 88.9 | 118.8 | 56.2 |
-| bench_hashmap_std | 92.3 | 122.7 | 68.5 |
-| bench_deque | 92.6 | 118.2 | 57.6 |
-| bench_malloc_churn | 81.5 | 105.7 | 31.8 |
-| bench_empty | 74.5 | 96.3 | 23.4 |
-| corpus_100 | 86.4 | 104.0 | 35.4 |
-| corpus_300 | 98.4 | 111.3 | 52.3 |
-| corpus_600 | 122.5 | 122.9 | 75.2 |
-| corpus_1200 | 148.6 | 146.4 | 121.5 |
+| bench_sieve | 87.1 | 106.6 | 32.5 |
+| bench_matmul | 86.3 | 106.9 | 34.7 |
+| bench_nbody | 88.1 | 120.5 | 64.3 |
+| bench_sort | 82.0 | 107.3 | 33.9 |
+| bench_hashmap | 81.7 | 105.7 | 32.6 |
+| bench_nqueens | 81.6 | 106.4 | 31.8 |
+| bench_binary_search | 82.0 | 106.7 | 32.2 |
+| bench_mandelbrot | 85.8 | 105.2 | 30.5 |
+| bench_class | 82.2 | 107.5 | 33.8 |
+| bench_str_append | 82.0 | 121.7 | 68.0 |
+| bench_vec_push | 88.9 | 118.9 | 56.3 |
+| bench_hashmap_std | 92.6 | 122.8 | 68.4 |
+| bench_deque | 92.7 | 118.1 | 57.7 |
+| bench_malloc_churn | 81.5 | 105.6 | 31.7 |
+| bench_empty | 74.7 | 96.3 | 23.4 |
+| corpus_100 | 86.6 | 103.9 | 35.3 |
+| corpus_300 | 98.7 | 111.6 | 52.5 |
+| corpus_600 | 122.6 | 122.9 | 75.1 |
+| corpus_1200 | 152.6 | 146.4 | 121.6 |
 
 ## Hardware counters (one representative run)
 
 | Benchmark | Impl | cycles (M) | instructions (M) | IPC | GHz | cache-miss % | branch-miss % |
 |---|---|---|---|---|---|---|---|
-| bench_fib | cdd | 1115.6 | 3647.7 | 3.27 | 4.64 | 0.00 | 0.20 |
-| bench_fib | clang | 1051.8 | 3649.3 | 3.47 | 4.65 | 0.00 | 0.20 |
-| bench_fib | gcc | 575.8 | 2762.3 | 4.80 | 4.64 | 0.00 | 0.41 |
-| bench_sieve | cdd | 4929.4 | 3824.5 | 0.78 | 4.64 | 3.52 | 0.17 |
-| bench_sieve | clang | 5515.5 | 2520.9 | 0.46 | 4.64 | 5.81 | 1.19 |
-| bench_sieve | gcc | 5509.8 | 2490.0 | 0.45 | 4.65 | 5.91 | 1.18 |
-| bench_matmul | cdd | 951.5 | 3650.3 | 3.84 | 4.59 | 0.05 | 0.16 |
-| bench_matmul | clang | 337.2 | 1343.1 | 3.98 | 4.60 | 0.14 | 0.84 |
-| bench_matmul | gcc | 328.9 | 1849.3 | 5.62 | 4.59 | 0.10 | 0.47 |
-| bench_nbody | cdd | 1348.9 | 3477.1 | 2.58 | 4.64 | 0.00 | 0.09 |
-| bench_nbody | clang | 1388.2 | 3013.2 | 2.17 | 4.64 | 0.01 | 0.15 |
-| bench_nbody | gcc | 1379.5 | 2952.2 | 2.14 | 4.63 | 0.01 | 0.24 |
-| bench_sort | cdd | 2148.9 | 2116.7 | 0.99 | 4.64 | 0.05 | 17.85 |
-| bench_sort | clang | 2094.1 | 1958.3 | 0.94 | 4.64 | 0.07 | 20.13 |
-| bench_sort | gcc | 2135.3 | 2188.7 | 1.03 | 4.64 | 0.06 | 20.05 |
-| bench_hashmap | cdd | 904.2 | 365.4 | 0.40 | 4.64 | 8.04 | 0.21 |
-| bench_hashmap | clang | 1289.1 | 580.4 | 0.45 | 4.65 | 6.73 | 4.26 |
-| bench_hashmap | gcc | 1316.7 | 540.5 | 0.41 | 4.64 | 7.30 | 4.88 |
-| bench_nqueens | cdd | 1575.1 | 4274.9 | 2.71 | 4.64 | 0.00 | 2.94 |
-| bench_nqueens | clang | 1792.5 | 4025.6 | 2.25 | 4.64 | 0.00 | 2.96 |
-| bench_nqueens | gcc | 1594.8 | 4125.5 | 2.59 | 4.64 | 0.00 | 2.91 |
-| bench_binary_search | cdd | 3293.7 | 637.9 | 0.19 | 4.65 | 33.14 | 15.64 |
-| bench_binary_search | clang | 3071.8 | 659.3 | 0.21 | 4.64 | 18.64 | 16.59 |
-| bench_binary_search | gcc | 3166.7 | 574.4 | 0.18 | 4.64 | 20.38 | 16.41 |
-| bench_mandelbrot | cdd | 1768.4 | 2793.8 | 1.58 | 4.64 | 0.00 | 0.12 |
-| bench_mandelbrot | clang | 1767.6 | 2707.7 | 1.53 | 4.64 | 0.00 | 0.16 |
-| bench_mandelbrot | gcc | 1764.8 | 2785.4 | 1.58 | 4.64 | 0.00 | 0.12 |
-| bench_class | cdd | 1180.5 | 5234.9 | 4.43 | 4.60 | 0.02 | 0.05 |
-| bench_class | clang | 1030.8 | 3247.2 | 3.15 | 4.63 | 0.05 | 0.59 |
-| bench_class | gcc | 1017.7 | 4247.2 | 4.17 | 4.61 | 0.04 | 0.58 |
-| bench_str_append | cdd | 276.6 | 804.3 | 2.91 | 4.63 | 0.10 | 0.13 |
-| bench_str_append | clang | 1116.5 | 1303.1 | 1.17 | 4.65 | 0.41 | 5.05 |
-| bench_str_append | gcc | 1129.3 | 1408.1 | 1.25 | 4.64 | 0.37 | 5.23 |
-| bench_vec_push | cdd | 210.7 | 634.0 | 3.01 | 4.63 | 0.11 | 0.16 |
-| bench_vec_push | clang | 618.1 | 707.8 | 1.15 | 4.64 | 0.46 | 5.57 |
-| bench_vec_push | gcc | 639.3 | 763.9 | 1.19 | 4.63 | 0.42 | 4.79 |
-| bench_hashmap_std | cdd | 1669.5 | 1375.2 | 0.82 | 4.64 | 1.71 | 4.08 |
-| bench_hashmap_std | clang | 7665.0 | 2464.2 | 0.32 | 4.65 | 2.64 | 3.30 |
-| bench_hashmap_std | gcc | 6987.2 | 2361.0 | 0.34 | 4.64 | 2.70 | 3.42 |
-| bench_deque | cdd | 588.9 | 1183.3 | 2.01 | 4.63 | 0.05 | 0.08 |
-| bench_deque | clang | 493.9 | 1040.3 | 2.11 | 4.64 | 0.16 | 2.27 |
-| bench_deque | gcc | 430.1 | 844.4 | 1.96 | 4.63 | 0.20 | 2.64 |
-| bench_malloc_churn | cdd | 684.4 | 554.1 | 0.81 | 4.64 | 4.60 | 0.46 |
-| bench_malloc_churn | clang | 2183.6 | 2828.4 | 1.30 | 4.65 | 1.65 | 2.41 |
-| bench_malloc_churn | gcc | 2181.4 | 2849.2 | 1.31 | 4.64 | 1.60 | 2.41 |
-| bench_empty | cdd | 1.0 | 0.8 | 0.75 | 3.15 | 3.00 | 12.34 |
-| bench_empty | clang | 5.6 | 3.4 | 0.61 | 3.90 | 1.88 | 8.18 |
-| bench_empty | gcc | 1.1 | 0.8 | 0.72 | 3.26 | 3.30 | 12.39 |
+| bench_fib | cdd | 1112.6 | 3646.8 | 3.28 | 4.65 | 0.00 | 0.20 |
+| bench_fib | clang | 1046.8 | 3648.9 | 3.49 | 4.65 | 0.00 | 0.20 |
+| bench_fib | gcc | 574.0 | 2762.1 | 4.81 | 4.65 | 0.00 | 0.41 |
+| bench_sieve | cdd | 5341.9 | 3821.6 | 0.72 | 4.65 | 3.60 | 0.14 |
+| bench_sieve | clang | 5592.8 | 2512.9 | 0.45 | 4.65 | 5.87 | 1.16 |
+| bench_sieve | gcc | 5665.8 | 2484.8 | 0.44 | 4.65 | 5.96 | 1.16 |
+| bench_matmul | cdd | 935.8 | 3649.0 | 3.90 | 4.64 | 0.04 | 0.15 |
+| bench_matmul | clang | 318.6 | 1342.7 | 4.21 | 4.64 | 0.14 | 0.82 |
+| bench_matmul | gcc | 387.4 | 1849.1 | 4.77 | 4.63 | 0.10 | 0.47 |
+| bench_nbody | cdd | 1337.5 | 3475.0 | 2.60 | 4.65 | 0.00 | 0.07 |
+| bench_nbody | clang | 1371.1 | 3011.6 | 2.20 | 4.65 | 0.00 | 0.12 |
+| bench_nbody | gcc | 1346.9 | 2949.5 | 2.19 | 4.65 | 0.00 | 0.15 |
+| bench_sort | cdd | 2146.4 | 2116.1 | 0.99 | 4.65 | 0.05 | 17.86 |
+| bench_sort | clang | 2067.2 | 1956.3 | 0.95 | 4.65 | 0.06 | 20.13 |
+| bench_sort | gcc | 2101.4 | 2186.0 | 1.04 | 4.65 | 0.05 | 20.07 |
+| bench_hashmap | cdd | 937.6 | 365.7 | 0.39 | 4.65 | 8.02 | 0.20 |
+| bench_hashmap | clang | 1765.0 | 579.3 | 0.33 | 4.65 | 6.86 | 4.24 |
+| bench_hashmap | gcc | 1325.0 | 540.7 | 0.41 | 4.65 | 7.21 | 4.84 |
+| bench_nqueens | cdd | 1551.6 | 4273.5 | 2.75 | 4.65 | 0.00 | 2.93 |
+| bench_nqueens | clang | 1966.6 | 4024.5 | 2.05 | 4.65 | 0.00 | 2.94 |
+| bench_nqueens | gcc | 1589.7 | 4124.0 | 2.59 | 4.65 | 0.00 | 2.91 |
+| bench_binary_search | cdd | 3134.0 | 632.9 | 0.20 | 4.65 | 33.30 | 15.66 |
+| bench_binary_search | clang | 3184.0 | 654.2 | 0.21 | 4.65 | 18.51 | 16.61 |
+| bench_binary_search | gcc | 3214.6 | 570.0 | 0.18 | 4.65 | 20.55 | 16.43 |
+| bench_mandelbrot | cdd | 1754.0 | 2964.9 | 1.69 | 4.65 | 0.00 | 0.11 |
+| bench_mandelbrot | clang | 1757.0 | 2706.6 | 1.54 | 4.65 | 0.00 | 0.16 |
+| bench_mandelbrot | gcc | 1752.9 | 2784.2 | 1.59 | 4.65 | 0.00 | 0.11 |
+| bench_class | cdd | 1215.2 | 5234.0 | 4.31 | 4.64 | 0.02 | 0.05 |
+| bench_class | clang | 1049.8 | 3246.1 | 3.09 | 4.65 | 0.05 | 0.58 |
+| bench_class | gcc | 1076.7 | 4246.2 | 3.94 | 4.65 | 0.04 | 0.57 |
+| bench_str_append | cdd | 342.0 | 805.1 | 2.35 | 4.64 | 0.10 | 0.13 |
+| bench_str_append | clang | 1135.4 | 1301.7 | 1.15 | 4.65 | 0.36 | 5.01 |
+| bench_str_append | gcc | 1161.7 | 1404.8 | 1.21 | 4.65 | 0.33 | 5.19 |
+| bench_vec_push | cdd | 239.4 | 633.8 | 2.65 | 4.64 | 0.17 | 0.16 |
+| bench_vec_push | clang | 628.6 | 707.8 | 1.13 | 4.65 | 0.43 | 5.56 |
+| bench_vec_push | gcc | 642.7 | 763.9 | 1.19 | 4.65 | 0.42 | 4.78 |
+| bench_hashmap_std | cdd | 1537.1 | 1359.3 | 0.88 | 4.65 | 1.72 | 4.17 |
+| bench_hashmap_std | clang | 7365.7 | 2441.2 | 0.33 | 4.65 | 2.56 | 3.18 |
+| bench_hashmap_std | gcc | 6609.5 | 2341.6 | 0.35 | 4.65 | 2.65 | 3.33 |
+| bench_deque | cdd | 585.8 | 1182.9 | 2.02 | 4.64 | 0.05 | 0.08 |
+| bench_deque | clang | 493.3 | 1040.2 | 2.11 | 4.65 | 0.16 | 2.26 |
+| bench_deque | gcc | 432.9 | 844.0 | 1.95 | 4.65 | 0.20 | 2.63 |
+| bench_malloc_churn | cdd | 699.4 | 552.9 | 0.79 | 4.65 | 4.63 | 0.44 |
+| bench_malloc_churn | clang | 2221.5 | 2827.1 | 1.27 | 4.65 | 1.65 | 2.41 |
+| bench_malloc_churn | gcc | 2186.5 | 2847.5 | 1.30 | 4.65 | 1.63 | 2.40 |
+| bench_empty | cdd | 1.1 | 0.8 | 0.72 | 4.45 | 2.98 | 12.34 |
+| bench_empty | clang | 2.8 | 3.2 | 1.12 | 4.60 | 1.39 | 7.51 |
+| bench_empty | gcc | 1.1 | 0.8 | 0.73 | 4.61 | 2.93 | 12.35 |
 
 ## Analysis and optimization targets
 
-- Largest core gaps vs clang: `bench_matmul` 2.94x, `bench_class` 1.18x, `bench_fib` 1.06x.
-- Largest core wins vs clang: `bench_sieve` 0.90x, `bench_nqueens` 0.85x, `bench_hashmap` 0.66x.
+- Largest core gaps vs clang: `bench_matmul` 2.91x, `bench_class` 1.13x, `bench_fib` 1.06x.
+- Largest core wins vs clang: `bench_sieve` 0.89x, `bench_nqueens` 0.79x, `bench_hashmap` 0.70x.
 - `bench_matmul` is the clearest code-generation gap. The loop order is already cache-friendly; the likely missing pieces are alias information and loop vectorization. Check the matrix's O1/O2/O3 cells and the generated IR for vector widths before changing codegen.
 - `bench_fib` is close to clang but well behind gcc. GCC emits a different recursive shape/inlining decision; treat this as a codegen-shape question, not a front-end question.
 - `bench_nqueens`, `bench_binary_search`, `bench_mandelbrot`, and `bench_class` extend the core coverage to backtracking, branchy memory access, floating-point control flow, and by-value method calls. They make it harder to improve the core geomean by tuning one hot loop.
@@ -351,6 +349,5 @@ Peak RSS is measured once per implementation and includes the static mimalloc ar
 - Compile time on the small benchmark sources is dominated by process startup and the automatic std prelude; use the `corpus_*` rows and their `ms/fn` columns for throughput comparisons.
 - LLVM IR size is a diagnostic for CDD's own optimizer growth. The two front ends attach different metadata/debug information, so the IR ratio is not a strict cross-language code-size metric.
 - Peak RSS is sampled once per implementation; allocator caching and the static mimalloc arena make it sensitive to run order.
-- `cdd -O0` currently crashes on `bench_matmul`, `bench_nbody`, and `bench_hashmap` (SIGSEGV); those matrix cells are reported as errors. This is tracked under `CG-15` and is independent of the `-O2` results.
 - `startup` hardware counters are dominated by process setup and are only informative for the wall-clock column.
 

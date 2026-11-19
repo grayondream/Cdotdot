@@ -73,6 +73,21 @@ TEST_F(ArithmeticConversionE2E, UnsignedSmallValuePreservedInArithmetic) {
     EXPECT_EQ(runSource("int32 main() { uint8 a = 200; return (a + 100) - 300; }"), 0);
 }
 
+// TYP-28: explicit widening casts must preserve the source signedness.
+TEST_F(ArithmeticConversionE2E, ExplicitWideningCastPreservesUnsigned) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            uint8 u = 250;
+            uint32 x = 2654435761u;
+            int64 a = static_cast<int64>(u);
+            uint64 b = static_cast<uint64>(x);
+            if (a != 250) return 1;
+            if (b != 2654435761u) return 2;
+            return 0;
+        }
+    )"), 0);
+}
+
 TEST_F(ArithmeticConversionE2E, CharArithmeticPromotesToInt) {
     // char + char yields int; without promotion this would wrap to -56.
     EXPECT_EQ(runSource(

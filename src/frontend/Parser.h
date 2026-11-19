@@ -108,6 +108,11 @@ private:
     // Resolve a (possibly qualified) type name, trying the enclosing namespace
     // prefix before the global name. nullptr when not a known named type.
     Type* lookupNamedType(const std::string& name) const;
+    // True for any registered type name, including one hidden by module
+    // visibility.  Used only to route the parser to a type declaration so the
+    // diagnostic can say "unknown type" instead of an expression-statement
+    // error.
+    bool isKnownTypeName(const std::string& name) const;
 
     // Turn `T name` into `T name[N]` when an array suffix follows a member
     // declarator (used for struct/class/union members).
@@ -268,6 +273,11 @@ private:
     // Mangled prefix (trailing '_') active while parsing a namespace body, e.g.
     // "A_" inside `namespace A { ... }`.
     std::string m_typeNamespacePrefix;
+    // Owning module while parsing a participating unit (empty for legacy).
+    std::string m_currentModuleName;
+    // Mark user-declared types with their owning module/export visibility.
+    void markDeclaredTypeVisibility(DeclAST* decl, bool exported);
+    Type* getTypeByExactName(const std::string& name) const;
     // AGG-11: register a nested type declaration into TypeContext, mirroring
     // what parseDeclaration does for the same kind at top level.
     void registerNestedDeclType(DeclAST* decl);

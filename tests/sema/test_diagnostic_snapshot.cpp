@@ -136,7 +136,7 @@ int32 f() { return 2; }
 )"));
 }
 
-TEST_F(DiagnosticSnapshotTest, IncompatibleCastWarning) {
+TEST_F(DiagnosticSnapshotTest, IncompatibleCastError) {
     expectSnapshot("incompatible_cast", analyzeDiagnostics(R"(
 struct S { int32 x; };
 int32 main() {

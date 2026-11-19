@@ -275,6 +275,32 @@ int conversionRank(Type* from, Type* to) {
     if (fw > 0 && tb > 0) return 1;               // integer -> floating point
     if (fb > 0 && tb > 0 && tb >= fb) return 1;   // floating point widening
 
+    // User-defined conversion operator `operator T()` (class/struct value).
+    // Exact conversions rank 2; one user conversion followed by a standard
+    // arithmetic/pointer conversion ranks worse (3).
+    if (from->kind == TypeKind::Class) {
+        bool hasFallback = false;
+        Type* cls = from;
+        while (cls && cls->kind == TypeKind::Class) {
+            auto* ct = static_cast<ClassType*>(cls);
+            for (const auto& entry : ct->methods) {
+                if (entry.first.rfind("operator$", 0) != 0 || !entry.second) continue;
+                Type* ret = entry.second->returnType;
+                while (ret && ret->kind == TypeKind::Typedef)
+                    ret = static_cast<TypedefType*>(ret)->aliasedType;
+                if (!ret) continue;
+                if (typesEqual(ret, to)) return 2;
+                const bool stdConv =
+                    (isArithmeticType(ret) && isArithmeticType(to)) ||
+                    ((ret->kind == TypeKind::Pointer || ret->kind == TypeKind::Array) &&
+                     (to->kind == TypeKind::Pointer || to->kind == TypeKind::Array));
+                if (stdConv) hasFallback = true;
+            }
+            cls = ct->base;
+        }
+        if (hasFallback) return 3;
+    }
+
     // C pointer conversions (MEM-10): any pointer converts to any other pointer,
     // notably `T*` <-> `void*`. Ranked worse than exact/widening conversions so
     // overload resolution still prefers a specific parameter type.

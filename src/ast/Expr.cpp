@@ -2257,6 +2257,17 @@ llvm::Value* CastExprAST::codegen(CodegenContext& ctx) {
     llvm::Type* targetLLVMType = ctx.getLLVMType(castType);
     if (!targetLLVMType) return nullptr;
 
+    // SG-11: `operator T()` — a class-to-value cast calls the conversion
+    // method instead of reinterpreting the aggregate.  The helper also handles
+    // one user conversion followed by a standard widening/pointer conversion
+    // (e.g. operator int32() used for static_cast<int64>).
+    if (castKind != CastKind::Reinterpret) {
+        if (llvm::Value* converted = ctx.tryUserConversion(
+                val, expr->type, castType, targetLLVMType, expr->isLValue)) {
+            return converted;
+        }
+    }
+
     if (expr->isLValue) {
         val = readLValue(ctx, *expr, val);
     }
@@ -2279,7 +2290,7 @@ llvm::Value* CastExprAST::codegen(CodegenContext& ctx) {
         return ctx.castValue(val, targetLLVMType);
     }
 
-    return ctx.castValue(val, targetLLVMType);
+    return ctx.castValue(val, expr->type, targetLLVMType);
 }
 
 llvm::Value* CommaExprAST::codegen(CodegenContext& ctx) {

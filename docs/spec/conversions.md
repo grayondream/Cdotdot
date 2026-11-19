@@ -57,6 +57,7 @@
      - 不同符号性：无符号 rank ≥ 有符号 → 无符号；有符号 rank 更高则取有符号（可覆盖无符号全部值）。
 3. 转换等级（rank，由低到高）：`bool < char/int8/uint8 < int16/uint16 < int32/uint32 < int64/uint64/isize/usize < int128/uint128`；同宽度有/无符号同 rank。
 4. `[impl]` 函数实参转换（`conversionRank`）允许整数 → `bool`（rank 2，低于拓宽），因此比较结果（类型为 `int32`）可直接传给 `bool` 形参；`bool → 整数` 按拓宽（rank 1）。浮点 → `bool` 仍需显式转换。
+5. `[impl]` 2026-11-18/19：显式/隐式转换识别用户定义的 `operator T()`；允许一次用户转换后接标准算术/指针转换（例如 `operator int32()` 用于 `int64` 初始化或 `static_cast<int64>`）。`static_cast`、C 风格 cast、初始化/赋值/返回、函数实参以及 `if/while/do/for`、`!`、`&&`/`||`、`?:`、`assert` 的上下文 bool 均可使用转换运算符。非 public 的转换运算符按类成员访问控制拒绝。显式整数宽化按源类型有/无符号选择 `zext`/`sext`（TYP-28）。
 
 | kind | 位宽（`integerRank`） |
 |---|---|
@@ -86,7 +87,7 @@
 
 ## 5. 显式转换 `[impl]/[plan]`
 
-- `[impl]` C 风格 `(T)x`：`parseUnary` 先试探性解析完整类型并要求立即 `)`，否则回退为括号表达式；因此支持指针、限定符与命名类型，如 `(int32*)p`、`(struct S*)p`、`(void*)h`（P0-02 / MEM-10）。窄化只告警不报错（`CastExprAST` 检查）。
+- `[impl]` C 风格 `(T)x`：`parseUnary` 先试探性解析完整类型并要求立即 `)`，否则回退为括号表达式；因此支持指针、限定符与命名类型，如 `(int32*)p`、`(struct S*)p`、`(void*)h`（P0-02 / MEM-10）。算术窄化按既有规则处理；**聚合 ↔ 标量**且没有可用 `operator T()` 时现在报 `E2006`，不再只告警后生成类型不匹配的 IR。
 - `[impl]` `static_cast<T>(x)`（LEX-11 / PAR-18 / DEC-18）：允许算术↔算术（含 enum，按整数）、指针/数组↔指针/数组；但**不**允许指针↔整数（须用 `reinterpret_cast`）。不兼容时报错。代码生成走 `castValue`（值转换）。
 - `[impl]` `reinterpret_cast<T>(x)`：任何标量↔标量（按位重解释）。同宽标量（尤其 `float32`↔`int32`）用 `bitcast` 重解释位模式；指针↔指针用 `bitcast`、指针↔整数用 `ptrtoint`/`inttoptr`。不兼容时报错。
 - `[impl]` 三者为**上下文关键字**：`static_cast`/`reinterpret_cast` 仍是普通标识符，仅在紧跟 `<类型>` 时按转换运算符解析，否则按普通名字处理。

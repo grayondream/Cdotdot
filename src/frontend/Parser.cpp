@@ -1912,7 +1912,19 @@ std::unique_ptr<StmtAST> Parser::parseStmt() {
     if (isTypeStart() || check(TokenType::TOKEN_CONST) || check(TokenType::TOKEN_VOLATILE) ||
         check(TokenType::TOKEN_ATOMIC)) {
         size_t savedPos = m_currentTokenPos;
+        std::optional<Token> typeStartTok = peek();
         Type* type = parseType();
+        if (!type) {
+            if (typeStartTok && typeStartTok->type == TokenType::TOKEN_IDENTIFIER) {
+                error(DiagnosticCode::SemUnknownType,
+                      "unknown type '" + typeStartTok->lexeme + "'", *typeStartTok);
+                // Consume the malformed declaration so the compound-statement
+                // loop cannot retry the same token forever.
+                skipPastSemicolon();
+                return std::make_unique<NullStmtAST>();
+            }
+            m_currentTokenPos = savedPos;
+        }
         // A function-pointer declarator starts with '(' after the type
         // (e.g. `int (*fp)(int)`); let parseDeclaration handle it.
         if (type && check(TokenType::TOKEN_LPAREN)) {
@@ -2257,6 +2269,7 @@ std::unique_ptr<TranslationUnitAST> Parser::parse() {
             if (moduleName.empty()) {
                 error("expected module name after 'module'", *moduleTok);
             }
+            m_currentModuleName = moduleName;
             match(TokenType::TOKEN_SEMICOLON);
             continue;
         }
@@ -2353,9 +2366,13 @@ std::unique_ptr<TranslationUnitAST> Parser::parse() {
     // analyzer can apply module visibility (P0-04 / MOD-05/06). Imported
     // modules are tagged separately by the ModuleLoader.
     if (!moduleName.empty()) {
+        m_currentModuleName = moduleName;
         for (auto& decl : tu->declarations) {
             if (decl && decl->moduleName.empty()) {
                 decl->moduleName = moduleName;
+            }
+            if (decl && decl->moduleName == moduleName) {
+                markDeclaredTypeVisibility(decl.get(), false);
             }
         }
     }
@@ -2435,7 +2452,7 @@ bool Parser::isTypeStart() const {
             if (name == "FieldInfo" || name == "Attribute") {
                 return true;
             }
-            return lookupNamedType(name) != nullptr;
+            return lookupNamedType(name) != nullptr || isKnownTypeName(name);
         }
         default:
             return false;
@@ -2478,24 +2495,105 @@ std::string Parser::qualifyTypeDeclName(const std::string& name) const {
 Type* Parser::lookupNamedType(const std::string& name) const {
     if (name.empty()) return nullptr;
     auto& tc = TypeContext::instance();
-    auto tryKey = [&tc](const std::string& key) -> Type* {
-        if (Type* t = tc.getTypedef(key)) return t;
-        if (ClassType* c = tc.getClass(key)) return c;
-        if (StructType* s = tc.getStruct(key)) return s;
-        if (UnionType* u = tc.getUnion(key)) return u;
-        if (EnumType* e = tc.getEnum(key)) return e;
+    auto visible = [this](Type* t) -> Type* {
+        if (!t) return nullptr;
+        if (t->moduleName.empty() || t->exported ||
+            t->moduleName == m_currentModuleName) {
+            return t;
+        }
+        return nullptr;
+    };
+    auto tryKey = [&tc, &visible](const std::string& key) -> Type* {
+        if (Type* t = visible(tc.getTypedef(key))) return t;
+        if (Type* c = visible(tc.getClass(key))) return c;
+        if (Type* s = visible(tc.getStruct(key))) return s;
+        if (Type* u = visible(tc.getUnion(key))) return u;
+        if (Type* e = visible(tc.getEnum(key))) return e;
         return nullptr;
     };
     if (name.find("::") != std::string::npos || name.find('.') != std::string::npos) {
         return tryKey(mangleQualifiedTypeName(name));
     }
     // PAR-24: block-scoped aliases shadow unqualified outer names.
-    if (Type* t = tc.getLocalTypedef(name)) return t;
+    if (Type* t = visible(tc.getLocalTypedef(name))) return t;
     // Unqualified: prefer the enclosing namespace, then the global name.
     if (!m_typeNamespacePrefix.empty()) {
         if (Type* t = tryKey(m_typeNamespacePrefix + name)) return t;
     }
     return tryKey(name);
+}
+
+bool Parser::isKnownTypeName(const std::string& name) const {
+    if (name.empty()) return false;
+    auto& tc = TypeContext::instance();
+    if (name.find("::") != std::string::npos ||
+        name.find('.') != std::string::npos) {
+        return getTypeByExactName(mangleQualifiedTypeName(name)) != nullptr;
+    }
+    if (tc.getLocalTypedef(name)) return true;
+    if (!m_typeNamespacePrefix.empty() &&
+        getTypeByExactName(m_typeNamespacePrefix + name)) {
+        return true;
+    }
+    return getTypeByExactName(name) != nullptr;
+}
+
+Type* Parser::getTypeByExactName(const std::string& name) const {
+    auto& tc = TypeContext::instance();
+    if (Type* t = tc.getTypedef(name)) return t;
+    if (ClassType* c = tc.getClass(name)) return c;
+    if (StructType* s = tc.getStruct(name)) return s;
+    if (UnionType* u = tc.getUnion(name)) return u;
+    if (EnumType* e = tc.getEnum(name)) return e;
+    return nullptr;
+}
+
+void Parser::markDeclaredTypeVisibility(DeclAST* decl, bool inheritedExported) {
+    if (!decl) return;
+    const bool exported = inheritedExported || decl->isExported;
+    if (auto* sd = dynamic_cast<StructDeclAST*>(decl)) {
+        if (Type* t = getTypeByExactName(sd->name)) {
+            t->moduleName = m_currentModuleName;
+            t->exported = exported;
+        }
+        for (auto& nested : sd->nestedTypes)
+            markDeclaredTypeVisibility(nested.get(), exported);
+        return;
+    }
+    if (auto* ud = dynamic_cast<UnionDeclAST*>(decl)) {
+        if (Type* t = getTypeByExactName(ud->name)) {
+            t->moduleName = m_currentModuleName;
+            t->exported = exported;
+        }
+        for (auto& nested : ud->nestedTypes)
+            markDeclaredTypeVisibility(nested.get(), exported);
+        return;
+    }
+    if (auto* ed = dynamic_cast<EnumDeclAST*>(decl)) {
+        if (Type* t = getTypeByExactName(ed->name)) {
+            t->moduleName = m_currentModuleName;
+            t->exported = exported;
+        }
+        return;
+    }
+    if (auto* ua = dynamic_cast<UsingDeclAST*>(decl)) {
+        if (Type* t = getTypeByExactName(ua->name)) {
+            t->moduleName = m_currentModuleName;
+            t->exported = exported;
+        }
+        return;
+    }
+    if (auto* ns = dynamic_cast<NamespaceDeclAST*>(decl)) {
+        for (auto& child : ns->declarations)
+            markDeclaredTypeVisibility(child.get(), exported);
+        return;
+    }
+    if (auto* ci = dynamic_cast<CompileTimeIfDeclAST*>(decl)) {
+        for (auto& child : ci->thenDecls)
+            markDeclaredTypeVisibility(child.get(), exported);
+        for (auto& child : ci->elseDecls)
+            markDeclaredTypeVisibility(child.get(), exported);
+    }
 }
 
 Type* Parser::parseBaseType() {
@@ -3091,6 +3189,16 @@ Type* Parser::parseType() {
         }
 
         baseType = ptrType;
+    }
+
+    // Reference-return suffix (`T&`).  The language has no general reference
+    // variables; this is currently consumed by writable `operator[]` methods,
+    // where the pointer representation doubles as the returned lvalue.
+    while (check(TokenType::TOKEN_BIT_AND)) {
+        advance();
+        auto* refType = new Type(TypeKind::Pointer, baseType);
+        refType->isReference = true;
+        baseType = refType;
     }
 
     // 新增：支持切片类型 T[]（可叠加：T[][] = slice of slice，TYP-12）。
@@ -5423,6 +5531,32 @@ std::unique_ptr<StructDeclAST> Parser::parseRecordDecl(bool isClass) {
         // Check if this looks like a member function declaration:
         // type identifier '(' ... or operator symbol '('
         size_t savedPos = m_currentTokenPos;
+
+        // Conversion operator: `operator T()` starts with `operator`, not a
+        // return type.  Parse the target type as the method's return type.
+        if (check(TokenType::TOKEN_OPERATOR)) {
+            Token opTok = *peek();
+            advance();
+            Type* convType = parseType();
+            if (!convType) {
+                errorUnexpected("expected conversion type after 'operator'");
+                continue;
+            }
+            if (!check(TokenType::TOKEN_LPAREN)) {
+                errorUnexpected("expected '(' after conversion operator type");
+                continue;
+            }
+            std::string convName = "operator$" + typeToMangled(convType);
+            auto func = parseFunctionDecl(convType, convName);
+            if (func) {
+                func->annotations = std::move(memberAnns);
+                func->isConversionOperator = true;
+                func->conversionType = convType;
+                methods.push_back(std::move(func));
+                memberAccess[convName] = currentAccess;
+            }
+            continue;
+        }
 
         if (isTypeStart() || check(TokenType::TOKEN_CONST) ||
             check(TokenType::TOKEN_VOLATILE) || check(TokenType::TOKEN_ATOMIC)) {

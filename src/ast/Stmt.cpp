@@ -85,7 +85,13 @@ llvm::Value* ReturnStmtAST::codegen(CodegenContext& ctx) {
                 if (sym) valType = sym->type;
             }
         }
-        if (valType) {
+        llvm::Function* retFn = ctx.getBuilder().GetInsertBlock()
+                                    ? ctx.getBuilder().GetInsertBlock()->getParent()
+                                    : nullptr;
+        const bool returnsReference =
+            retFn && retFn->getReturnType()->isPointerTy() && valType &&
+            ctx.getLLVMType(valType) != retFn->getReturnType();
+        if (valType && !returnsReference) {
             v = readLValue(ctx, *value, v);
         }
     }

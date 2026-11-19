@@ -440,6 +440,103 @@ TEST_F(DemoRegressionE2E, LocalRecordDefinitions) {
     )", "reg_local_records.cdd"), 0);
 }
 
+// A local record that owns a method used to leave the builder in the method's
+// terminated block, silently truncating the enclosing function.
+TEST_F(DemoRegressionE2E, LocalRecordWithMethodKeepsEnclosingFunction) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            struct LocalMethodS { int32 x; int32 get() { return this->x; } };
+            LocalMethodS s; s.x = 7;
+            if (s.get() != 7) return 1;
+            class LocalMethodC { public: int32 y; int32 get() { return this->y; } };
+            LocalMethodC c; c.y = 9;
+            return c.get() == 9 ? 0 : 2;
+        }
+    )", "reg_local_record_methods.cdd"), 0);
+}
+
+// Static local aggregate initializers are constant expressions and must be
+// folded to a module-scope initializer, not rejected.
+TEST_F(DemoRegressionE2E, StaticLocalAggregateInitializer) {
+    EXPECT_EQ(runSource(R"(
+        struct StaticAggS { int32 a; int32 b; };
+        int32 next() {
+            static StaticAggS s = {1, 2};
+            s.a = s.a + 1;
+            return s.a + s.b;
+        }
+        int32 main() {
+            if (next() != 4) return 1;
+            return next() == 5 ? 0 : 2;
+        }
+    )", "reg_static_local_aggregate.cdd"), 0);
+}
+
+// Field lookup in an instance method: a bare member name resolves through the
+// implicit `this`, and beats a same-named file-scope variable.
+TEST_F(DemoRegressionE2E, BareMemberNameUsesImplicitThis) {
+    EXPECT_EQ(runSource(R"(
+        int32 BareGlobalX = 99;
+        class BareC {
+        public:
+            int32 x;
+            int32 get() { return x; }
+            void set(int32 v) { x = v; }
+        };
+        int32 main() {
+            BareC c; c.x = 3; c.set(7);
+            if (c.get() != 7) return 1;
+            return c.x == 7 ? 0 : 2;
+        }
+    )", "reg_bare_member.cdd"), 0);
+}
+
+// Reference-return `operator[]` produces a writable lvalue.
+TEST_F(DemoRegressionE2E, ReferenceReturnSubscriptIsWritable) {
+    EXPECT_EQ(runSource(R"(
+        class RefVec {
+        public:
+            int32 a[3];
+            int32& operator[](int32 i) { return this->a[i]; }
+        };
+        int32 main() {
+            RefVec v;
+            v[0] = 1;
+            v[1] = 2;
+            return v[0] + v[1] - 3;
+        }
+    )", "reg_ref_subscript.cdd"), 0);
+}
+
+// Conversion operators (`operator T()`) must participate in explicit,
+// implicit and boolean-condition conversions.
+TEST_F(DemoRegressionE2E, UserConversionOperators) {
+    EXPECT_EQ(runSource(R"(
+        class ConvC {
+        public:
+            int32 v;
+            operator int32() { return this->v; }
+        };
+        class ConvFlag {
+        public:
+            bool on;
+            operator bool() { return this->on; }
+        };
+        int32 main() {
+            ConvC c; c.v = 42;
+            int32 a = static_cast<int32>(c);
+            int32 b = (int32)c;
+            int32 d = c;
+            if (a + b + d != 126) return 1;
+            ConvFlag f; f.on = true;
+            if (f) { } else { return 2; }
+            f.on = false;
+            if (f) return 3;
+            return 0;
+        }
+    )", "reg_conversion_operators.cdd"), 0);
+}
+
 // 自引用类（`Node* next`）曾因 getLLVMType(Pointer) 递归解析 pointee 爆栈。
 TEST_F(DemoRegressionE2E, SelfReferentialClassPointerField) {
     EXPECT_EQ(runSource(R"(

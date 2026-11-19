@@ -123,6 +123,10 @@ std::string typeToMangled(Type* type) {
 }
 
 std::string mangleFunction(const std::string& name, const std::vector<Type*>& paramTypes) {
+    // The program entry point is the C `main` symbol even when it declares
+    // argc/argv.  Without this, `main(int32, char**)` was mangled to
+    // `main_int32_charptrptr` and the linker could not find an entry point.
+    if (name == "main") return "main";
     if (isCName(name)) return name;
     if (paramTypes.empty()) return name;
     std::string result = name;

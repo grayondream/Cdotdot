@@ -103,12 +103,12 @@ python3 benchmarks/run.py --only bench_matmul
 python3 benchmarks/run.py --quick --matrix --matrix-levels 0,2
 
 # Compare an optimization result against the committed baseline
-python3 benchmarks/compare.py benchmarks/results/2026-11-17-baseline.json \
+python3 benchmarks/compare.py benchmarks/results/2026-11-18-fixed.json \
     benchmarks/results/2026-11-17-opt.json
 
 # Fail if a core CDD/reference ratio regresses by more than 3%
 python3 benchmarks/compare.py --fail-regression 3 \
-    benchmarks/results/2026-11-17-baseline.json \
+    benchmarks/results/2026-11-18-fixed.json \
     benchmarks/results/2026-11-17-opt.json
 ```
 
@@ -196,12 +196,9 @@ are skipped automatically when unavailable).
 These are recorded here because they constrain 64-bit benchmark code; they are
 independent of the performance numbers and should be tracked/fixed separately:
 
-- `cdd -O0` segfaults on `bench_matmul`, `bench_nbody`, and `bench_hashmap`
-  (2026-11-17), while `-O1` and above run correctly. The optimization-level
-  matrix reports those cells as errors.
-- Explicit widening casts from `uint8`/`uint32` sign-extend instead of
-  zero-extending: `static_cast<int64>` of a `uint8` value 250 yields `-6`, and
-  `static_cast<uint64>` of the `uint32` value `2654435761` yields
-  `18446744072069020081`. The allocation workload keeps its byte values below
-  128, and the free-order permutation uses `int32` arithmetic that is provably
-  in range.
+- The 2026-11-18 `2026-11-18-fixed` baseline includes the `-O0` loop-local
+  alloca and unsigned-widening-cast fixes. The older 2026-11-17 file still has
+  O0 error cells and should only be used for historical comparison.
+- The unsigned-widening cast defect (`uint8`/`uint32` values sign-extended by
+  explicit casts) was fixed on 2026-11-18; the old baseline's benchmark code
+  still avoided the path, so its runtime numbers are unaffected.

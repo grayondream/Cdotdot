@@ -84,11 +84,21 @@ public:
     // PAR-06: `restrict` — pointer-postfix qualifier, syntactic only (no
     // alias analysis; semantics deferred to MEM-04).
     bool isRestrict{};
+    // SG-B02: reference-return support for `T&` (currently used by
+    // `operator[]` to produce a writable element lvalue).  The LLVM
+    // representation is a pointer to the referent.
+    bool isReference{false};
     // P1-04 / CT-03: 该类型仅在 compile_time.if 未选中分支被声明（parse 期
     // 占位毒化）。类型引用在 parse 期绑定指针，仅靠 TypeContext 注销无法
     // 阻断使用；sema 在变量声明处拒绝毒化类型（活分支的 sema 注册创建新
     // 对象，天然解毒）。
     bool ctDeadBranch{false};
+    // Module visibility for user-declared types (MOD-05/06). Builtins and
+    // legacy/anonymous units have an empty moduleName and stay globally
+    // visible. A type from a participating module is visible to importers
+    // only when exported.
+    std::string moduleName;
+    bool exported{true};
     // P1-05 / ANN-05: [[deprecated]] 类型（sema 折叠；使用点 W3004）。
     bool deprecated{false};
     std::string deprecatedMsg;

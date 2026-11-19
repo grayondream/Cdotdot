@@ -1254,7 +1254,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
         return global;
     }
     
-    llvm::AllocaInst* alloca = ctx.getBuilder().CreateAlloca(llvmType, nullptr, name);
+    llvm::AllocaInst* alloca = ctx.createEntryAlloca(llvmType, name);
     // P1-05 / ANN-03: [[align(N)]] 局部变量对齐。
     if (declAlign) {
         alloca->setAlignment(llvm::Align(declAlign));
@@ -1484,6 +1484,17 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
     if (!ctx.getBuilder().GetInsertBlock()->getTerminator()) {
         if (returnType->kind == TypeKind::Void) {
             ctx.getBuilder().CreateRetVoid();
+        } else if (name == "main") {
+            // `main` gets an implicit zero return on fallthrough.  CDD's
+            // tests also use wider integer entry signatures, so match the
+            // declared integer return type.
+            llvm::Type* rt = ctx.getLLVMType(returnType);
+            if (rt && rt->isIntegerTy()) {
+                ctx.getBuilder().CreateRet(
+                    llvm::ConstantInt::get(rt, 0));
+            } else {
+                ctx.getBuilder().CreateUnreachable();
+            }
         } else {
             ctx.getBuilder().CreateUnreachable();
         }
@@ -1582,7 +1593,7 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
         return global;
     }
 
-    llvm::AllocaInst* alloca = ctx.getBuilder().CreateAlloca(arrType, nullptr, name);
+    llvm::AllocaInst* alloca = ctx.createEntryAlloca(arrType, name);
 
     if (initList) {
         ArrayType astArray(elementType, effectiveSize);
@@ -1609,6 +1620,21 @@ llvm::Value* MultiVarDeclAST::codegen(CodegenContext& ctx) {
 }
 
 llvm::Value* StructDeclAST::codegen(CodegenContext& ctx) {
+    // A record may be declared inside a function.  Its methods are emitted as
+    // separate functions here; without restoring the caller's insertion point
+    // the enclosing compound statement would end up looking at the method's
+    // terminated block and silently stop generating the rest of the function.
+    auto* savedBlock = ctx.getBuilder().GetInsertBlock();
+    llvm::IRBuilder<>::InsertPoint savedIP;
+    if (savedBlock) savedIP = ctx.getBuilder().saveIP();
+    auto restoreInsertionPoint = [&]() {
+        if (savedBlock) {
+            ctx.getBuilder().restoreIP(savedIP);
+        } else {
+            ctx.getBuilder().ClearInsertionPoint();
+        }
+    };
+
     // Forward declarations do not own layout, fields, methods, or variables.
     // Creating an empty named LLVM struct here would poison the later
     // definition's getTypeByName path (and can drop attachedVars entirely).
@@ -1635,6 +1661,7 @@ llvm::Value* StructDeclAST::codegen(CodegenContext& ctx) {
         if (attachedVars) {
             attachedVars->codegen(ctx);
         }
+        restoreInsertionPoint();
         return nullptr;
     }
 
@@ -1704,6 +1731,7 @@ llvm::Value* StructDeclAST::codegen(CodegenContext& ctx) {
         attachedVars->codegen(ctx);
     }
 
+    restoreInsertionPoint();
     return nullptr;
 }
 

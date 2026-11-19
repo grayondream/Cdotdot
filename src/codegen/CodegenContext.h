@@ -120,6 +120,16 @@ public:
     // `uitofp`) instead of the signed variants.
     llvm::Value* castValue(llvm::Value* val, Type* fromAST, llvm::Type* targetLLVMType);
 
+    // SG-11: try `operator T()` (exact or one user conversion + standard
+    // conversion).  Returns null when no conversion operator applies.
+    llvm::Value* tryUserConversion(llvm::Value* val, Type* fromAST, Type* toAST,
+                                   llvm::Type* targetLLVMType, bool valIsLValue);
+
+    // Allocate a fixed-size local in the current function's entry block.
+    // Allocas emitted inside loops would otherwise grow the stack on every
+    // iteration at -O0 (mem2reg hides this only after optimization).
+    llvm::AllocaInst* createEntryAlloca(llvm::Type* type, const std::string& name);
+
     // TYP-12: build the {ptr, len} slice view over a statically-sized array
     // (zero-copy; the elements are never duplicated).
     llvm::Value* emitArrayToSliceDecay(ArrayType* arrayType, llvm::Value* arrayAddr);

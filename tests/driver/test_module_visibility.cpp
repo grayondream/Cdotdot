@@ -166,6 +166,37 @@ TEST_F(ModuleVisibilityTest, NonExportedFunctionIsHidden) {
     EXPECT_TRUE(hasErrorContaining(analyzer.getErrors(), "undeclared"));
 }
 
+// SG-B05 / MOD-05: module-private types must not leak through `import`.
+TEST_F(ModuleVisibilityTest, NonExportedTypeIsHidden) {
+    write(dir / "util.cdd",
+          "module util;\n"
+          "struct Hidden { int32 x; };\n"
+          "export int32 use_hidden() { Hidden h; h.x = 1; return h.x; }\n");
+
+    const std::string mainSource =
+        "module main;\n"
+        "import util;\n"
+        "int32 main() { Hidden h; h.x = 2; return h.x; }\n";
+    Lexer lexer((dir / "main.cdd").string(), mainSource);
+    auto tokens = lexer.tokenize();
+    std::set<std::string> loaded;
+    std::vector<std::unique_ptr<DeclAST>> importedDecls;
+    std::vector<std::string> errors;
+    cdd::preloadImports(cdd::collectImportSpecifiers(tokens), dir.string(), {},
+                        loaded, importedDecls, errors);
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_FALSE(parser.getErrors().empty());
+    bool mentionsUnknownType = false;
+    for (const auto& e : parser.getErrors()) {
+        if (e.message.find("unknown type 'Hidden'") != std::string::npos ||
+            e.message.find("unknown type \"Hidden\"") != std::string::npos) {
+            mentionsUnknownType = true;
+        }
+    }
+    EXPECT_TRUE(mentionsUnknownType);
+}
+
 TEST_F(ModuleVisibilityTest, PrivateHelperUsableInsideModule) {
     write(dir / "util.cdd",
           "module util;\n"

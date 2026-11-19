@@ -1458,3 +1458,70 @@
   - **CG-15**：`cdd -O0` 生成的 `bench_matmul`、`bench_nbody`、`bench_hashmap` 运行即 SIGSEGV（rc=139），同一源码 `-O1/-O2/-O3` 正常；矩阵中记录为 error cell。
   - **TYP-28**：`uint8`/`uint32` 显式宽化转换仍走符号扩展；基准代码继续避开该路径。
 - 备注：2026-11-16 的 9 负载基线保留为历史数据，但方法学（无 `-g`、2+7、无矩阵/RSS/IR）与本次不同，跨基线对比时只看运行时间比值，不混用编译时间/体积。
+
+## 2026-11-18 — P0/P1 语法缺陷修复
+
+- 背景：用户要求修复语法审计中“已实现语法”的真实缺陷；范围限定为 P0/P1，未实现扩展（SG-08~SG-11、SG-20~SG-23）与 Non-goals 不做。
+- 修复项：
+  - **局部 record/class 带方法 SIGSEGV**：`StructDeclAST::codegen` 生成方法后未恢复调用方 insertion point，外层 `CompoundStmtAST::codegen` 看到方法块的 terminator 就提前停止，导致 `main` 为空函数。现在 codegen 保存/恢复 IRBuilder IP（`src/ast/Decl.cpp`），struct/class 局部方法都能编译运行。
+  - **转换运算符 `operator T()`**：parser 新增成员转换运算符解析（方法名 `operator$<mangled-target>`，`isConversionOperator`/`conversionType`）；sema 在显式 cast、隐式初始化/赋值/返回和 `if/while/do/for` 条件中查找转换方法；codegen 对 class 值调用转换方法而不是把聚合位模式当标量。C 风格 cast 不再静默产出地址样垃圾值；`static_cast`、隐式赋值、`operator bool` 条件均有回归覆盖。
+  - **TYP-28 无符号宽化**：`CastExprAST::codegen` 从无源类型的 `castValue` 改为 `castValue(val, expr->type, target)`，按源类型有/无符号选择 `zext`/`sext`；`uint8 250`、`uint32 2654435761u` 宽化正确。
+  - **CG-15 `-O0` SIGSEGV**：循环体局部变量的 `alloca` 原先插在循环块内，O0 无 mem2reg 时每轮增长栈帧。新增 `CodegenContext::createEntryAlloca`，局部变量/数组统一分配到函数 entry block；`bench_matmul`/`bench_nbody`/`bench_hashmap` 的 O0 程序恢复运行。
+  - **模块非导出类型泄漏（SG-B05）**：`Type` 增加 `moduleName`/`exported`；parser 在解析完每个参与模块后标记用户类型，并在类型查找时过滤跨模块非导出类型。导入者不再能看到 `Hidden`。
+  - **static 局部聚合初始化（SG-B01）**：sema 在折叠前把 initializer-list 的类型绑定到声明类型，并把 `AGGREGATE` 结果存入 `foldedAggregate`；codegen 以模块级常量物化，`static S s = {1,2}` 可用。
+  - **成员 `operator[]` 写穿（SG-B02）**：新增返回类型后缀 `T&`（LLVM 表示为指针，`Type::isReference`），`operator[]` 参考返回时数组访问是 `isLValue`；`int32& operator[](int32)` + `v[0] = 1` 可用。通用引用变量/参数仍未开放，当前仅用于返回类型。
+  - **实例方法裸成员名（SG-B03）**：`desugarImplicitThis` 从“仅 this 捕获 lambda”扩展到普通实例方法；裸字段名优先于同名文件/模块变量，静态方法仍拒绝 `this`。
+  - **`main(argc, argv)` 入口**：`mangleFunction` 对 `main` 恒返回 C 符号 `main`，即使带参数也不再生成 `main_int32_charptrptr`；原生链接可找到入口。
+- 测试（新增 9 项，全量由 1909 增至 **1918/1918**）：
+  - `DemoRegressionE2E.LocalRecordWithMethodKeepsEnclosingFunction`
+  - `DemoRegressionE2E.StaticLocalAggregateInitializer`
+  - `DemoRegressionE2E.BareMemberNameUsesImplicitThis`
+  - `DemoRegressionE2E.UserConversionOperators`
+  - `DemoRegressionE2E.ReferenceReturnSubscriptIsWritable`
+  - `ArithmeticConversionE2E.ExplicitWideningCastPreservesUnsigned`
+  - `ModuleVisibilityTest.NonExportedTypeIsHidden`
+  - `CompilerDriverTest.MainWithArgsLinksAndRuns`
+  - `CompilerDriverTest.O0LoopLocalsDoNotGrowStack`
+- 验证：
+  - `ctest --test-dir build -j8 --output-on-failure`：**1918/1918**。
+  - `examples/all_features.cdd` 编译运行输出 `ALL FEATURES OK`。
+  - 重新跑 richer baseline：`python3 benchmarks/run.py --full --baseline-md --label 2026-11-18-fixed` 退出 0；16 负载校验和全部一致，O0 矩阵 **0 error cell**；core 1.06x vs clang / 1.15x vs gcc，stdlib 0.39x/0.41x，alloc 0.30x，startup 0.71x/1.01x。
+- 仍未处理（明确范围外）：
+  - `-fsyntax-only` 仍只做 lex/parse，不跑 sema（P2）。
+  - SG-08~SG-11、SG-20~SG-23 是未裁决的语法扩展，未实现。
+  - 通用引用变量/参数、`TYP-27/MEM-14` 聚合 ABI 冻结、`TYP-23` 隐式窄化矩阵仍为开放项。
+
+
+## 2026-11-19 — 剩余缺陷复核（未改代码）
+
+用当前 `build/bin/cdd` 对上一轮修复后的状态做 CLI + IR 复核，确认以下剩余项（按严重度）：
+
+- **P0 C 风格 cast 无转换运算符**：`(int32)classValue` 只报 `warning[E2006]`、退出 0；`-S` IR 为 `store %NC7 %loadtmp, ptr %x`（x 是 i32），属于类型不匹配的未定义行为。`static_cast` 无转换运算符时已正确报错，C 风格路径尚未收紧。
+- **P0 显式 cast + 标准宽化**：只有 `operator int32()` 时 `static_cast<int64>(c)` 退出 0，但 IR 把 `%SWV` 聚合写入 i64 槽位，未调用转换方法；C++ 期望“用户转换 int32 → 标准宽化 int64”。同样，`int64 x = c` 目前被 sema 拒绝，属于转换序列覆盖缺口。
+- **P0 通用 `T&` 回归/未完成**：`int32& r=x; r=9;`、`T&` 形参、普通 `T&` 返回均可编译，但 codegen 将引用当指针（IR `inttoptr`），不形成别名；当前只有 `operator[]` 参考返回路径被 sema/codegen 接上。应限制 `T&` 到 `operator[]` 返回或实现真正引用。
+- **P0 `main` 默认返回/`void main`**：`int32 main(){}` 与 `void main(){}` 都编译通过，原生运行退出 232（未初始化）；应分别隐式返回 0、拒绝 `void main`。
+- **P1 私有转换运算符**：`PrivC` 的 private `operator int32()` 可从类外 `static_cast` 调用，转换查找未检查 `ClassType::memberAccess`。
+- **P1 转换运算符上下文**：`operator bool` 的 `!f`、`f && f`、`f ? a : b`、`assert(f)` 均报错；`operator int32` 的 `if(c)` 被拒绝（g++ 接受）；`operator int32` + `int64` 初始化被拒绝。已工作的上下文：`static_cast`、C 风格 cast、隐式初始化/赋值/返回、`if/while/do/for` 的 `operator bool`。
+- **P2 `-fsyntax-only`**：仍只做 lex/parse；`int32 x="..."` 返回 0，完整编译返回 1。
+- **P2 模块隐藏类型诊断**：非导出类型已拒绝，但错误是 `expected ';' after expression statement`，不是明确不可见类型。
+- 验证未变：`ctest --test-dir build -j8` 仍为 **1918/1918**；`benchmarks/results/2026-11-18-fixed` 的 O0 矩阵无 error cell。以上为复核记录，本轮未改编译器源码。
+
+## 2026-11-19 — 剩余缺陷全部修复
+
+- 背景：用户对 2026-11-19 复核清单要求“都修复”；本轮在 2026-11-18 的 P0/P1 修复之上继续收口。
+- 修复项：
+  - **C 风格 cast**：`CastExprAST` sema 对聚合 ↔ 标量且无可用 `operator T()` 的情况从 warning 改为 `E2006` 硬错误，消除 `store %Agg, ptr %scalar` 的非法 IR。算术/指针 C 风格转换不变。
+  - **用户转换 + 标准转换**：`SemanticAnalyzer::findUserConversion` 支持精确匹配和“用户转换后接算术/指针标准转换”；`conversionRank` 对这类序列返回 rank 3；`CodegenContext::tryUserConversion` 在显式 cast、隐式初始化/赋值/返回、函数/方法实参中调用转换方法并按需宽化；目标为 bool 时走 `coerceToBool`。
+  - **上下文 bool**：`!f`、`f && f`、`f || f`、`f ? a : b`、`assert(f)` 以及 `operator int32` 的 `if(c)` 均支持；`coerceToBool(val, astType)` 对 Class 调用转换序列。
+  - **私有转换**：`findUserConversion` 检查 `ClassType::memberAccess`；自由函数实参和成员方法实参额外检查 `conversionRank` 选出但不可访问的转换；显式 cast/初始化/返回/条件同样拒绝 private/protected。
+  - **引用限制**：`T&` 只允许作为成员 `operator[]` 返回类型；普通引用变量、形参、字段、`using` 别名、非 `operator[]` 返回均报错。`operator[]` 写穿继续工作。
+  - **`main`**：顶层 `main` 必须返回整数类型（`void main` 报错）；自然结束时按返回类型生成 `ret 0`；形参只允许无参或 `(int32 argc, char** argv)`。
+  - **`-fsyntax-only`**：在 parse 后继续执行 sema，错误时退出 1；只有无错误才返回 0，不再进入 codegen。
+  - **模块隐藏类型诊断**：parser 将已知但不可见的类型名按类型声明路径处理，并报 `unknown type 'Hidden'`，不再落入表达式语句错误。
+- 测试：
+  - 新增 `CastOperatorsE2E.CStyleIncompatibleAggregateCastIsRejected`、`CStyleClassToScalarWithoutConversionIsRejected`、`StaticCastUsesConversionThenWidens`、`ImplicitConversionThenWidens`、`PrivateConversionOperatorIsInaccessible`、`PrivateConversionOperatorCannotBePassedToFunction`、`PrivateConversionOperatorCannotBePassedToMethod`、`UserConversionInLogicalAndTernaryConditions`、`IntegerConversionIsUsableAsCondition`、`GeneralReferenceTypesAreRejected`、`ReferenceParametersAreRejected`、`ReferenceReturnOutsideSubscriptIsRejected`；driver 的 `MainWithoutReturnDefaultsToZero`、`VoidMainIsRejected`、`SyntaxOnlyRunsSemanticChecks`；模块诊断测试更新为 `unknown type 'Hidden'`。
+  - `DiagnosticSnapshotTest.IncompatibleCastError` 快照更新为 `error[E2006]`。
+- 验证：
+  - `ctest --test-dir build -j8 --output-on-failure`：**1932/1932**。
+  - `git diff --check` 通过；`examples/all_features.cdd` 编译运行 `ALL FEATURES OK`。
+  - CLI 复核：C 风格无转换退出 1；`static_cast<int64>(c)`、`int64 x=c`、`if(c)`、`!f`、`f&&f`、`f?`、`assert(f)` 均退出 0；`int32& r`/`T&` 形参/普通 `T&` 返回退出 1；`main(){}` 原生退出 0；`void main` 退出 1；`-fsyntax-only` 类型错误退出 1。

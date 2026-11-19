@@ -36,6 +36,14 @@ public:
 
     Type* checkBinaryTypes(BinaryOp op, Type* left, Type* right, ExprAST& node);
     Type* checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node);
+    // SG-11: find an accessible `operator T()` whose result can be converted
+    // to `to` (exact match or one user conversion + standard conversion).
+    FunctionType* findUserConversion(Type* from, Type* to,
+                                     ClassType** owner = nullptr,
+                                     bool* exact = nullptr) const;
+    bool hasUserConversion(Type* from, Type* to) const;
+    // Wrap a class condition with its boolean conversion sequence.
+    bool coerceUserCondition(std::unique_ptr<ExprAST>& cond, Type*& condType);
     Type* checkFunctionCall(const std::string& name, const std::vector<std::unique_ptr<ExprAST>>& args, ExprAST& node, FunctionType** outFuncType = nullptr);
 
     // P1-03 / GEN-03: 解析类型树中的 TypeInstance 占位为具体实例类型。
@@ -135,6 +143,7 @@ private:
     // Scalar = arithmetic or pointer/array; the valid type for a condition.
     bool isScalarType(Type* type) const;
     bool isConditionType(Type* type) const;
+    bool isReferenceType(Type* type) const;
     bool typesCompatible(Type* left, Type* right) const;
     Type* getCommonType(Type* left, Type* right) const;
     std::string typeToString(Type* type) const;

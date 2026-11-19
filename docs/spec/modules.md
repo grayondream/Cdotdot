@@ -58,7 +58,7 @@ namespace geometry {        // 开放命名空间：可再次进入
 - 导入搜索路径由驱动提供（`-M`/`--module-path`，见 TOOL-04/TOOL-08），默认搜索当前目录与标准库根。
 
 > 待定：`module` 是否存在子模块/分区（partial）语义——归入 DEC-17 一并裁定。
-> 现状限制：未强制 `module` 必须位于文件首部、未拒绝重复 `module`；类型名可见性尚未纳入模块作用域（`typeCtx` 仍全局），详见 §11。
+> 现状限制：未强制 `module` 必须位于文件首部、未拒绝重复 `module`。类型名可见性已纳入 parser 类型查找（`Type::moduleName`/`exported`），详见 §11。
 
 ## 4. 导入与可见性（MOD-05/06/11，DEC-02）
 
@@ -132,9 +132,9 @@ import math;            // 形式 1：引入模块的导出符号
 
 ## 11. 现状限制（`[plan]` 待补）
 
-- **类型可见性**：导出类型（`export struct/class/union/enum/using/template`）在解析
-  导入者前预载，已可跨模块使用；但 `typeCtx` 仍是全局表，非导出类型名对导入者
-  暂不可隐藏，纳入模块作用域归入 MOD-06/08 后续。
+- **类型可见性（2026-11-18 修复）**：导出类型（`export struct/class/union/enum/using/template`）
+  在解析导入者前预载；parser 在模块解析完成后给用户类型标记 `moduleName`/`exported`，
+  类型查找会过滤跨模块的非导出类型。`typeCtx` 仍共用存储，但可见性由 metadata 控制。
 - **私有同名符号**：名字解析阶段已按模块作用域隔离，但代码生成共用单一 LLVM
   符号空间；跨模块同名私有函数/全局变量仍需 MOD-08/MOD-15 的名称修饰。
 - **模块声明位置**：已强制 `module` 位于文件首部、唯一、具名，并校验入口文件

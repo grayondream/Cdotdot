@@ -339,3 +339,106 @@ TEST_F(CompilerDriverTest, ThreadProgramLinksAndRuns) {
     EXPECT_EQ(std::system(outPath.c_str()), 0);
     std::filesystem::remove_all(dir);
 }
+
+TEST_F(CompilerDriverTest, MainWithArgsLinksAndRuns) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_main_args_driver_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path src = dir / "main_args.cdd";
+    const std::filesystem::path out = dir / "main_args";
+    {
+        std::ofstream f(src);
+        f << "int32 main(int32 argc, char** argv) {\n"
+             "    if (argc != 3) return 1;\n"
+             "    return argv[1][0] == 'x' ? 0 : 2;\n"
+             "}\n";
+    }
+    const std::string srcPath = src.string();
+    const std::string outPath = out.string();
+    const char* argv[] = {"cdd", srcPath.c_str(), "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(4, argv));
+    EXPECT_EQ(driver.run(), 0);
+    const std::string command = outPath + " x y";
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, MainWithoutReturnDefaultsToZero) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_main_default_driver_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path src = dir / "main_default.cdd";
+    const std::filesystem::path out = dir / "main_default";
+    {
+        std::ofstream f(src);
+        f << "int32 main() { int32 unused = 1; }\n";
+    }
+    const std::string srcPath = src.string();
+    const std::string outPath = out.string();
+    const char* argv[] = {"cdd", srcPath.c_str(), "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(4, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, VoidMainIsRejected) {
+    const std::filesystem::path p =
+        writeTempSource("cdd_void_main.cdd", "void main() { }\n");
+    const std::string path = p.string();
+    const std::string outPath = path + ".out";
+    const char* argv[] = {"cdd", path.c_str(), "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(4, argv));
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(driver.run(), 1);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_NE(err.find("main"), std::string::npos);
+    std::filesystem::remove(p);
+    std::filesystem::remove(outPath);
+}
+
+TEST_F(CompilerDriverTest, SyntaxOnlyRunsSemanticChecks) {
+    const std::filesystem::path p =
+        writeTempSource("cdd_syntax_sema.cdd",
+                        "int32 main() { int32 x = \"not an int\"; return x; }\n");
+    const std::string path = p.string();
+    const char* argv[] = {"cdd", "-fsyntax-only", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    testing::internal::CaptureStderr();
+    EXPECT_EQ(driver.run(), 1);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_NE(err.find("type mismatch"), std::string::npos);
+    std::filesystem::remove(p);
+}
+
+// CG-15 regression: loop-local allocas must live in the function entry block;
+// otherwise -O0 grows the stack by one frame per iteration and eventually
+// segfaults (mem2reg only hides this at -O1+).
+TEST_F(CompilerDriverTest, O0LoopLocalsDoNotGrowStack) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_o0_loop_driver_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path src = dir / "loop.cdd";
+    const std::filesystem::path out = dir / "loop";
+    {
+        std::ofstream f(src);
+        f << "int32 main() {\n"
+             "    int64 sum = 0;\n"
+             "    for (int32 i = 0; i < 1000000; i = i + 1) {\n"
+             "        int32 x = i;\n"
+             "        sum = sum + (int64)x;\n"
+             "    }\n"
+             "    return sum == 499999500000 ? 0 : 1;\n"
+             "}\n";
+    }
+    const std::string srcPath = src.string();
+    const std::string outPath = out.string();
+    const char* argv[] = {"cdd", "-O", "0", srcPath.c_str(), "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}

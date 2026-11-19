@@ -394,6 +394,15 @@ llvm::Value* CodegenContext::coerceToBool(llvm::Value* val, Type* astType) {
             return builder.CreateExtractValue(val, {0}, "optres.bool");
         return coerceToBool(val);
     }
+    if (t && t->kind == TypeKind::Class) {
+        // Contextual bool (`if`, `!`, `&&`, `?:`, `assert`) uses one user
+        // conversion followed by the standard conversion to bool.
+        if (llvm::Value* converted = tryUserConversion(
+                val, t, nullptr, llvm::Type::getInt1Ty(*context),
+                val->getType()->isPointerTy())) {
+            return converted;
+        }
+    }
     return coerceToBool(val);
 }
 
@@ -415,6 +424,20 @@ llvm::Value* CodegenContext::coerceToBool(llvm::Value* val) {
         return builder.CreateICmpNE(val, llvm::ConstantPointerNull::get(ptrTy), "tobool");
     }
     return val;
+}
+
+llvm::AllocaInst* CodegenContext::createEntryAlloca(llvm::Type* type,
+                                                    const std::string& name) {
+    llvm::BasicBlock* current = builder.GetInsertBlock();
+    if (!current || !current->getParent()) {
+        return builder.CreateAlloca(type, nullptr, name);
+    }
+    llvm::BasicBlock& entry = current->getParent()->getEntryBlock();
+    auto savedIP = builder.saveIP();
+    builder.SetInsertPoint(&entry, entry.begin());
+    llvm::AllocaInst* alloca = builder.CreateAlloca(type, nullptr, name);
+    builder.restoreIP(savedIP);
+    return alloca;
 }
 
 llvm::Value* CodegenContext::castValue(llvm::Value* val, llvm::Type* targetLLVMType) {
@@ -462,10 +485,105 @@ llvm::Value* CodegenContext::castValue(llvm::Value* val, llvm::Type* targetLLVMT
     return val;
 }
 
+static Type* stripConversionTypedef(Type* t) {
+    while (t && t->kind == TypeKind::Typedef)
+        t = static_cast<TypedefType*>(t)->aliasedType;
+    return t;
+}
+
+static bool isPointerishType(Type* t) {
+    return t && (t->kind == TypeKind::Pointer || t->kind == TypeKind::Array);
+}
+
+llvm::Value* CodegenContext::tryUserConversion(llvm::Value* val, Type* fromAST,
+                                               Type* toAST,
+                                               llvm::Type* targetLLVMType,
+                                               bool valIsLValue) {
+    if (!val || !fromAST || !targetLLVMType) return nullptr;
+    Type* from = stripConversionTypedef(fromAST);
+    if (!from || from->kind != TypeKind::Class) return nullptr;
+    Type* to = stripConversionTypedef(toAST);
+
+    FunctionType* exact = nullptr;
+    std::string exactName;
+    FunctionType* fallback = nullptr;
+    std::string fallbackName;
+
+    Type* cls = from;
+    while (cls && cls->kind == TypeKind::Class) {
+        auto* ct = static_cast<ClassType*>(cls);
+        for (const auto& entry : ct->methods) {
+            if (entry.first.rfind("operator$", 0) != 0 || !entry.second) continue;
+            FunctionType* ft = entry.second;
+            Type* ret = stripConversionTypedef(ft->returnType);
+            llvm::Type* retLLVM = getLLVMType(ft->returnType);
+            if (!ret || !retLLVM) continue;
+
+            bool isExact = false;
+            bool canStandard = false;
+            if (to) {
+                isExact = typesEqual(ret, to) || retLLVM == targetLLVMType;
+                canStandard =
+                    (isArithmeticType(ret) && isArithmeticType(to)) ||
+                    (isPointerishType(ret) && isPointerishType(to));
+            } else {
+                isExact = retLLVM == targetLLVMType;
+                const bool retScalar =
+                    retLLVM->isIntegerTy() || retLLVM->isFloatingPointTy() ||
+                    retLLVM->isPointerTy();
+                const bool targetScalar =
+                    targetLLVMType->isIntegerTy() ||
+                    targetLLVMType->isFloatingPointTy() ||
+                    targetLLVMType->isPointerTy();
+                canStandard = retScalar && targetScalar;
+            }
+            if (isExact && !exact) {
+                exact = ft;
+                exactName = entry.first;
+            } else if (!isExact && !fallback && canStandard) {
+                fallback = ft;
+                fallbackName = entry.first;
+            }
+        }
+        cls = ct->base;
+    }
+
+    FunctionType* chosen = exact ? exact : fallback;
+    const std::string& chosenName = exact ? exactName : fallbackName;
+    if (!chosen) return nullptr;
+
+    llvm::Value* objPtr = val;
+    if (!valIsLValue || !objPtr->getType()->isPointerTy()) {
+        objPtr = createEntryAlloca(val->getType(), "conv.tmp");
+        builder.CreateStore(val, objPtr);
+    }
+    llvm::Function* fn = getModule().getFunction(
+        mangleFunction(chosenName, chosen->paramTypes));
+    if (!fn) return nullptr;
+    llvm::Value* result = builder.CreateCall(fn, {objPtr}, "conv");
+    if (targetLLVMType->isIntegerTy(1) &&
+        !result->getType()->isIntegerTy(1)) {
+        return coerceToBool(result, chosen->returnType);
+    }
+    if (result->getType() != targetLLVMType) {
+        result = castValue(result, chosen->returnType, targetLLVMType);
+    }
+    return result;
+}
+
 llvm::Value* CodegenContext::castValue(llvm::Value* val, Type* fromAST, llvm::Type* targetLLVMType) {
     if (!val || !targetLLVMType || !fromAST) return castValue(val, targetLLVMType);
     llvm::Type* srcType = val->getType();
     if (srcType == targetLLVMType) return val;
+
+    // User-defined conversion operator `operator T()`: implicit conversions
+    // (initialization, argument passing, return) call the same method as an
+    // explicit cast.  The method table stores the implicit `this` pointer.
+    if (llvm::Value* converted =
+            tryUserConversion(val, fromAST, nullptr, targetLLVMType,
+                              val->getType()->isPointerTy())) {
+        return converted;
+    }
 
     const bool fromUnsigned = isUnsignedIntegerType(fromAST);
 
