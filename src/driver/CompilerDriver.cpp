@@ -62,7 +62,7 @@ static std::string getHostTargetTriple() {
 }
 
 static std::unique_ptr<llvm::TargetMachine>
-createTargetMachine(llvm::Module& module) {
+createTargetMachine(llvm::Module& module, const std::string& march) {
     std::string triple = getHostTargetTriple();
     llvm::Triple llvmTriple(triple);
     // LLVM 19 changed Module::setTargetTriple/Target::createTargetMachine to
@@ -89,14 +89,31 @@ createTargetMachine(llvm::Module& module) {
 #else
     llvm::sys::getHostCPUFeatures(hostFeatures);
 #endif
-    std::string targetFeatures =
-        hostFeatures.lookup("cx16") ? "+cx16" : "";
+
+    // Default to the portable x86-64 baseline (SSE2, matching clang/gcc
+    // defaults).  `-march=native` opts into the host CPU model and all
+    // features it reports, which enables AVX2/AVX-512 wider vectors.
+    std::string cpu = march.empty() || march == "native" ? "generic" : march;
+    std::string targetFeatures;
+    auto addFeature = [&](const std::string& feature) {
+        if (!targetFeatures.empty()) targetFeatures += ",";
+        targetFeatures += "+" + feature;
+    };
+    if (march == "native") {
+        llvm::StringRef hostCpu = llvm::sys::getHostCPUName();
+        if (!hostCpu.empty() && hostCpu != "generic") cpu = hostCpu.str();
+        for (const auto& feature : hostFeatures) {
+            if (feature.second) addFeature(feature.first().str());
+        }
+    } else if (hostFeatures.lookup("cx16")) {
+        addFeature("cx16");
+    }
 #if LLVM_VERSION_MAJOR >= 19
     auto tm = target->createTargetMachine(
-        llvmTriple, "generic", targetFeatures, options, llvm::Reloc::PIC_);
+        llvmTriple, cpu, targetFeatures, options, llvm::Reloc::PIC_);
 #else
     auto tm = target->createTargetMachine(
-        llvmTriple.str(), "generic", targetFeatures, options,
+        llvmTriple.str(), cpu, targetFeatures, options,
         llvm::Reloc::PIC_);
 #endif
     if (!tm) {
@@ -108,10 +125,8 @@ createTargetMachine(llvm::Module& module) {
     return std::unique_ptr<llvm::TargetMachine>(tm);
 }
 
-static bool emitObjectFile(llvm::Module& module, const std::string& outputPath) {
-    auto tm = createTargetMachine(module);
-    if (!tm) return false;
-
+static bool emitObjectFile(llvm::Module& module, const std::string& outputPath,
+                           llvm::TargetMachine& tm) {
     std::error_code ec;
     llvm::raw_fd_ostream dest(outputPath, ec, llvm::sys::fs::OF_None);
     if (ec) {
@@ -120,7 +135,7 @@ static bool emitObjectFile(llvm::Module& module, const std::string& outputPath) 
     }
 
     llvm::legacy::PassManager passManager;
-    if (tm->addPassesToEmitFile(passManager, dest, nullptr,
+    if (tm.addPassesToEmitFile(passManager, dest, nullptr,
             llvm::CodeGenFileType::ObjectFile)) {
         LOGE("TargetMachine cannot emit object file");
         return false;
@@ -150,6 +165,7 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
     optLevel = 0;
     includeDebug = false;
     stdStandard.clear();
+    march = "generic";
 
     std::vector<std::string> args;
     for (int i = 1; i < argc; i++) {
@@ -162,6 +178,10 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
             stdStandard = arg.substr(5);
         } else if (arg == "-std" && i + 1 < argc) {
             stdStandard = argv[++i];
+        } else if (arg.rfind("-march=", 0) == 0) {
+            march = arg.substr(7);
+        } else if (arg == "-march" && i + 1 < argc) {
+            march = argv[++i];
         } else if (arg == "-fsyntax-only") {
             syntaxOnly = true;
         } else {
@@ -435,13 +455,16 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
 
     CodegenContext codegenCtx;
     codegenCtx.setSourceFile(inputFile);
+    // The target machine must exist before optimization: the vectorizer and
+    // other target-dependent passes use its TTI/data layout.  Previously it
+    // was created only when emitting the object, after the pass pipeline had
+    // already run, so LoopVectorize saw no SIMD width.
+    auto targetMachine = createTargetMachine(codegenCtx.getModule(), march);
+    if (!targetMachine) {
+        return 1;
+    }
     ast->codegen(codegenCtx);
     codegenCtx.finalizeDebugInfo();
-
-    if (emitIR) {
-        codegenCtx.getModule().print(llvm::outs(), nullptr);
-        return 0;
-    }
 
     if (optLevel > 0) {
         llvm::LoopAnalysisManager LAM;
@@ -449,7 +472,7 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
         llvm::CGSCCAnalysisManager CGAM;
         llvm::ModuleAnalysisManager MAM;
 
-        llvm::PassBuilder PB;
+        llvm::PassBuilder PB(targetMachine.get());
         PB.registerModuleAnalyses(MAM);
         PB.registerCGSCCAnalyses(CGAM);
         PB.registerFunctionAnalyses(FAM);
@@ -468,9 +491,15 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
         MPM.run(codegenCtx.getModule(), MAM);
     }
 
+    if (emitIR) {
+        codegenCtx.getModule().print(llvm::outs(), nullptr);
+        llvm::outs().flush();
+        return 0;
+    }
+
     if (compileOnly) {
         std::string objectPath = outputFile;
-        if (!emitObjectFile(codegenCtx.getModule(), objectPath)) {
+        if (!emitObjectFile(codegenCtx.getModule(), objectPath, *targetMachine)) {
             LOGE("failed to emit object file");
             return 1;
         }
@@ -478,7 +507,7 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
     }
 
     std::string objectPath = outputFile + ".o";
-    if (!emitObjectFile(codegenCtx.getModule(), objectPath)) {
+    if (!emitObjectFile(codegenCtx.getModule(), objectPath, *targetMachine)) {
         LOGE("failed to emit object file");
         return 1;
     }
@@ -555,6 +584,7 @@ void CompilerDriver::printHelp() const {
               << "  -Wall           Enable all warnings\n"
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
+              << "  -march <cpu>    Target CPU (default: generic; native = host)\n"
               << "  -fsyntax-only   Parse and semantic-check only (no codegen)\n"
               << "  -l <lib>        Link library\n"
               << "  -L <path>       Library search path\n"

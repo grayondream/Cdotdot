@@ -442,3 +442,64 @@ TEST_F(CompilerDriverTest, O0LoopLocalsDoNotGrowStack) {
     EXPECT_EQ(std::system(outPath.c_str()), 0);
     std::filesystem::remove_all(dir);
 }
+
+// The optimization pipeline must see the target machine: without it the loop
+// vectorizer has no SIMD width and bench_matmul stays scalar.
+TEST_F(CompilerDriverTest, OptimizedIREnablesGenericVectorization) {
+    const std::filesystem::path p = writeTempSource("cdd_simd_generic.cdd", R"(
+int32 main() {
+    float64 a[128] = {};
+    float64 b[128] = {};
+    float64 c[128] = {};
+    for (int32 i = 0; i < 128; i = i + 1) {
+        a[i] = static_cast<float64>(i) * 0.5;
+        b[i] = static_cast<float64>(i) * 0.25;
+    }
+    for (int32 i = 0; i < 128; i = i + 1) {
+        c[i] = a[i] + b[i] * 2.0;
+    }
+    return c[0] == 1.0 ? 0 : 1;
+}
+)");
+    const std::string path = p.string();
+    const char* argv[] = {"cdd", "-S", "-O", "2", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(5, argv));
+    testing::internal::CaptureStdout();
+    EXPECT_EQ(driver.run(), 0);
+    const std::string ir = testing::internal::GetCapturedStdout();
+    EXPECT_NE(ir.find("llvm.loop.isvectorized"), std::string::npos);
+    EXPECT_NE(ir.find("<2 x double>"), std::string::npos);
+    std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, ParseMarchNative) {
+    const char* argv[] = {"cdd", "-march=native", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_EQ(driver.getMarch(), "native");
+}
+
+TEST_F(CompilerDriverTest, NativeMarchVectorizesWithHostFeatures) {
+    const std::filesystem::path p = writeTempSource("cdd_simd_native.cdd", R"(
+int32 main() {
+    float64 a[128] = {};
+    float64 b[128] = {};
+    float64 c[128] = {};
+    for (int32 i = 0; i < 128; i = i + 1) {
+        a[i] = static_cast<float64>(i) * 0.5;
+        b[i] = static_cast<float64>(i) * 0.25;
+    }
+    for (int32 i = 0; i < 128; i = i + 1) {
+        c[i] = a[i] + b[i] * 2.0;
+    }
+    return c[0] == 1.0 ? 0 : 1;
+}
+)");
+    const std::string path = p.string();
+    const char* argv[] = {"cdd", "-S", "-O", "2", "-march=native", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    testing::internal::CaptureStdout();
+    EXPECT_EQ(driver.run(), 0);
+    const std::string ir = testing::internal::GetCapturedStdout();
+    EXPECT_NE(ir.find("llvm.loop.isvectorized"), std::string::npos);
+    std::filesystem::remove(p);
+}

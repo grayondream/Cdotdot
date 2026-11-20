@@ -1525,3 +1525,27 @@
   - `ctest --test-dir build -j8 --output-on-failure`：**1932/1932**。
   - `git diff --check` 通过；`examples/all_features.cdd` 编译运行 `ALL FEATURES OK`。
   - CLI 复核：C 风格无转换退出 1；`static_cast<int64>(c)`、`int64 x=c`、`if(c)`、`!f`、`f&&f`、`f?`、`assert(f)` 均退出 0；`int32& r`/`T&` 形参/普通 `T&` 返回退出 1；`main(){}` 原生退出 0；`void main` 退出 1；`-fsyntax-only` 类型错误退出 1。
+
+## 2026-11-20 — 目标感知 SIMD / 自动向量化
+
+- 背景：用户要求根据 benchmark 提供更好的 SIMD 优化；上一轮基线中 `bench_matmul` 是最明显的 codegen gap（CDD 204.3ms vs clang 70.2ms）。
+- 根因：`CompilerDriver` 先运行 `PassBuilder`，之后才在 `emitObjectFile()` 里创建 `TargetMachine`。优化阶段 module 没有 target triple/data layout，`PassBuilder` 也没有 `TargetMachine`，LoopVectorize 因此看到 0 SIMD 宽度，内层循环保持标量。
+- 修复：
+  - codegen 前创建 `TargetMachine` 并设置 triple/data layout；优化与 object emission 复用同一 TM。
+  - `PassBuilder` 改为 `PassBuilder PB(targetMachine.get())`，让 LoopVectorize/SLP 使用目标 TTI。
+  - 默认 CPU `generic`（x86-64 SSE2），保持跨机器可移植，并与 clang/gcc 默认基线公平比较。
+  - 新增 `-march=native`（也接受 `-march <cpu>`）：使用 `getHostCPUName()` + `getHostCPUFeatures()`，在支持的主机上启用 AVX2/AVX-512。
+  - `-S -O2` 现在输出优化后的 IR（之前是优化前 IR），并提供 `llvm.loop.isvectorized` 回归测试入口。
+- 测试（新增 3 项，全量 1932 → **1935/1935**）：
+  - `CompilerDriverTest.OptimizedIREnablesGenericVectorization`：默认 generic 必须生成 `<2 x double>` 和 `llvm.loop.isvectorized`。
+  - `CompilerDriverTest.ParseMarchNative`：`-march=native` 参数进入 driver。
+  - `CompilerDriverTest.NativeMarchVectorizesWithHostFeatures`：native 路径必须向量化。
+- 基准：
+  - `python3 benchmarks/run.py --full --baseline-md --label 2026-11-20-simd` 退出 0；16 个负载校验和全部一致。
+  - `bench_matmul` CDD **62.6ms** vs clang 71.2ms / gcc 72.3ms（0.88x / 0.87x；修复前 204.3ms / 2.91x）。
+  - core geomean **0.95x vs clang**、**1.01x vs gcc**（修复前 1.06x / 1.15x）。
+  - `bench_nbody` 277.0ms（0.95x）、`bench_class` 233.8ms（1.00x）、`bench_sieve` 1063.9ms（0.87x）；无回退。
+  - O2 矩阵 `bench_matmul` 62.9ms；O1 63.4ms；O0–O3 无 error cell。
+  - 手工验证：`-march=native` matmul 约 0.04s（generic 0.06s，旧版 0.23s），校验和 2876 一致；`nbody` 的 AVX2 版本约 0.36s，略慢于 generic 的 0.32s，因此 `native` 保持可选，默认仍用 generic。
+- 验证：`ctest --test-dir build -j8 --output-on-failure` **1935/1935**；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；`git diff --check` 通过。
+- 限制：`-march=native` 产物绑定主机指令集；默认 generic 保持可移植。

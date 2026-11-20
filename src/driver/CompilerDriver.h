@@ -28,6 +28,7 @@ public:
     int getOptLevel() const { return optLevel; }
     bool getIncludeDebug() const { return includeDebug; }
     const std::string& getStdStandard() const { return stdStandard; }
+    const std::string& getMarch() const { return march; }
 
     void printHelp() const;
 
@@ -51,4 +52,5 @@ private:
     int optLevel = 0;
     bool includeDebug = false;
     std::string stdStandard;
+    std::string march = "generic";
 };

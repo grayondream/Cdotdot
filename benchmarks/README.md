@@ -117,7 +117,9 @@ Defaults:
 - `cdd`: `build/bin/cdd` (override with `--cdd path/to/cdd`)
 - C++ references: `clang++-22` (with the local libstdc++ path when needed) and
   `g++`; override with repeated `--cpp-compiler "cmd ..."`
-- optimization: `-O2` for every compiler (`--opt`)
+- optimization: `-O2` for every compiler (`--opt`); CDD defaults to the
+  portable `generic` CPU (SSE2), matching clang/gcc defaults. Use
+  `-march=native` separately to measure host AVX2/AVX-512 code.
 - debug info: C++ references are compiled with `-g` because CDD emits debug
   information by default
 - CPU pinning: the least busy core is selected automatically at startup

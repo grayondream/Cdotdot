@@ -195,9 +195,10 @@ cdd [options] <input.cdd>
 |---|---|
 | `-c` | Compile to an object file; do not link |
 | `-o <file>` | Set the output path |
-| `-S` | Emit LLVM IR instead of an executable |
+| `-S` | Emit LLVM IR instead of an executable (after the selected `-O` optimization) |
 | `-M <path>` | Add a module import search path (repeatable) |
 | `-O <0-3>` | Set the optimization level |
+| `-march <cpu>` | Target CPU: `generic` (default, SSE2) or `native` (host AVX2/AVX-512 when available) |
 | `-g` | Emit debug information |
 | `-v` | Enable verbose driver output |
 | `--no-prelude` | Do not inject the automatic `std.c` libc binding layer |
