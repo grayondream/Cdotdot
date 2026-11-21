@@ -82,7 +82,7 @@ CDD 面向系统级代码：既需要 C 可预测的执行模型，又希望比�
 | Linux x86-64 | 当前主要且唯一支持的目标 |
 | CMake 3.20+ | 构建系统 |
 | C++20 编译器 | GCC 或 Clang |
-| LLVM 18+ | 已用 LLVM 22.1.8 验证 |
+| LLVM 18+ | 已用 LLVM 22.1.2 验证 |
 | `vcpkg`（可选） | 配置后提供 LLVM、`spdlog`、`cxxopts` |
 | GoogleTest | 未安装时自动拉取 |
 | `pthread` | 由驱动链接 |
@@ -111,7 +111,9 @@ cmake -S . -B build \
 cmake --build build -j"$(nproc)"
 ```
 
-如果 `llvm-config` 不在 `PATH` 中，请把 `LLVM_DIR` 设置为包含
+`./scripts/build.sh` 会优先使用能找到的最新带版本号 `llvm-config-N`
+（22 到 18），再回退到 `llvm-config`。可用 `LLVM_CONFIG` 或 `LLVM_DIR`
+覆盖该选择。如果 `llvm-config` 不在 `PATH` 中，请把 `LLVM_DIR` 设置为包含
 `LLVMConfig.cmake` 的目录。如果使用 `vcpkg`，请在运行 `./scripts/build.sh`
 之前设置 `VCPKG_ROOT`。
 

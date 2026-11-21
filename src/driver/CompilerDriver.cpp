@@ -74,7 +74,13 @@ createTargetMachine(llvm::Module& module, const std::string& march) {
 #endif
 
     std::string error;
-    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvmTriple.str(), error);
+#if LLVM_VERSION_MAJOR >= 19
+    const llvm::Target* target =
+        llvm::TargetRegistry::lookupTarget(llvmTriple, error);
+#else
+    const llvm::Target* target =
+        llvm::TargetRegistry::lookupTarget(llvmTriple.str(), error);
+#endif
     if (!target) {
         LOGE("Target lookup failed: {}", error);
         return nullptr;

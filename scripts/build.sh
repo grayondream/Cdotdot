@@ -21,13 +21,23 @@ fi
 
 cd "${BUILD_DIR}"
 
-# Prefer an explicit LLVM_DIR, then llvm-config, then a couple of common paths.
+# Prefer an explicit LLVM_DIR, then the newest versioned llvm-config-N, then
+# the unversioned llvm-config, then a couple of common paths.
 if [ -z "${LLVM_DIR}" ]; then
-    if command -v llvm-config >/dev/null 2>&1; then
-        LLVM_DIR="$(llvm-config --cmakedir)"
-    elif [ -d /usr/lib/cmake/llvm ]; then
+    if [ -n "${LLVM_CONFIG}" ] && command -v "${LLVM_CONFIG}" >/dev/null 2>&1; then
+        LLVM_DIR="$("${LLVM_CONFIG}" --cmakedir)"
+    else
+        for candidate in llvm-config-22 llvm-config-21 llvm-config-20 \
+                         llvm-config-19 llvm-config-18 llvm-config; do
+            if command -v "${candidate}" >/dev/null 2>&1; then
+                LLVM_DIR="$("${candidate}" --cmakedir)"
+                break
+            fi
+        done
+    fi
+    if [ -z "${LLVM_DIR}" ] && [ -d /usr/lib/cmake/llvm ]; then
         LLVM_DIR="/usr/lib/cmake/llvm"
-    elif [ -d /opt/homebrew/opt/llvm/lib/cmake/llvm ]; then
+    elif [ -z "${LLVM_DIR}" ] && [ -d /opt/homebrew/opt/llvm/lib/cmake/llvm ]; then
         LLVM_DIR="/opt/homebrew/opt/llvm/lib/cmake/llvm"
     fi
 fi

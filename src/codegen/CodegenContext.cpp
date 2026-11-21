@@ -1654,7 +1654,7 @@ llvm::Function* CodegenContext::getSplitFn() {
     auto* i64Ty = llvm::Type::getInt64Ty(c);
     auto* ptrTy = llvm::PointerType::get(c, 0);
     auto* fnTy = llvm::FunctionType::get(
-        ptrTy, {ptrTy, i64Ty, ptrTy, i64Ty, llvm::PointerType::get(i64Ty, 0)},
+        ptrTy, {ptrTy, i64Ty, ptrTy, i64Ty, llvm::PointerType::get(c, 0)},
         false);
     auto* fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage,
                                       "cdd.str.split", module.get());

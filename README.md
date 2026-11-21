@@ -95,7 +95,7 @@ compiler's internal C++ namespace is `cdd`.
 | Linux x86-64 | Primary and currently only supported target |
 | CMake 3.20+ | Build system |
 | C++20 compiler | GCC or Clang |
-| LLVM 18+ | Tested with LLVM 22.1.8 |
+| LLVM 18+ | Tested with LLVM 22.1.2 |
 | `vcpkg` (optional) | Provides LLVM, `spdlog`, and `cxxopts` when configured |
 | GoogleTest | Fetched automatically if not installed |
 | `pthread` | Linked by the driver |
@@ -124,9 +124,11 @@ cmake -S . -B build \
 cmake --build build -j"$(nproc)"
 ```
 
-If `llvm-config` is not on `PATH`, set `LLVM_DIR` to the directory containing
-`LLVMConfig.cmake`. If you use `vcpkg`, set `VCPKG_ROOT` before running
-`./scripts/build.sh`.
+`./scripts/build.sh` prefers the newest versioned `llvm-config-N` it can find
+(22 down to 18), then falls back to `llvm-config`. Set `LLVM_CONFIG` or
+`LLVM_DIR` to override that choice. If `llvm-config` is not on `PATH`, set
+`LLVM_DIR` to the directory containing `LLVMConfig.cmake`. If you use `vcpkg`,
+set `VCPKG_ROOT` before running `./scripts/build.sh`.
 
 The compiler is written to `build/bin/cdd`.
 
