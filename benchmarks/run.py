@@ -1317,10 +1317,10 @@ def render_markdown(report: dict, specs: list[dict]) -> str:
         wins = ", ".join(f"`{n}` {r:.2f}x" for n, r in ordered[-3:])
         add(f"- Largest core gaps vs {labels[0]}: {gaps}.")
         add(f"- Largest core wins vs {labels[0]}: {wins}.")
-    add("- `bench_matmul` is the clearest code-generation gap. The loop order is "
-        "already cache-friendly; the likely missing pieces are alias information "
-        "and loop vectorization. Check the matrix's O1/O2/O3 cells and the generated "
-        "IR for vector widths before changing codegen.")
+    add("- With the auto x86-64-v3 target, matmul, class, and hashmap are now the "
+        "largest core wins. The remaining core gaps (fib, sort, binary_search) are "
+        "close to clang at the code-generation level; inspect allocator/layout and "
+        "GCC's recursive-inlining shape before adding more IR metadata.")
     add("- `bench_fib` is close to clang but well behind gcc. GCC emits a different "
         "recursive shape/inlining decision; treat this as a codegen-shape question, "
         "not a front-end question.")
@@ -1333,9 +1333,10 @@ def render_markdown(report: dict, specs: list[dict]) -> str:
         "judging the compiler backend.")
     add("- `alloc` is dominated by mimalloc versus the platform allocator; `startup` "
         "is process overhead. Neither should drive backend optimization decisions.")
-    add("- Highest-value follow-ups for `P3-01`: matmul vectorization/alias "
-        "metadata, fib code shape, and stdlib growth paths (`string`, `Vec`). "
-        "Use `compare.py` to quantify each change against this baseline.")
+    add("- Highest-value follow-ups: binary_search memory layout/allocator behavior, "
+        "sort branch layout, and the `std::Deque` growth path. fib is dominated by "
+        "GCC's recursive inlining, not missing CDD IR metadata. Use `compare.py` to "
+        "quantify each change against this baseline.")
     add("")
 
     add("## Caveats")

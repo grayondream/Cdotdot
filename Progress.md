@@ -1583,3 +1583,39 @@
   - `bench_fib` 241.9ms（1.06x），`bench_sieve` 1046.6ms（0.87x），`bench_nbody` 281.3ms（0.95x）。
 - 验证：`ctest --test-dir build -j8 --output-on-failure` **1935/1935**；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；`git diff --check` 通过。
 - 结论：LLVM 22 升级本身无性能变化；IR 元数据的安全子集也没有可测收益。下一步若继续性能，应优先前端 IR 质量（别名/边界契约）或按负载选择 native，而不是继续堆元数据。
+
+## 2026-11-21 — 自适应 x86-64-v3 与 O2 循环外提
+
+- 目标：所有场景整体变快，而不是只追 fib 单点。
+- Recon 结论：
+  - fib 的 CDD 汇编与 clang 逐指令几乎相同，差距主要来自 GCC 的递归内联/展开；不是 CDD IR 缺口。
+  - binary_search 的 CDD 汇编也和 clang 相同，剩余差异主要来自分配器/内存布局。
+  - 真正的全局杠杆是 AVX2：`x86-64-v3` 让 matmul/class 接近减半，nbody 不再回退。
+  - O3 的 non-trivial loop unswitch 让 nqueens 快约 12–16%，但 O3 的 loop-unroll 让 nbody 慢约 5%。
+- 实现：
+  - 默认 `-march=auto`：AVX2 主机解析为 `x86-64-v3`，否则 `generic`；`-march=generic` 仍强制 SSE2，`-march=native` 仍用精确主机 CPU。
+  - O2 管线结束后追加 `LoopSimplify` + `SimpleLoopUnswitch(nontrivial)` + `InstCombine` + `SimplifyCFG`，只在 `-O2` 执行。
+  - benchmark runner 从 build/CMakeCache 的 `LLVM_DIR` 推导 `llvm-config`，基线现在正确显示 LLVM 22.1.2。
+- 验证：
+  - 新增 `DefaultMarchIsAuto`、`ParseMarchGeneric`、`O2UnswitchesLoopInvariantBranches` 三个 driver 测试；全量 **1938/1938**。
+  - 默认 auto 在 AVX2 主机生成 `<4 x double>`，`-march=generic` 仍生成 `<2 x double>`。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+- 产品级 16 负载直接 A/B（旧默认 generic vs 新默认 auto + O2 unswitch，同核、5 warmup + 9 measured、交替顺序）：
+  | 负载 | 旧 (ms) | 新 (ms) | 新/旧 |
+  |---|---:|---:|---:|
+  | matmul | 62.59 | 36.96 | 0.590 |
+  | class | 234.59 | 135.21 | 0.576 |
+  | hashmap | 199.67 | 184.00 | 0.922 |
+  | nqueens | 366.09 | 343.00 | 0.937 |
+  | str_append | 47.27 | 38.06 | 0.805 |
+  | binary_search | 683.06 | 690.66 | 1.011 |
+  | vec_push | 45.03 | 46.16 | 1.025 |
+  - core geomean **0.884x**，全部 16 负载 geomean **0.916x**。
+  - binary_search/vec_push 的小幅回退在噪声范围；binary_search 的 CDD/clang 汇编相同。
+- 新全量基线 `2026-11-21-auto`：
+  - core **0.82x vs clang**、**0.89x vs gcc**（此前 0.95x/1.03x）。
+  - stdlib **0.32x/0.35x**，alloc **0.31x/0.30x**，startup **0.68x/1.00x**。
+  - matmul 37.4ms（0.53x）、class 136.7ms（0.59x）、hashmap 183.6ms（0.61x）、nqueens 344.7ms（0.84x）。
+  - 剩余 core gap：fib 1.05x、sort 1.03x、binary_search 1.03x；fib 是 GCC IPA 形状，sort/binary_search 与 clang 代码形状接近。
+  - 16 个负载校验和全部一致；O0–O3 矩阵 24 单元无 error；corpus_1200 编译 873ms，无编译回退。
+- 代码 commit：`8c92223`；基线：`benchmarks/results/2026-11-21-auto.{json,md}`。
