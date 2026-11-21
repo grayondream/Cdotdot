@@ -232,3 +232,12 @@ ctest --test-dir build -j8 --output-on-failure
 git add TODO.md Progress.md benchmarks/BASELINE.md benchmarks/results
 git commit -m "docs: 记录 LLVM 22 与 IR 元数据验证结果"
 ```
+
+---
+
+## 执行结果（2026-11-21）
+
+- Task 1：完成。LLVM 22.1.2 构建，修复弃用警告，全量 1935/1935。
+- Task 2/3：实现并验证后回退。`inbounds` + 分配函数 `noalias/nounwind` 的 16 负载 A/B core geomean 仅 0.995x；matmul/sort/nbody/sieve 无可测变化，按验收标准不保留。
+- TBAA：未实现。clang `-fno-strict-aliasing` 探针仅 hashmap 约 2%，其余为 0；不值得承担未定义别名契约的风险。
+- Task 4：完成。最终基线 `benchmarks/results/2026-11-21-llvm22.{json,md}`，16 负载校验和一致，矩阵无 error。

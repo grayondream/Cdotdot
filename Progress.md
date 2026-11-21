@@ -1549,3 +1549,37 @@
   - 手工验证：`-march=native` matmul 约 0.04s（generic 0.06s，旧版 0.23s），校验和 2876 一致；`nbody` 的 AVX2 版本约 0.36s，略慢于 generic 的 0.32s，因此 `native` 保持可选，默认仍用 generic。
 - 验证：`ctest --test-dir build -j8 --output-on-failure` **1935/1935**；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；`git diff --check` 通过。
 - 限制：`-march=native` 产物绑定主机指令集；默认 generic 保持可移植。
+
+## 2026-11-21 — LLVM 22 工具链与 IR 元数据验证
+
+- 目标：按用户要求同时推进 LLVM 22 升级和 IR 元数据优化；性能收益必须由 A/B 数据证明。
+- LLVM 22：
+  - 本地构建从 LLVM 21.1.8 切到 **LLVM 22.1.2**，`build/bin/cdd` 链接 `libLLVM.so.22.1`。
+  - `scripts/build.sh` 改为优先最新 `llvm-config-N`（22→18），再回退 `llvm-config`；支持 `LLVM_CONFIG` / `LLVM_DIR` 覆盖。CMake 最低版本仍为 18。
+  - 修复 LLVM 22 弃用警告：`TargetRegistry::lookupTarget(Triple)`、`PointerType::get(Context)`。
+  - 全量 **1935/1935** 通过。
+- IR 元数据实验（未提交，已回退）：
+  - 在 codegen 后、优化前遍历模块，把所有 `getelementptr` 标记 `inbounds`。
+  - 给 `malloc`、`calloc`、`mi_malloc`、`mi_calloc`、`mi_malloc_aligned` 返回值加 `noalias`，并给分配/释放函数加 `nounwind`；`realloc` 故意不加 `noalias`。
+  - 新增 2 个 driver 测试，全量一度达到 **1937/1937**，功能无回归。
+  - 16 负载直接 A/B（同 LLVM 22、同核、5 warmup + 9 measured、交替顺序）：
+    | 负载 | 旧 | 新 | 新/旧 |
+    |---|---:|---:|---:|
+    | matmul | 61.13 | 61.17 | 1.001 |
+    | sort | 457.05 | 457.07 | 1.000 |
+    | nbody | 276.05 | 276.23 | 1.001 |
+    | sieve | 1037.11 | 1037.77 | 1.001 |
+    | hashmap | 202.40 | 200.00 | 0.988 |
+    | class | 234.71 | 228.04 | 0.972 |
+    | nqueens | 420.89 | 411.86 | 0.979 |
+  - core geomean 新/旧 = **0.995x**（约 0.5%，噪声级）；没有可测系统性收益。按计划回退元数据代码和测试，只保留 LLVM 22。
+- TBAA 潜力探针：
+  - 用 clang++-22 对比默认（有 TBAA）与 `-fno-strict-aliasing`：
+    sort 1.000、nbody 1.000、matmul 0.999、sieve 1.002、hashmap 1.020。
+  - 只有 hashmap 约 2%，其余无可测差异；CDD 的别名/有效类型契约尚未明确，本轮不引入高风险 TBAA。
+- 最终 LLVM 22 基线：`python3 benchmarks/run.py --full --baseline-md --label 2026-11-21-llvm22` 退出 0；16 负载校验和全一致，24 个矩阵单元无 error。
+  - core **0.95x vs clang**、**1.03x vs gcc**；
+  - `bench_matmul` **62.4ms** vs clang 71.3ms（0.88x）；
+  - `bench_fib` 241.9ms（1.06x），`bench_sieve` 1046.6ms（0.87x），`bench_nbody` 281.3ms（0.95x）。
+- 验证：`ctest --test-dir build -j8 --output-on-failure` **1935/1935**；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；`git diff --check` 通过。
+- 结论：LLVM 22 升级本身无性能变化；IR 元数据的安全子集也没有可测收益。下一步若继续性能，应优先前端 IR 质量（别名/边界契约）或按负载选择 native，而不是继续堆元数据。
