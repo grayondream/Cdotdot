@@ -462,8 +462,8 @@ int32 main() {
 }
 )");
     const std::string path = p.string();
-    const char* argv[] = {"cdd", "-S", "-O", "2", path.c_str()};
-    ASSERT_TRUE(driver.parseArguments(5, argv));
+    const char* argv[] = {"cdd", "-S", "-O", "2", "-march=generic", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
     testing::internal::CaptureStdout();
     EXPECT_EQ(driver.run(), 0);
     const std::string ir = testing::internal::GetCapturedStdout();
@@ -501,5 +501,63 @@ int32 main() {
     EXPECT_EQ(driver.run(), 0);
     const std::string ir = testing::internal::GetCapturedStdout();
     EXPECT_NE(ir.find("llvm.loop.isvectorized"), std::string::npos);
+    std::filesystem::remove(p);
+}
+
+// The default target is host-adaptive: x86-64-v3 on AVX2 hosts, generic
+// otherwise. Explicit -march=generic remains the portable escape hatch.
+TEST_F(CompilerDriverTest, DefaultMarchIsAuto) {
+    const char* argv[] = {"cdd", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(2, argv));
+    EXPECT_EQ(driver.getMarch(), "auto");
+}
+
+TEST_F(CompilerDriverTest, ParseMarchGeneric) {
+    const char* argv[] = {"cdd", "-march=generic", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_EQ(driver.getMarch(), "generic");
+}
+
+// O3's non-trivial loop unswitching is a large win on branchy backtracking
+// code (nqueens). O2 runs it as a post-pass so the win is available without
+// O3's loop-unrolling regressions.
+TEST_F(CompilerDriverTest, O2UnswitchesLoopInvariantBranches) {
+    const std::filesystem::path p = writeTempSource("cdd_unswitch.cdd", R"(
+module cdd_unswitch;
+int32 solutions;
+bool safe(int32* cols, int32 row, int32 col) {
+    for (int32 i = 0; i < row; i = i + 1) {
+        int32 c = cols[i];
+        if (c == col) { return false; }
+        int32 d = row - i;
+        if (c - col == d || col - c == d) { return false; }
+    }
+    return true;
+}
+void solve(int32* cols, int32 row, int32 n) {
+    if (row == n) { solutions = solutions + 1; return; }
+    for (int32 c = 0; c < n; c = c + 1) {
+        if (safe(cols, row, c)) {
+            cols[row] = c;
+            solve(cols, row + 1, n);
+        }
+    }
+}
+int32 main() {
+    int32* cols = (int32*)malloc(16);
+    solutions = 0;
+    solve(cols, 0, 4);
+    println("{}", solutions);
+    free(cols);
+    return 0;
+}
+)");
+    const std::string path = p.string();
+    const char* argv[] = {"cdd", "-S", "-O", "2", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(5, argv));
+    testing::internal::CaptureStdout();
+    EXPECT_EQ(driver.run(), 0);
+    const std::string ir = testing::internal::GetCapturedStdout();
+    EXPECT_NE(ir.find("for.body.us"), std::string::npos);
     std::filesystem::remove(p);
 }

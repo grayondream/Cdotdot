@@ -52,5 +52,5 @@ private:
     int optLevel = 0;
     bool includeDebug = false;
     std::string stdStandard;
-    std::string march = "generic";
+    std::string march = "auto";
 };

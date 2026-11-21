@@ -200,7 +200,7 @@ cdd [options] <input.cdd>
 | `-S` | Emit LLVM IR instead of an executable (after the selected `-O` optimization) |
 | `-M <path>` | Add a module import search path (repeatable) |
 | `-O <0-3>` | Set the optimization level |
-| `-march <cpu>` | Target CPU: `generic` (default, SSE2) or `native` (host AVX2/AVX-512 when available) |
+| `-march <cpu>` | Target CPU: `auto` (default; `x86-64-v3` on AVX2 hosts, otherwise `generic`), `generic` (portable SSE2), `native` (exact host CPU), or an explicit CPU such as `x86-64-v3` |
 | `-g` | Emit debug information |
 | `-v` | Enable verbose driver output |
 | `--no-prelude` | Do not inject the automatic `std.c` libc binding layer |

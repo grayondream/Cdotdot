@@ -29,6 +29,12 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Transforms/Scalar/SimpleLoopUnswitch.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
 
 static void appendStdLibDirs(std::vector<std::string>& dirs) {
     auto add = [&](const std::filesystem::path& p) {
@@ -59,6 +65,32 @@ static void appendStdLibDirs(std::vector<std::string>& dirs) {
 
 static std::string getHostTargetTriple() {
     return llvm::sys::getDefaultTargetTriple();
+}
+
+static bool hostSupportsX86_64V3(const llvm::StringMap<bool>& features) {
+    // x86-64-v3 is the AVX2/BMI/FMA baseline. Only select it when every
+    // feature it permits is actually available; otherwise stay at generic.
+    static constexpr const char* required[] = {
+        "avx", "avx2", "bmi", "bmi2", "f16c", "fma",
+        "lzcnt", "movbe", "xsave",
+    };
+    for (const char* feature : required) {
+        if (!features.lookup(feature)) return false;
+    }
+    return true;
+}
+
+static std::string resolveMarchCpu(const std::string& march,
+                                   const llvm::StringMap<bool>& hostFeatures) {
+    if (march.empty() || march == "auto") {
+        return hostSupportsX86_64V3(hostFeatures) ? "x86-64-v3" : "generic";
+    }
+    if (march == "native") {
+        llvm::StringRef hostCpu = llvm::sys::getHostCPUName();
+        if (!hostCpu.empty() && hostCpu != "generic") return hostCpu.str();
+        return "generic";
+    }
+    return march;
 }
 
 static std::unique_ptr<llvm::TargetMachine>
@@ -96,18 +128,17 @@ createTargetMachine(llvm::Module& module, const std::string& march) {
     llvm::sys::getHostCPUFeatures(hostFeatures);
 #endif
 
-    // Default to the portable x86-64 baseline (SSE2, matching clang/gcc
-    // defaults).  `-march=native` opts into the host CPU model and all
-    // features it reports, which enables AVX2/AVX-512 wider vectors.
-    std::string cpu = march.empty() || march == "native" ? "generic" : march;
+    // Default to an adaptive target: x86-64-v3 (AVX2/FMA/BMI) when the host
+    // advertises every feature it permits, otherwise the portable x86-64
+    // baseline (SSE2). `-march=generic` forces the portable baseline;
+    // `-march=native` opts into the exact host CPU model and features.
+    std::string cpu = resolveMarchCpu(march, hostFeatures);
     std::string targetFeatures;
     auto addFeature = [&](const std::string& feature) {
         if (!targetFeatures.empty()) targetFeatures += ",";
         targetFeatures += "+" + feature;
     };
     if (march == "native") {
-        llvm::StringRef hostCpu = llvm::sys::getHostCPUName();
-        if (!hostCpu.empty() && hostCpu != "generic") cpu = hostCpu.str();
         for (const auto& feature : hostFeatures) {
             if (feature.second) addFeature(feature.first().str());
         }
@@ -171,7 +202,7 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
     optLevel = 0;
     includeDebug = false;
     stdStandard.clear();
-    march = "generic";
+    march = "auto";
 
     std::vector<std::string> args;
     for (int i = 1; i < argc; i++) {
@@ -495,6 +526,25 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
 
         llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(optLevelEnum);
         MPM.run(codegenCtx.getModule(), MAM);
+
+        // O3 enables non-trivial loop unswitching; O2 only does trivial
+        // unswitching. Non-trivial unswitching is a large win on branchy,
+        // loop-invariant conditions (nqueens). Run it as a post-O2 pass so we
+        // get that win without O3's loop-unrolling regressions (nbody).
+        if (optLevel == 2) {
+            llvm::FunctionPassManager FPM;
+            FPM.addPass(llvm::LoopSimplifyPass());
+            FPM.addPass(llvm::createFunctionToLoopPassAdaptor(
+                llvm::SimpleLoopUnswitchPass(/*NonTrivial=*/true,
+                                             /*Trivial=*/true),
+                /*UseMemorySSA=*/true));
+            FPM.addPass(llvm::InstCombinePass());
+            FPM.addPass(llvm::SimplifyCFGPass());
+            llvm::ModulePassManager extra;
+            extra.addPass(
+                llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
+            extra.run(codegenCtx.getModule(), MAM);
+        }
     }
 
     if (emitIR) {
@@ -590,7 +640,7 @@ void CompilerDriver::printHelp() const {
               << "  -Wall           Enable all warnings\n"
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
-              << "  -march <cpu>    Target CPU (default: generic; native = host)\n"
+              << "  -march <cpu>    Target CPU (default: auto; generic = portable SSE2, native = host)\n"
               << "  -fsyntax-only   Parse and semantic-check only (no codegen)\n"
               << "  -l <lib>        Link library\n"
               << "  -L <path>       Library search path\n"

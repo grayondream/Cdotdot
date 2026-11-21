@@ -185,7 +185,7 @@ cdd [options] <input.cdd>
 | `-S` | 输出 LLVM IR，而不是可执行文件（按所选 `-O` 级别优化后） |
 | `-M <path>` | 添加模块导入搜索路径（可重复） |
 | `-O <0-3>` | 设置优化级别 |
-| `-march <cpu>` | 目标 CPU：`generic`（默认，SSE2）或 `native`（可用时启用主机 AVX2/AVX-512） |
+| `-march <cpu>` | 目标 CPU：`auto`（默认；AVX2 主机用 `x86-64-v3`，否则 `generic`）、`generic`（可移植 SSE2）、`native`（精确主机 CPU），或显式 CPU 如 `x86-64-v3` |
 | `-g` | 生成调试信息 |
 | `-v` | 打开驱动的详细输出 |
 | `--no-prelude` | 不自动注入 `std.c` libc 绑定层 |

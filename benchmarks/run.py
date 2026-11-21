@@ -489,17 +489,21 @@ def build_environment(cpu: int | None, cdd: Path, specs: list[dict], cpu_busy: d
         if line.lower().startswith("model name"):
             model = line.split(":", 1)[1].strip()
             break
-    llvm_version = "unknown"
-    llvm_config = which_tool("llvm-config")
-    if llvm_config:
-        llvm_version = first_line([llvm_config, "--version"])
     build_type = ""
+    llvm_config = os.environ.get("LLVM_CONFIG")
     cache = ROOT / "build" / "CMakeCache.txt"
     if cache.exists():
         for line in cache.read_text().splitlines():
             if line.startswith("CMAKE_BUILD_TYPE:"):
                 build_type = line.split("=", 1)[1]
-                break
+            elif line.startswith("LLVM_DIR:PATH="):
+                llvm_dir = line.split("=", 1)[1]
+                candidate = Path(llvm_dir).parent.parent.parent / "bin" / "llvm-config"
+                if candidate.exists():
+                    llvm_config = str(candidate)
+    if not llvm_config:
+        llvm_config = which_tool("llvm-config-22") or which_tool("llvm-config")
+    llvm_version = first_line([llvm_config, "--version"]) if llvm_config else "unknown"
     try:
         affinity = sorted(os.sched_getaffinity(0))
     except OSError:
@@ -1340,8 +1344,9 @@ def render_markdown(report: dict, specs: list[dict]) -> str:
         "; `clang++` may use a different LLVM release. The `g++` column is an "
         "independent GCC reference.")
     add("- The main tables use `-O2`; the optimization-level matrix covers "
-        "`-O0..-O3`. No `-march=native`, no fast-math. The target is the x86-64 "
-        "baseline, not a tuned build.")
+        "`-O0..-O3`. No fast-math. The CDD default target is `auto`: "
+        "`x86-64-v3` on AVX2 hosts, `generic` otherwise; pass "
+        "`-march=generic` for the portable SSE2 baseline.")
     add("- The CPU governor is read live; unless it is `performance`, boost "
         "behaviour adds run-to-run noise. Medians over the measured runs and CPU "
         "pinning keep this small but not zero; the CV table makes the spread explicit.")
