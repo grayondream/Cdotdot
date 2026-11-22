@@ -36,3 +36,16 @@ TEST(LinkerTest, ConstructLinkCommandQuotesPathsWithSpaces) {
     EXPECT_NE(cmd.find("'out dir/app'"), std::string::npos);
     EXPECT_NE(cmd.find("-L'/opt/my libs'"), std::string::npos);
 }
+
+TEST(LinkerTest, ConstructLinkCommandControlsPieMode) {
+    Linker linker;
+#if defined(__linux__)
+    std::string pie = linker.constructLinkCommand({"main.o"}, "app", {}, {}, true);
+    std::string noPie = linker.constructLinkCommand({"main.o"}, "app", {}, {}, false);
+    EXPECT_NE(pie.find(" -pie"), std::string::npos);
+    EXPECT_NE(noPie.find(" -no-pie"), std::string::npos);
+#else
+    std::string cmd = linker.constructLinkCommand({"main.o"}, "app", {}, {}, false);
+    EXPECT_NE(cmd.find("main.o"), std::string::npos);
+#endif
+}

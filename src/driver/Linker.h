@@ -13,9 +13,11 @@ public:
     std::string constructLinkCommand(const std::vector<std::string>& objects,
                                      const std::string& output,
                                      const std::vector<std::string>& libs = {},
-                                     const std::vector<std::string>& libPaths = {});
+                                     const std::vector<std::string>& libPaths = {},
+                                     bool pie = true);
     int link(const std::vector<std::string>& objects,
              const std::string& output,
              const std::vector<std::string>& libs = {},
-             const std::vector<std::string>& libPaths = {});
+             const std::vector<std::string>& libPaths = {},
+             bool pie = true);
 };

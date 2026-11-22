@@ -29,6 +29,7 @@ public:
     bool getIncludeDebug() const { return includeDebug; }
     const std::string& getStdStandard() const { return stdStandard; }
     const std::string& getMarch() const { return march; }
+    bool getPie() const { return pie; }
 
     void printHelp() const;
 
@@ -51,6 +52,7 @@ private:
     bool werror = false;
     int optLevel = 0;
     bool includeDebug = false;
+    bool pie = true;
     std::string stdStandard;
     std::string march = "auto";
 };

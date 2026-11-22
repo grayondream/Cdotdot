@@ -49,9 +49,18 @@ std::string Linker::findSystemLinker() {
 std::string Linker::constructLinkCommand(const std::vector<std::string>& objects,
                                          const std::string& output,
                                          const std::vector<std::string>& libs,
-                                         const std::vector<std::string>& libPaths) {
+                                         const std::vector<std::string>& libPaths,
+                                         bool pie) {
     std::ostringstream cmd;
     cmd << shellQuote(systemLinkerPath) << " -o " << shellQuote(output);
+#if defined(__linux__)
+    // Make the executable layout explicit instead of relying on the host
+    // compiler's PIE default. `-no-pie` is opt-in because it disables ASLR for
+    // the main executable.
+    cmd << (pie ? " -pie" : " -no-pie");
+#else
+    (void)pie;
+#endif
     for (const auto& obj : objects) {
         cmd << " " << shellQuote(obj);
     }
@@ -67,7 +76,8 @@ std::string Linker::constructLinkCommand(const std::vector<std::string>& objects
 int Linker::link(const std::vector<std::string>& objects,
                  const std::string& output,
                  const std::vector<std::string>& libs,
-                 const std::vector<std::string>& libPaths) {
-    std::string cmd = constructLinkCommand(objects, output, libs, libPaths);
+                 const std::vector<std::string>& libPaths,
+                 bool pie) {
+    std::string cmd = constructLinkCommand(objects, output, libs, libPaths, pie);
     return system(cmd.c_str());
 }

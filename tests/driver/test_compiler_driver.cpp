@@ -601,3 +601,21 @@ int32 main() {
     EXPECT_EQ(ir.find("srem"), std::string::npos);
     std::filesystem::remove(p);
 }
+
+TEST_F(CompilerDriverTest, DefaultLinksPie) {
+    const char* argv[] = {"cdd", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(2, argv));
+    EXPECT_TRUE(driver.getPie());
+}
+
+TEST_F(CompilerDriverTest, ParseNoPieFlag) {
+    const char* argv[] = {"cdd", "-no-pie", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_FALSE(driver.getPie());
+}
+
+TEST_F(CompilerDriverTest, ParsePieFlag) {
+    const char* argv[] = {"cdd", "-pie", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_TRUE(driver.getPie());
+}

@@ -201,6 +201,7 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
     werror = false;
     optLevel = 0;
     includeDebug = false;
+    pie = true;
     stdStandard.clear();
     march = "auto";
 
@@ -221,6 +222,10 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
             march = argv[++i];
         } else if (arg == "-fsyntax-only") {
             syntaxOnly = true;
+        } else if (arg == "-pie" || arg == "--pie") {
+            pie = true;
+        } else if (arg == "-no-pie" || arg == "--no-pie") {
+            pie = false;
         } else {
             args.push_back(arg);
         }
@@ -245,6 +250,8 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
         ("g", "Include debug information")
         ("v,verbose", "Verbose output")
         ("no-prelude", "Do not inject the built-in std.c libc binding layer")
+        ("pie", "Link as a position-independent executable (default)")
+        ("no-pie", "Link as a fixed-address executable (disables ASLR for the main program)")
         ("l", "Link library", cxxopts::value<std::vector<std::string>>())
         ("L", "Library search path", cxxopts::value<std::vector<std::string>>())
         ("h,help", "Show this help message")
@@ -266,6 +273,8 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
         if (result.count("g")) includeDebug = true;
         if (result.count("v")) verbose = true;
         if (result.count("no-prelude")) usePrelude = false;
+        if (result.count("pie")) pie = true;
+        if (result.count("no-pie")) pie = false;
 
         if (result.count("o")) outputFile = result["o"].as<std::string>();
         if (result.count("O")) optLevel = result["O"].as<int>();
@@ -614,7 +623,7 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
 #endif
 
     Linker linker;
-    int ret = linker.link({objectPath}, outputFile, linkLibs, linkPaths);
+    int ret = linker.link({objectPath}, outputFile, linkLibs, linkPaths, pie);
     if (ret != 0) {
         LOGE("linker failed with exit code {}", ret);
         return ret;
@@ -637,6 +646,8 @@ void CompilerDriver::printHelp() const {
               << "  -g              Include debug information\n"
               << "  -v              Verbose output\n"
               << "  --no-prelude    Do not inject the built-in std.c binding layer\n"
+              << "  -pie            Link a position-independent executable (default)\n"
+              << "  -no-pie         Link a fixed-address executable (disables ASLR for the main program)\n"
               << "  -Wall           Enable all warnings\n"
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
