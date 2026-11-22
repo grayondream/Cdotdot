@@ -91,6 +91,8 @@ TEST_F(RecursiveInliningTest, SingleSelfCallGrowsButStaysRecursive) {
     EXPECT_TRUE(result.modifiedFunctions.contains(function));
     EXPECT_EQ(countSelfCalls(*function), 1u);
     EXPECT_GT(function->getInstructionCount(), initialInstructions);
+    // Four self-inlines of the 7-instruction fixture: 7 -> 13 -> 25 -> 49 -> 112.
+    EXPECT_EQ(function->getInstructionCount(), 112u);
     EXPECT_FALSE(llvm::verifyModule(*module, nullptr));
 }
 

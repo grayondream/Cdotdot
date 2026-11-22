@@ -70,8 +70,12 @@ RecursiveInliningResult inlineRecursiveCalls(
     for (llvm::Function *function : targets) {
         unsigned depth = 0;
         while (depth < options.maxDepth) {
-            // Self-inlining duplicates the body. Refuse the inline before it
-            // can grow the function beyond the hard cap.
+            // Self-inlining duplicates the body, so this conservative estimate
+            // prevents the next inline from taking the function past the cap.
+            // The cap is applied by this pass; a later optimization pipeline
+            // may still grow the function (for example, loop unswitching).
+            // CDD emits no debug intrinsics today; if it starts, they count
+            // toward getInstructionCount() and shrink the effective budget.
             if (function->getInstructionCount() * 2 > options.maxFinalInstructions) {
                 break;
             }

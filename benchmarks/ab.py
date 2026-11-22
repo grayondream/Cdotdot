@@ -125,6 +125,23 @@ def geomean(ratios: list[float]) -> float | None:
     return math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_report(report: dict, output: str | None) -> None:
+    if not output:
+        return
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    log(f"report: {path}")
+
+
 def parse_only(values: list[str]) -> set[str]:
     selected: set[str] = set()
     for value in values:
@@ -146,6 +163,12 @@ def main() -> int:
                         help="CPU number for taskset, or 'none' to disable pinning")
     parser.add_argument("--only", action="append", default=[],
                         help="benchmark name (repeatable or comma-separated)")
+    parser.add_argument("--expect-different", action="append", default=[],
+                        help="benchmark whose old/new binaries must differ "
+                             "(repeatable or comma-separated); defaults to "
+                             "bench_fib when the two compile commands differ")
+    parser.add_argument("--allow-identical", action="store_true",
+                        help="do not require a positive-control benchmark")
     parser.add_argument("--out", default=None, help="write the raw report as JSON")
     args = parser.parse_args()
 
@@ -190,9 +213,25 @@ def main() -> int:
         log("error: no benchmarks selected")
         return 1
 
+    configs_differ = (
+        old_cdd != new_cdd
+        or shlex.split(args.old_args) != shlex.split(args.new_args)
+    )
+    expect_different = parse_only(args.expect_different)
+    if not expect_different and configs_differ and not args.allow_identical:
+        expect_different = {"bench_fib"}
+    selected_names = {entry[0] for entry in selected}
+    unknown_expectations = expect_different - selected_names
+    if unknown_expectations:
+        log(f"error: --expect-different names not selected: "
+            f"{', '.join(sorted(unknown_expectations))}")
+        return 1
+
     log(f"old: {old_cdd} {args.old_args}".rstrip())
     log(f"new: {new_cdd} {args.new_args}".rstrip())
     log(f"cpu: {cpu if cpu is not None else 'none'} | warmup={args.warmup} reps={args.reps}")
+    if expect_different:
+        log(f"positive control: {', '.join(sorted(expect_different))}")
 
     report: dict = {
         "schema": 1,
@@ -200,8 +239,12 @@ def main() -> int:
         "command": shlex.join([sys.executable] + sys.argv),
         "old_cdd": old_cdd,
         "new_cdd": new_cdd,
+        "old_cdd_sha256": file_sha256(Path(old_cdd)),
+        "new_cdd_sha256": file_sha256(Path(new_cdd)),
         "old_args": args.old_args,
         "new_args": args.new_args,
+        "configs_differ": configs_differ,
+        "expect_different": sorted(expect_different),
         "cpu": cpu,
         "warmup": args.warmup,
         "reps": args.reps,
@@ -258,11 +301,16 @@ def main() -> int:
             old_summary = summarize(old_samples)
             new_summary = summarize(new_samples)
             ratio = new_summary["median_ms"] / old_summary["median_ms"]
+            old_binary_sha = file_sha256(old_bin)
+            new_binary_sha = file_sha256(new_bin)
             entry = {
                 "tier": tier,
                 "description": description,
                 "checksum_sha256": old_digest,
                 "checksum_ok": True,
+                "old_binary_sha256": old_binary_sha,
+                "new_binary_sha256": new_binary_sha,
+                "binaries_differ": old_binary_sha != new_binary_sha,
                 "old": old_summary,
                 "new": new_summary,
                 "ratio": ratio,
@@ -273,12 +321,26 @@ def main() -> int:
                 f"new {new_summary['median_ms']:.2f}ms ratio {ratio:.3f}"
             )
 
-        if errors:
+        for name in sorted(expect_different):
+            entry = report["benchmarks"].get(name)
+            if entry is None:
+                errors.append(
+                    f"{name}: positive control did not complete; no artifact pair"
+                )
+            elif not entry["binaries_differ"]:
+                errors.append(
+                    f"{name}: expected old/new binaries to differ, but both "
+                    f"hash to {entry['old_binary_sha256']}"
+                )
+
+        if errors or checksum_failures:
+            report["errors"] = errors
+            report["checksum_failures"] = checksum_failures
             for error in errors:
                 log(f"error: {error}")
-            return 1
-        if checksum_failures:
-            log(f"error: checksum mismatch: {', '.join(checksum_failures)}")
+            if checksum_failures:
+                log(f"error: checksum mismatch: {', '.join(checksum_failures)}")
+            write_report(report, args.out)
             return 1
 
         core_ratios = [
@@ -304,12 +366,7 @@ def main() -> int:
     if report["geomean"]["all"] is not None:
         log(f"all geomean: {report['geomean']['all']:.4f}x")
 
-    if args.out:
-        output = Path(args.out)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report, indent=2) + "\n")
-        log(f"report: {output}")
-
+    write_report(report, args.out)
     return 0
 
 

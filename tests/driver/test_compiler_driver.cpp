@@ -9,6 +9,10 @@
 
 #include "driver/CompilerDriver.h"
 
+#include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
 
 #include <spdlog/spdlog.h>
@@ -248,7 +252,9 @@ std::string extractFunction(const std::string& ir, const std::string& name) {
             return {};
         }
         std::string body = ir.substr(pos, end - pos + 2);
-        if (body.find(marker) != std::string::npos) {
+        const std::size_t signature_end = body.find('\n');
+        if (signature_end != std::string::npos &&
+            body.substr(0, signature_end).find(marker) != std::string::npos) {
             return body;
         }
         pos = ir.find("define", end);
@@ -776,6 +782,90 @@ int32 main() { println("{}", add_one(41)); return 0; }
     ASSERT_FALSE(withOffFlag.empty());
     EXPECT_EQ(withoutFlag, withOffFlag);
     std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, RecursiveInliningIsOffByDefaultAtO3) {
+    const auto p = writeTempSource("cdd_rec_o3_default.cdd", R"(
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int32 main() { println("{}", fib(10)); return 0; }
+)");
+    const std::string path = p.string();
+
+    const char* on[] = {"cdd", "-S", "-O", "3", path.c_str()};
+    const std::string defaultO3 = compileToIR(driver, on, 5);
+
+    const char* off[] = {"cdd", "-S", "-O", "3", "-fno-recursive-inlining",
+                         path.c_str()};
+    const std::string disabledO3 = compileToIR(driver, off, 6);
+
+    ASSERT_FALSE(defaultO3.empty());
+    ASSERT_FALSE(disabledO3.empty());
+    EXPECT_EQ(defaultO3, disabledO3);
+    std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, RecursiveWorkloadsStayUnderPostRerunInstructionCap) {
+    struct Case {
+        const char *sourceName;
+        const char *functionName;
+        const char *source;
+    };
+    const Case cases[] = {
+        {"cdd_rec_cap_fib.cdd", "fib_int32", R"(
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int32 main() { println("{}", fib(10)); return 0; }
+)"},
+        {"cdd_rec_cap_nqueens.cdd", "solve_int32ptr_int32_int32", R"(
+int32 solutions;
+bool safe(int32* cols, int32 row, int32 col) {
+    for (int32 i = 0; i < row; i = i + 1) {
+        int32 c = cols[i];
+        if (c == col) { return false; }
+        int32 d = row - i;
+        if (c - col == d || col - c == d) { return false; }
+    }
+    return true;
+}
+void solve(int32* cols, int32 row, int32 n) {
+    if (row == n) { solutions = solutions + 1; return; }
+    for (int32 c = 0; c < n; c = c + 1) {
+        if (safe(cols, row, c)) { cols[row] = c; solve(cols, row + 1, n); }
+    }
+}
+int32 main() {
+    int32* cols = (int32*)malloc(16);
+    solutions = 0;
+    solve(cols, 0, 4);
+    println("{}", solutions);
+    free(cols);
+    return 0;
+}
+)"},
+    };
+
+    for (const Case &testCase : cases) {
+        const auto p = writeTempSource(testCase.sourceName, testCase.source);
+        const std::string path = p.string();
+        const char *argv[] = {"cdd", "-S", "-O", "2", path.c_str()};
+        const std::string ir = compileToIR(driver, argv, 5);
+        ASSERT_FALSE(ir.empty()) << testCase.sourceName;
+
+        llvm::LLVMContext context;
+        llvm::SMDiagnostic error;
+        auto module = llvm::parseAssemblyString(ir, error, context);
+        ASSERT_NE(module, nullptr) << testCase.sourceName;
+        llvm::Function *function = module->getFunction(testCase.functionName);
+        ASSERT_NE(function, nullptr) << testCase.sourceName;
+        EXPECT_LE(function->getInstructionCount(), 1000u)
+            << testCase.sourceName << " " << testCase.functionName;
+        std::filesystem::remove(p);
+    }
 }
 
 TEST_F(CompilerDriverTest, RecursiveInliningCanBeForcedAtO3) {

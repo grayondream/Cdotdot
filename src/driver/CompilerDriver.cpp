@@ -629,6 +629,12 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
         const RecursiveInliningResult post = inlineRecursiveCalls(
             codegenCtx.getModule(), recursiveOptions, preModifiedFunctions);
         if (post.changed) {
+            // Verify the pass output before another pipeline consumes it, so a
+            // broken inline is attributed to the recursive pass rather than to
+            // an unrelated optimizer assertion or miscompile.
+            if (!verifyRecursiveInliningModule(codegenCtx.getModule())) {
+                return 1;
+            }
             // Re-run only the optimization pipeline; running the recursive
             // pass again would keep re-linearizing the same call chain.
             runOptimizationPipeline(codegenCtx.getModule(), *targetMachine,
@@ -736,7 +742,7 @@ void CompilerDriver::printHelp() const {
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
               << "  -march <cpu>    Target CPU (default: auto; generic = portable SSE2, native = host)\n"
-              << "  -frecursive-inlining       Enable bounded self-recursive inlining at -O2 (default)\n"
+              << "  -frecursive-inlining       Enable bounded self-recursive inlining (default at -O2; also enables it at -O3)\n"
               << "  -fno-recursive-inlining    Disable recursive inlining\n"
               << "  -frecursive-inlining-depth=N  Maximum self-inline depth (default: 4)\n"
               << "  -fsyntax-only   Parse and semantic-check only (no codegen)\n"
