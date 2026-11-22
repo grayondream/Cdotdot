@@ -59,6 +59,7 @@ else()
         bitreader
         bitwriter
         analysis
+        asmparser
         transformutils
         instcombine
         scalaropts
