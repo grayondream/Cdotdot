@@ -1644,3 +1644,27 @@
   - full baseline 采样时系统负载 4.1–4.6，nqueens/整体绝对值被污染，**未提升为官方基线**；保留 `2026-11-21-auto` 干净基线。
   - 本次同负载 A/B 记录：`benchmarks/results/2026-11-22-pow2-indexing-ab.md`。
   - 代码 commit `2926a70`。
+
+## 2026-11-22 — 链接模式（PIE vs non-PIE）
+
+- 背景：剩余 core gap 的探查中发现 non-PIE 链接对同对象有约 1.5% 的 core geomean 收益，fib 达 0.901x。
+- 直接 A/B（同对象、同核、逐轮交替；宿主仍有外部 Java 负载）：
+  - core geomean **0.9849x**，全部 16 负载 **0.9844x**；校验和全一致。
+  - fib 247.49→**223.06ms（0.901x）**；vec_push 55.60→**51.17ms（0.920x）**；binary_search 0.987x、sieve 0.981x、hashmap 0.983x。
+  - class 1.008x、malloc_churn 1.018x、deque 1.006x；其余在噪声内。
+- 根因：
+  - PIE 与 non-PIE 的函数相对偏移完全相同；差异是 `.text` 起始地址 PIE `0x1050` / non-PIE `0x1040`，导致 fib 地址 `0x1140` vs `0x401130`，低 6 位错开 0x10。
+  - 这是代码布局/BTB 敏感性，不是代码生成差异；对 fib 很大，对其他负载多为噪声，且默认会关闭主程序 ASLR。
+- 否决的 PIE 替代：
+  - 全局函数 64B 对齐：core 1.004x，class/matmul 回退。
+  - `-Wl,-z,noseparate-code`：保留 ASLR 但合并代码段、破坏 W^X；core 0.980x，但 class/binary/hashmap_std 回退。
+  - `-Wl,-Ttext=0x10c0`：小程序的 fib 收益可复现，但大程序链接失败，不能通用。
+- 产品决策：
+  - 默认仍为 **PIE**（保留 ASLR 和 W^X）。
+  - 新增 `-no-pie` 显式性能选项，`-pie` 显式选择默认；帮助文本标注 `-no-pie` 会关闭主程序 ASLR。
+  - `Linker` 现在显式传 `-pie`/`-no-pie`（Linux），不再依赖宿主 `cc` 默认。
+- 验证：
+  - 新增 4 个 driver/linker 测试；全量 **1943/1943** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - 实际 `-no-pie` fib 编译产物为 EXEC、checksum 102334155，默认产物为 PIE；同核 fib A/B 250.72→227.36ms。
+  - 记录：`benchmarks/results/2026-11-22-link-mode-ab.md`。
