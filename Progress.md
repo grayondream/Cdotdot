@@ -1668,3 +1668,29 @@
   - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
   - 实际 `-no-pie` fib 编译产物为 EXEC、checksum 102334155，默认产物为 PIE；同核 fib A/B 250.72→227.36ms。
   - 记录：`benchmarks/results/2026-11-22-link-mode-ab.md`。
+
+## 2026-11-22 — 有限递归内联
+
+- 背景：剩余 core gap 中 `fib` 主要输给 GCC 的递归内联；LLVM 默认内联器刻意不展开递归调用，CDD 之前的 IR 与 clang 接近。
+- 设计/计划：
+  - `docs/superpowers/specs/2026-11-22-pgo-recursion-layout-design.md`
+  - `docs/superpowers/plans/2026-11-22-recursive-inlining.md`
+- 实现：
+  - 新增 `src/driver/RecursiveInlining.{h,cpp}`：只处理直接自调用；pre-O2 阶段要求恰好一个自调用且初始 ≤100 指令；post-O2 阶段处理 pre 阶段改过的函数，或 O2 后变成单自调用的小函数。
+  - 每阶段 depth 4，每轮只内联 IR 顺序中的第一个自调用点，重新收集；最终函数硬上限 1000 指令，内联前用“当前指令数 × 2 > cap”拒绝，避免越界。
+  - `-O2` 默认开启；`-fno-recursive-inlining` 关闭；`-frecursive-inlining` 可在 `-O3` 显式强制；`-frecursive-inlining-depth=N` 调整深度。
+  - `CompilerDriver` 抽出 `runOptimizationPipeline`，保留默认 O2 管线 + O2-only non-trivial loop unswitch；pre 在管线前，post 在管线后，只有 post 真正改动才重跑一次管线，且不重跑递归 pass。
+  - 递归改动后调用 `verifyModule`；失败则编译失败。
+- 直接 A/B：
+  - 同一 `build/bin/cdd`，旧侧 `-fno-recursive-inlining`、新侧默认；同核 5 warmup + 9 measured，逐轮交替，只看相对比例。
+  - `bench_fib` 302.34→**152.18ms（0.503x）**；`bench_nqueens` 432.92→**380.88ms（0.880x）**；`bench_sort` 574.83→574.98ms（1.000x）。
+  - core geomean **0.9201x**，全部 16 负载 geomean **0.9458x**；16 校验和全一致。
+  - `bench_vec_push` 的 0.942x 是宿主噪声：带/不带 `-fno-recursive-inlining` 编译出的二进制 SHA-256 完全相同（`dc507e2c...`），另一轮 5+9 得到 0.883x，说明此短负载噪声大于信号。
+- 编译期/代码尺寸守卫：
+  - corpus_1200 `-c -O2`，3 warmup + 7 measured：1089.27ms → 1089.03ms（**0.9998x**），对象 295,352 bytes 且 SHA-256 完全相同。
+- 验证：
+  - 新增 pass 单测 5 项、driver flag/集成测试 8 项；全量 **1957/1957** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - 新增可复用 `benchmarks/ab.py`（二进制/参数 A/B、校验和、同核交替计时、JSON 报告）。
+- 记录：`benchmarks/results/2026-11-22-recursive-inlining-ab.md`；代码 commits `7918ddf`、`9e71fed`、`75aa0ef`。
+- 下一步：PGO 离线训练/使用与函数排序计划 `docs/superpowers/plans/2026-11-22-pgo-workflow.md`；PGO 保持 opt-in。
