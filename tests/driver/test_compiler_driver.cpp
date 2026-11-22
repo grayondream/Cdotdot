@@ -11,6 +11,8 @@
 
 #include "llvm/Support/TargetSelect.h"
 
+#include <spdlog/spdlog.h>
+
 class CompilerDriverTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -225,6 +227,59 @@ std::filesystem::path writeTempSource(const std::string& name, const std::string
     std::ofstream out(p);
     out << text;
     return p;
+}
+
+std::size_t countOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    std::size_t pos = 0;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+std::string extractFunction(const std::string& ir, const std::string& name) {
+    const std::string marker = "@" + name + "(";
+    std::size_t pos = ir.find("define");
+    while (pos != std::string::npos) {
+        const std::size_t end = ir.find("\n}", pos);
+        if (end == std::string::npos) {
+            return {};
+        }
+        std::string body = ir.substr(pos, end - pos + 2);
+        if (body.find(marker) != std::string::npos) {
+            return body;
+        }
+        pos = ir.find("define", end);
+    }
+    return {};
+}
+
+class ScopedLogSilencer {
+public:
+    ScopedLogSilencer() : previous(spdlog::default_logger()->level()) {
+        spdlog::set_level(spdlog::level::off);
+    }
+    ~ScopedLogSilencer() {
+        spdlog::set_level(previous);
+    }
+
+private:
+    spdlog::level::level_enum previous;
+};
+
+std::string compileToIR(CompilerDriver& driver, const char* argv[], int argc) {
+    ScopedLogSilencer silence;
+    if (!driver.parseArguments(argc, argv)) {
+        return {};
+    }
+    testing::internal::CaptureStdout();
+    if (driver.run() != 0) {
+        testing::internal::GetCapturedStdout();
+        return {};
+    }
+    return testing::internal::GetCapturedStdout();
 }
 } // namespace
 
@@ -651,4 +706,98 @@ TEST_F(CompilerDriverTest, ParseRecursiveInliningForce) {
 TEST_F(CompilerDriverTest, RejectsMalformedRecursiveInliningDepth) {
     const char* argv[] = {"cdd", "-frecursive-inlining-depth=2x", "test.cdd"};
     EXPECT_FALSE(driver.parseArguments(3, argv));
+}
+
+TEST_F(CompilerDriverTest, RecursiveFibGrowsOnlyWhenEnabled) {
+    const auto p = writeTempSource("cdd_rec_fib.cdd", R"(
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int32 main() { println("{}", fib(10)); return 0; }
+)");
+    const std::string path = p.string();
+
+    const char* on[] = {"cdd", "-S", "-O", "2", path.c_str()};
+    const std::string withRec = compileToIR(driver, on, 5);
+    ASSERT_FALSE(withRec.empty());
+
+    const char* off[] = {"cdd", "-S", "-O", "2", "-fno-recursive-inlining",
+                         path.c_str()};
+    const std::string withoutRec = compileToIR(driver, off, 6);
+    ASSERT_FALSE(withoutRec.empty());
+
+    EXPECT_GT(withRec.size(), withoutRec.size());
+    const std::string fibBody = extractFunction(withRec, "fib_int32");
+    ASSERT_FALSE(fibBody.empty());
+    EXPECT_EQ(countOccurrences(fibBody, "call i32 @fib_int32"), 1u);
+    std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, RecursiveInliningIsO2OnlyUnlessForced) {
+    const auto p = writeTempSource("cdd_rec_o1.cdd", R"(
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int32 main() { println("{}", fib(10)); return 0; }
+)");
+    const std::string path = p.string();
+
+    const char* on[] = {"cdd", "-S", "-O", "1", "-frecursive-inlining",
+                        path.c_str()};
+    const std::string withFlag = compileToIR(driver, on, 6);
+
+    const char* off[] = {"cdd", "-S", "-O", "1", "-fno-recursive-inlining",
+                         path.c_str()};
+    const std::string withoutFlag = compileToIR(driver, off, 6);
+
+    ASSERT_FALSE(withFlag.empty());
+    ASSERT_FALSE(withoutFlag.empty());
+    EXPECT_EQ(withFlag, withoutFlag);
+    std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, RecursiveInliningLeavesLeafModulesIdentical) {
+    const auto p = writeTempSource("cdd_rec_leaf.cdd", R"(
+int32 add_one(int32 n) { return n + 1; }
+int32 main() { println("{}", add_one(41)); return 0; }
+)");
+    const std::string path = p.string();
+
+    const char* on[] = {"cdd", "-S", "-O", "2", path.c_str()};
+    const std::string withoutFlag = compileToIR(driver, on, 5);
+
+    const char* off[] = {"cdd", "-S", "-O", "2", "-fno-recursive-inlining",
+                         path.c_str()};
+    const std::string withOffFlag = compileToIR(driver, off, 6);
+
+    ASSERT_FALSE(withoutFlag.empty());
+    ASSERT_FALSE(withOffFlag.empty());
+    EXPECT_EQ(withoutFlag, withOffFlag);
+    std::filesystem::remove(p);
+}
+
+TEST_F(CompilerDriverTest, RecursiveInliningCanBeForcedAtO3) {
+    const auto p = writeTempSource("cdd_rec_o3.cdd", R"(
+int32 fib(int32 n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int32 main() { println("{}", fib(10)); return 0; }
+)");
+    const std::string path = p.string();
+
+    const char* on[] = {"cdd", "-S", "-O", "3", "-frecursive-inlining",
+                        path.c_str()};
+    const std::string forced = compileToIR(driver, on, 6);
+
+    const char* off[] = {"cdd", "-S", "-O", "3", "-fno-recursive-inlining",
+                         path.c_str()};
+    const std::string baseline = compileToIR(driver, off, 6);
+
+    ASSERT_FALSE(forced.empty());
+    ASSERT_FALSE(baseline.empty());
+    EXPECT_GT(forced.size(), baseline.size());
+    std::filesystem::remove(p);
 }

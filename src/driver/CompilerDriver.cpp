@@ -1,6 +1,7 @@
 #include "CompilerDriver.h"
 #include "Linker.h"
 #include "ModuleLoader.h"
+#include "RecursiveInlining.h"
 #include "StdPrelude.h"
 #include "frontend/Lexer.h"
 #include "frontend/Parser.h"
@@ -183,6 +184,56 @@ static bool emitObjectFile(llvm::Module& module, const std::string& outputPath,
     dest.flush();
     dest.close();
     return true;
+}
+
+static void runOptimizationPipeline(
+    llvm::Module& module,
+    llvm::TargetMachine& targetMachine,
+    llvm::OptimizationLevel level,
+    bool includeExtraUnswitch) {
+    llvm::LoopAnalysisManager LAM;
+    llvm::FunctionAnalysisManager FAM;
+    llvm::CGSCCAnalysisManager CGAM;
+    llvm::ModuleAnalysisManager MAM;
+
+    llvm::PassBuilder PB(&targetMachine);
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(level);
+    MPM.run(module, MAM);
+
+    // O3 enables non-trivial loop unswitching; O2 only does trivial
+    // unswitching. Non-trivial unswitching is a large win on branchy,
+    // loop-invariant conditions (nqueens). Run it as a post-O2 pass so we
+    // get that win without O3's loop-unrolling regressions (nbody).
+    if (includeExtraUnswitch) {
+        llvm::FunctionPassManager FPM;
+        FPM.addPass(llvm::LoopSimplifyPass());
+        FPM.addPass(llvm::createFunctionToLoopPassAdaptor(
+            llvm::SimpleLoopUnswitchPass(/*NonTrivial=*/true,
+                                         /*Trivial=*/true),
+            /*UseMemorySSA=*/true));
+        FPM.addPass(llvm::InstCombinePass());
+        FPM.addPass(llvm::SimplifyCFGPass());
+        llvm::ModulePassManager extra;
+        extra.addPass(
+            llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
+        extra.run(module, MAM);
+    }
+}
+
+static bool verifyRecursiveInliningModule(llvm::Module& module) {
+    std::string error;
+    llvm::raw_string_ostream stream(error);
+    if (!llvm::verifyModule(module, &stream)) {
+        return true;
+    }
+    LOGE("recursive inlining produced invalid IR: {}", stream.str());
+    return false;
 }
 
 static bool parseUnsignedDecimal(const std::string& text, unsigned& value) {
@@ -542,47 +593,50 @@ int CompilerDriver::compileFile(const std::string& inputFile) {
     ast->codegen(codegenCtx);
     codegenCtx.finalizeDebugInfo();
 
-    if (optLevel > 0) {
-        llvm::LoopAnalysisManager LAM;
-        llvm::FunctionAnalysisManager FAM;
-        llvm::CGSCCAnalysisManager CGAM;
-        llvm::ModuleAnalysisManager MAM;
+    const bool recursiveInliningEnabled =
+        (optLevel == 2 && recursiveInlining) ||
+        (recursiveInliningExplicit && optLevel >= 2);
 
-        llvm::PassBuilder PB(targetMachine.get());
-        PB.registerModuleAnalyses(MAM);
-        PB.registerCGSCCAnalyses(CGAM);
-        PB.registerFunctionAnalyses(FAM);
-        PB.registerLoopAnalyses(LAM);
-        PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+    llvm::OptimizationLevel optimizationLevel = llvm::OptimizationLevel::O2;
+    switch (optLevel) {
+        case 1: optimizationLevel = llvm::OptimizationLevel::O1; break;
+        case 2: optimizationLevel = llvm::OptimizationLevel::O2; break;
+        case 3: optimizationLevel = llvm::OptimizationLevel::O3; break;
+        default: optimizationLevel = llvm::OptimizationLevel::O2; break;
+    }
 
-        llvm::OptimizationLevel optLevelEnum;
-        switch (optLevel) {
-            case 1: optLevelEnum = llvm::OptimizationLevel::O1; break;
-            case 2: optLevelEnum = llvm::OptimizationLevel::O2; break;
-            case 3: optLevelEnum = llvm::OptimizationLevel::O3; break;
-            default: optLevelEnum = llvm::OptimizationLevel::O2; break;
+    RecursiveInliningOptions recursiveOptions;
+    recursiveOptions.maxDepth = recursiveInliningDepth;
+    std::vector<llvm::Function *> preModifiedFunctions;
+    if (recursiveInliningEnabled) {
+        const RecursiveInliningResult pre =
+            inlineRecursiveCalls(codegenCtx.getModule(), recursiveOptions);
+        preModifiedFunctions.assign(pre.modifiedFunctions.begin(),
+                                    pre.modifiedFunctions.end());
+        if (pre.changed &&
+            !verifyRecursiveInliningModule(codegenCtx.getModule())) {
+            return 1;
         }
+    }
 
-        llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(optLevelEnum);
-        MPM.run(codegenCtx.getModule(), MAM);
+    if (optLevel > 0) {
+        runOptimizationPipeline(codegenCtx.getModule(), *targetMachine,
+                                optimizationLevel,
+                                /*includeExtraUnswitch=*/optLevel == 2);
+    }
 
-        // O3 enables non-trivial loop unswitching; O2 only does trivial
-        // unswitching. Non-trivial unswitching is a large win on branchy,
-        // loop-invariant conditions (nqueens). Run it as a post-O2 pass so we
-        // get that win without O3's loop-unrolling regressions (nbody).
-        if (optLevel == 2) {
-            llvm::FunctionPassManager FPM;
-            FPM.addPass(llvm::LoopSimplifyPass());
-            FPM.addPass(llvm::createFunctionToLoopPassAdaptor(
-                llvm::SimpleLoopUnswitchPass(/*NonTrivial=*/true,
-                                             /*Trivial=*/true),
-                /*UseMemorySSA=*/true));
-            FPM.addPass(llvm::InstCombinePass());
-            FPM.addPass(llvm::SimplifyCFGPass());
-            llvm::ModulePassManager extra;
-            extra.addPass(
-                llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
-            extra.run(codegenCtx.getModule(), MAM);
+    if (recursiveInliningEnabled) {
+        const RecursiveInliningResult post = inlineRecursiveCalls(
+            codegenCtx.getModule(), recursiveOptions, preModifiedFunctions);
+        if (post.changed) {
+            // Re-run only the optimization pipeline; running the recursive
+            // pass again would keep re-linearizing the same call chain.
+            runOptimizationPipeline(codegenCtx.getModule(), *targetMachine,
+                                    optimizationLevel,
+                                    /*includeExtraUnswitch=*/optLevel == 2);
+            if (!verifyRecursiveInliningModule(codegenCtx.getModule())) {
+                return 1;
+            }
         }
     }
 
