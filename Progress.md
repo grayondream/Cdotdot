@@ -1619,3 +1619,28 @@
   - 剩余 core gap：fib 1.05x、sort 1.03x、binary_search 1.03x；fib 是 GCC IPA 形状，sort/binary_search 与 clang 代码形状接近。
   - 16 个负载校验和全部一致；O0–O3 矩阵 24 单元无 error；corpus_1200 编译 873ms，无编译回退。
 - 代码 commit：`8c92223`；基线：`benchmarks/results/2026-11-21-auto.{json,md}`。
+
+## 2026-11-22 — 容器 2 的幂索引
+
+- 目标：继续压所有场景；先处理 stdlib 中可证明的结构性开销。
+- Recon：
+  - `Deque` 的 `push_back`/`reserve`/`pop` 汇编中每次环形索引都执行整数 `div`；clang 的 deque 没有除法。
+  - `HashMap`/`HashSet` 的 open-addressing 探测同样使用 `% cap`，每次 put/get/remove 都可能执行除法。
+  - 三者的 `cap` 都由 8 开始翻倍，不变量是 0 或 2 的幂。
+- 实现：
+  - 环形/探测索引统一改为 `& (cap - 1)`。
+  - `HashMap::rehash`/`HashSet::rehash` 将调用方传入的 `newCap` 向上取整到 2 的幂，保证公开调用也满足不变量。
+  - 新增 IR 回归测试：容器热路径不得出现 `urem`/`srem`；全量 **1939/1939**。
+- 直接 A/B（同核、5 warmup + 9 measured、旧/新逐轮交替；宿主正运行 Minecraft，负载 ~4.5，因此只看相对值）：
+  - `bench_deque`：117.11ms → **61.64ms（0.526x）**
+  - `bench_hashmap_std`：440.70ms → **396.21ms（0.899x）**
+  - core geomean **1.0005x**（无回退），全部 16 负载 geomean **0.9496x**
+  - `bench_hashmap` 本身就是手写掩码，核心 hashmap 不变。
+- 试过但否决：
+  - `Deque::reserve` 的 `alloc_zeroed` 改成 `alloc`：无加速（1.024x）且破坏 constexpr Deque 表测试，已撤销。
+  - 对整个可执行文件 internalize：nqueens/hashmap_std 有收益，但 class/binary_search 回退，core 1.007x，否决。
+  - 全局 `dso_local`：无稳定收益，class 回退，否决。
+- 基线：
+  - full baseline 采样时系统负载 4.1–4.6，nqueens/整体绝对值被污染，**未提升为官方基线**；保留 `2026-11-21-auto` 干净基线。
+  - 本次同负载 A/B 记录：`benchmarks/results/2026-11-22-pow2-indexing-ab.md`。
+  - 代码 commit `2926a70`。

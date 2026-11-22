@@ -1,5 +1,14 @@
 # CDD Performance Baseline — 2026-11-21-auto
 
+> **Post-baseline delta (2026-11-22, commit `2926a70`):** `Deque`, `HashMap`,
+> and `HashSet` now use power-of-two masks instead of `% cap`. A same-load
+> direct A/B measured **all 0.950x**, **deque 0.526x**, and
+> **hashmap_std 0.899x**, with core unchanged (1.0005x). A full baseline
+> refresh was not promoted because the host was under ~4.5 load from an
+> external Java process. See
+> `benchmarks/results/2026-11-22-pow2-indexing-ab.md`; rerun on an idle host
+> before replacing the absolute table below.
+
 Generated: `2026-11-21T23:02:49`
 Command: `/home/ares/apps/conda/bin/python3 benchmarks/run.py --full --baseline-md --label 2026-11-21-auto`
 
