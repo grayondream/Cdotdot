@@ -11,6 +11,7 @@
 #include <cxxopts.hpp>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <cstdlib>
 
@@ -184,6 +185,18 @@ static bool emitObjectFile(llvm::Module& module, const std::string& outputPath,
     return true;
 }
 
+static bool parseUnsignedDecimal(const std::string& text, unsigned& value) {
+    if (text.empty()) return false;
+    unsigned long long parsed = 0;
+    for (char c : text) {
+        if (c < '0' || c > '9') return false;
+        parsed = parsed * 10 + static_cast<unsigned long long>(c - '0');
+        if (parsed > std::numeric_limits<unsigned>::max()) return false;
+    }
+    value = static_cast<unsigned>(parsed);
+    return true;
+}
+
 bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
     inputFiles.clear();
     outputFile.clear();
@@ -202,6 +215,9 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
     optLevel = 0;
     includeDebug = false;
     pie = true;
+    recursiveInlining = true;
+    recursiveInliningExplicit = false;
+    recursiveInliningDepth = 4;
     stdStandard.clear();
     march = "auto";
 
@@ -220,6 +236,20 @@ bool CompilerDriver::parseArguments(int argc, const char* argv[]) {
             march = arg.substr(7);
         } else if (arg == "-march" && i + 1 < argc) {
             march = argv[++i];
+        } else if (arg == "-fno-recursive-inlining") {
+            recursiveInlining = false;
+            recursiveInliningExplicit = false;
+        } else if (arg == "-frecursive-inlining") {
+            recursiveInlining = true;
+            recursiveInliningExplicit = true;
+        } else if (arg.rfind("-frecursive-inlining-depth=", 0) == 0) {
+            const std::string value = arg.substr(27);
+            unsigned depth = 0;
+            if (!parseUnsignedDecimal(value, depth)) {
+                std::cerr << "error: invalid -frecursive-inlining-depth\n";
+                return false;
+            }
+            recursiveInliningDepth = depth;
         } else if (arg == "-fsyntax-only") {
             syntaxOnly = true;
         } else if (arg == "-pie" || arg == "--pie") {
@@ -652,6 +682,9 @@ void CompilerDriver::printHelp() const {
               << "  -Werror         Treat warnings as errors\n"
               << "  -std <standard> C standard (c99, c11, c17)\n"
               << "  -march <cpu>    Target CPU (default: auto; generic = portable SSE2, native = host)\n"
+              << "  -frecursive-inlining       Enable bounded self-recursive inlining at -O2 (default)\n"
+              << "  -fno-recursive-inlining    Disable recursive inlining\n"
+              << "  -frecursive-inlining-depth=N  Maximum self-inline depth (default: 4)\n"
               << "  -fsyntax-only   Parse and semantic-check only (no codegen)\n"
               << "  -l <lib>        Link library\n"
               << "  -L <path>       Library search path\n"

@@ -619,3 +619,36 @@ TEST_F(CompilerDriverTest, ParsePieFlag) {
     ASSERT_TRUE(driver.parseArguments(3, argv));
     EXPECT_TRUE(driver.getPie());
 }
+
+TEST_F(CompilerDriverTest, RecursiveInliningIsOnByDefault) {
+    const char* argv[] = {"cdd", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(2, argv));
+    EXPECT_TRUE(driver.getRecursiveInlining());
+    EXPECT_FALSE(driver.getRecursiveInliningExplicit());
+    EXPECT_EQ(driver.getRecursiveInliningDepth(), 4u);
+}
+
+TEST_F(CompilerDriverTest, ParseNoRecursiveInlining) {
+    const char* argv[] = {"cdd", "-fno-recursive-inlining", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_FALSE(driver.getRecursiveInlining());
+    EXPECT_FALSE(driver.getRecursiveInliningExplicit());
+}
+
+TEST_F(CompilerDriverTest, ParseRecursiveInliningDepth) {
+    const char* argv[] = {"cdd", "-frecursive-inlining-depth=2", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(3, argv));
+    EXPECT_EQ(driver.getRecursiveInliningDepth(), 2u);
+}
+
+TEST_F(CompilerDriverTest, ParseRecursiveInliningForce) {
+    const char* argv[] = {"cdd", "-O", "3", "-frecursive-inlining", "test.cdd"};
+    ASSERT_TRUE(driver.parseArguments(5, argv));
+    EXPECT_TRUE(driver.getRecursiveInlining());
+    EXPECT_TRUE(driver.getRecursiveInliningExplicit());
+}
+
+TEST_F(CompilerDriverTest, RejectsMalformedRecursiveInliningDepth) {
+    const char* argv[] = {"cdd", "-frecursive-inlining-depth=2x", "test.cdd"};
+    EXPECT_FALSE(driver.parseArguments(3, argv));
+}

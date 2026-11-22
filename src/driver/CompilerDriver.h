@@ -30,6 +30,9 @@ public:
     const std::string& getStdStandard() const { return stdStandard; }
     const std::string& getMarch() const { return march; }
     bool getPie() const { return pie; }
+    bool getRecursiveInlining() const { return recursiveInlining; }
+    bool getRecursiveInliningExplicit() const { return recursiveInliningExplicit; }
+    unsigned getRecursiveInliningDepth() const { return recursiveInliningDepth; }
 
     void printHelp() const;
 
@@ -53,6 +56,9 @@ private:
     int optLevel = 0;
     bool includeDebug = false;
     bool pie = true;
+    bool recursiveInlining = true;
+    bool recursiveInliningExplicit = false;
+    unsigned recursiveInliningDepth = 4;
     std::string stdStandard;
     std::string march = "auto";
 };
