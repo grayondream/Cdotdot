@@ -47,6 +47,13 @@ template<typename K> struct HashSet {
     }
 
     bool rehash(usize newCap) {
+        // Probe indexing uses `cap - 1` as a mask, so round a
+        // caller-provided capacity up to the next power of two.
+        usize nc = 8;
+        while (nc < newCap) {
+            nc = nc * 2;
+        }
+        newCap = nc;
         K* oldKeys = this->keys;
         uint8* oldStates = this->states;
         usize oldCap = this->cap;
@@ -79,7 +86,7 @@ template<typename K> struct HashSet {
     void insert_raw(K key) {
         usize (*hf)(K) = this->hash_fn;
         if (hf == null) return;
-        usize at = hf(key) % this->cap;
+        usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
             uint8 state = this->states[at];
@@ -92,7 +99,7 @@ template<typename K> struct HashSet {
                 }
                 return;
             }
-            at = (at + 1) % this->cap;
+            at = (at + 1) & (this->cap - 1);
             probes = probes + 1;
         }
     }
@@ -122,7 +129,7 @@ template<typename K> struct HashSet {
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
         if (hf == null || ef == null) return false;
-        usize at = hf(key) % this->cap;
+        usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
             uint8 state = this->states[at];
@@ -132,7 +139,7 @@ template<typename K> struct HashSet {
             if (state == 1 && ef(this->keys[at], key)) {
                 return true;
             }
-            at = (at + 1) % this->cap;
+            at = (at + 1) & (this->cap - 1);
             probes = probes + 1;
         }
         return false;
@@ -145,7 +152,7 @@ template<typename K> struct HashSet {
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
         if (hf == null || ef == null) return false;
-        usize at = hf(key) % this->cap;
+        usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
             uint8 state = this->states[at];
@@ -158,7 +165,7 @@ template<typename K> struct HashSet {
                 this->tombstones = this->tombstones + 1;
                 return true;
             }
-            at = (at + 1) % this->cap;
+            at = (at + 1) & (this->cap - 1);
             probes = probes + 1;
         }
         return false;

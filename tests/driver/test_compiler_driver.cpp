@@ -561,3 +561,43 @@ int32 main() {
     EXPECT_NE(ir.find("for.body.us"), std::string::npos);
     std::filesystem::remove(p);
 }
+
+// Deque rings and open-addressing hash tables both keep a power-of-two
+// capacity. Their hot-path indices must lower to masks, not urem/srem.
+TEST_F(CompilerDriverTest, StdlibPowerOfTwoIndexingAvoidsDivision) {
+    const std::filesystem::path p = writeTempSource("cdd_pow2_index.cdd", R"(
+import std.deque;
+import std.hashmap;
+import std.hash;
+int32 main() {
+    std::Deque<int32> d = {};
+    d.init();
+    d.push_back(1);
+    d.push_front(0);
+    int32 x = 0;
+    if (!d.pop_front(&x)) return 1;
+    if (!d.pop_back(&x)) return 2;
+    d.destroy();
+
+    std::HashMap<uint32,int32> m = {};
+    m.init(std::hash_key_u32, std::equal_u32);
+    if (!m.put(1, 2)) return 3;
+    int32 v = 0;
+    if (!m.get(1, &v) || v != 2) return 4;
+    if (!m.remove(1)) return 5;
+    m.destroy();
+    return 0;
+}
+)");
+    const std::string path = p.string();
+    const char* argv[] = {"cdd", "-S", "-O", "2", path.c_str()};
+    ASSERT_TRUE(driver.parseArguments(5, argv));
+    testing::internal::CaptureStdout();
+    EXPECT_EQ(driver.run(), 0);
+    const std::string ir = testing::internal::GetCapturedStdout();
+    EXPECT_NE(ir.find("push_back_std_Deque"), std::string::npos);
+    EXPECT_NE(ir.find("put_raw_std_HashMap"), std::string::npos);
+    EXPECT_EQ(ir.find("urem"), std::string::npos);
+    EXPECT_EQ(ir.find("srem"), std::string::npos);
+    std::filesystem::remove(p);
+}

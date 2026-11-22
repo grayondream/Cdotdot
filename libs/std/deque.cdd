@@ -7,6 +7,8 @@ export namespace std {
 
 // ===== Deque<T> (ring buffer) =====
 
+// `cap` is always zero or a power of two, so ring indices use a mask instead
+// of `% cap`. This keeps the push/pop hot path free of integer division.
 template<typename T> struct Deque {
     T* data;
     usize cap;
@@ -52,7 +54,7 @@ template<typename T> struct Deque {
         }
         usize i = 0;
         while (i < this->len) {
-            usize src = (this->head + i) % this->cap;
+            usize src = (this->head + i) & (this->cap - 1);
             np[i] = this->data[src];
             i = i + 1;
         }
@@ -69,7 +71,7 @@ template<typename T> struct Deque {
         if (!this->reserve(this->len + 1)) {
             return false;
         }
-        usize tail = (this->head + this->len) % this->cap;
+        usize tail = (this->head + this->len) & (this->cap - 1);
         this->data[tail] = value;
         this->len = this->len + 1;
         return true;
@@ -79,7 +81,7 @@ template<typename T> struct Deque {
         if (!this->reserve(this->len + 1)) {
             return false;
         }
-        this->head = (this->head + this->cap - 1) % this->cap;
+        this->head = (this->head + this->cap - 1) & (this->cap - 1);
         this->data[this->head] = value;
         this->len = this->len + 1;
         return true;
@@ -89,7 +91,7 @@ template<typename T> struct Deque {
         if (this->len == 0) {
             return false;
         }
-        usize tail = (this->head + this->len - 1) % this->cap;
+        usize tail = (this->head + this->len - 1) & (this->cap - 1);
         this->len = this->len - 1;
         if (out != null) {
             *out = this->data[tail];
@@ -104,23 +106,23 @@ template<typename T> struct Deque {
         if (out != null) {
             *out = this->data[this->head];
         }
-        this->head = (this->head + 1) % this->cap;
+        this->head = (this->head + 1) & (this->cap - 1);
         this->len = this->len - 1;
         return true;
     }
 
     T get(usize index) {
-        usize at = (this->head + index) % this->cap;
+        usize at = (this->head + index) & (this->cap - 1);
         return this->data[at];
     }
 
     T* get_ptr(usize index) {
-        usize at = (this->head + index) % this->cap;
+        usize at = (this->head + index) & (this->cap - 1);
         return &this->data[at];
     }
 
     void set(usize index, T value) {
-        usize at = (this->head + index) % this->cap;
+        usize at = (this->head + index) & (this->cap - 1);
         this->data[at] = value;
     }
 
