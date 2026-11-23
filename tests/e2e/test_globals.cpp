@@ -98,7 +98,7 @@ TEST_F(GlobalsE2E, GlobalWriteVisible) {
 }
 
 // TYP-12 D3 via the global fix: an uninitialized global slice is the
-// empty slice {null, 0} (restored from TYP-12 Task 6).
+// empty slice {nullptr, 0} (restored from TYP-12 Task 6).
 TEST_F(GlobalsE2E, GlobalSliceZeroInitialized) {
     EXPECT_EQ(runSource(R"(
         int32[] g;

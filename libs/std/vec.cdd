@@ -13,16 +13,16 @@ template<typename T> struct Vec {
     usize cap;
 
     void init() {
-        this->data = null;
+        this->data = nullptr;
         this->len = 0;
         this->cap = 0;
     }
 
     void destroy() {
-        if (this->data != null) {
+        if (this->data != nullptr) {
             std::dealloc(this->data);
         }
-        this->data = null;
+        this->data = nullptr;
         this->len = 0;
         this->cap = 0;
     }
@@ -50,10 +50,10 @@ template<typename T> struct Vec {
             nc = nc * 2;
         }
         T* np = (T*)std::alloc_zeroed(nc, compile_time.size_of(T));
-        if (np == null) {
+        if (np == nullptr) {
             return false;
         }
-        if (this->data != null && this->len > 0) {
+        if (this->data != nullptr && this->len > 0) {
             std::bytes_copy(np, this->data, this->len * compile_time.size_of(T));
             std::dealloc(this->data);
         }
@@ -76,7 +76,7 @@ template<typename T> struct Vec {
             return false;
         }
         this->len = this->len - 1;
-        if (out != null) {
+        if (out != nullptr) {
             *out = this->data[this->len];
         }
         return true;
@@ -148,7 +148,7 @@ template<typename T> struct Vec {
     // Linear scan with a user equality callback.
     bool contains(T value, bool (*eq)(T, T)) {
         bool (*fn)(T, T) = eq;
-        if (fn == null) return false;
+        if (fn == nullptr) return false;
         usize i = 0;
         while (i < this->len) {
             if (fn(this->data[i], value)) {
@@ -162,7 +162,7 @@ template<typename T> struct Vec {
     // Returns index or -1.
     isize index_of(T value, bool (*eq)(T, T)) {
         bool (*fn)(T, T) = eq;
-        if (fn == null) return -1;
+        if (fn == nullptr) return -1;
         usize i = 0;
         while (i < this->len) {
             if (fn(this->data[i], value)) {

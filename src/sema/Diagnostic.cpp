@@ -50,7 +50,7 @@ const DiagnosticInfo kRegistry[] = {
     {DiagnosticCode::WarnUnusedVariable,         "W3002", "unused variable"},
     {DiagnosticCode::WarnUnreachableCode,        "W3003", "unreachable code"},
     {DiagnosticCode::WarnDeprecated,             "W3004", "deprecated API"},
-    {DiagnosticCode::WarnNullNonnull,            "W3005", "null passed to nonnull parameter"},
+    {DiagnosticCode::WarnNullNonnull,            "W3005", "nullptr passed to nonnull parameter"},
     {DiagnosticCode::WarnClosureEscape,           "W3006", "closure captures storage that may not outlive it"},
 };
 

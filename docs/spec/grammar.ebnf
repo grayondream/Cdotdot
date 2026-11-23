@@ -94,7 +94,7 @@ escape-sequence     = '\' , ( "'" | '"' | '\' | 'n' | 't' | 'r' | '0'
 
 (* --- 布尔/空字面量 --- *)
 boolean-literal     = 'true' | 'false' ;
-null-literal        = 'null' ;                                      (* [impl] 唯一空指针拼写（Review 2.3） *)
+nullptr-literal     = 'nullptr' ;                                  (* [impl] 唯一空指针拼写 *)
 
 
 (* =========================================================================
@@ -397,7 +397,7 @@ primary-expr        = literal
                     | lambda-expr ;                                 (* [impl] PAR-11, 2026-10-17 *)
 
 literal             = integer-literal | float-literal | char-literal
-                    | string-literal | boolean-literal | null-literal ;
+                    | string-literal | boolean-literal | nullptr-literal ;
 
 initializer-list    = '{' , [ initializer , { ',' , initializer } , [ ',' ] ] , '}' ;
 initializer          = expr

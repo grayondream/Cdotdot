@@ -197,7 +197,7 @@ TEST(QualifierPointers, RejectsArbitraryIntegerToPointer) {
 
 TEST(QualifierPointers, AcceptsNullPointerConstant) {
     EXPECT_TRUE(analyzeSource(
-        "int32 main() { int32* p = 0; return p == null ? 0 : 1; }")
+        "int32 main() { int32* p = 0; return p == nullptr ? 0 : 1; }")
                     .errors.empty());
 }
 
@@ -441,7 +441,7 @@ TEST(QualifierNullPointer, RejectsNonZeroIntegerAtAllValueSites) {
 TEST(QualifierNullPointer, AcceptsNullAtThoseSites) {
     EXPECT_TRUE(analyzeSource(R"(
         void take(int32* p) {}
-        int32* make() { return null; }
+        int32* make() { return nullptr; }
         struct QNP2 { int32* p; };
         int32 main() { take(0); QNP2 s = {0}; int32* a[1] = {0}; return 0; }
     )").errors.empty());

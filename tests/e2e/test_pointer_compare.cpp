@@ -65,23 +65,23 @@ static int runSource(const std::string& source) {
 }
 
 TEST_F(PointerCompareE2E, NonNullNotEqualToNull) {
-    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; return (p == null) ? 1 : 0; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; return (p == nullptr) ? 1 : 0; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, NonNullNotEqualToNullOperator) {
-    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; return (p != null) ? 0 : 1; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; return (p != nullptr) ? 0 : 1; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, NullPointerEqualsNull) {
-    EXPECT_EQ(runSource("int32 main() { int32* p = null; return (p == null) ? 0 : 1; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32* p = nullptr; return (p == nullptr) ? 0 : 1; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, NullOnTheLeft) {
-    EXPECT_EQ(runSource("int32 main() { int32* p = null; return (0 == p) ? 0 : 1; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32* p = nullptr; return (0 == p) ? 0 : 1; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, AssignNullThenCompare) {
-    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; p = null; return (p == null) ? 0 : 1; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32 x; int32* p = &x; p = nullptr; return (p == nullptr) ? 0 : 1; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, PointerConditionalIsNotNull) {
@@ -89,11 +89,11 @@ TEST_F(PointerCompareE2E, PointerConditionalIsNotNull) {
 }
 
 TEST_F(PointerCompareE2E, NullPointerConditionalIsFalse) {
-    EXPECT_EQ(runSource("int32 main() { int32* p = null; if (p) return 1; return 0; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32* p = nullptr; if (p) return 1; return 0; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, LogicalNotOnPointer) {
-    EXPECT_EQ(runSource("int32 main() { int32* p = null; if (!p) return 0; return 1; }"), 0);
+    EXPECT_EQ(runSource("int32 main() { int32* p = nullptr; if (!p) return 0; return 1; }"), 0);
 }
 
 TEST_F(PointerCompareE2E, LogicalNotOnIntegerIsNotBitwise) {

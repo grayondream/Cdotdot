@@ -2734,7 +2734,7 @@ TEST(SemanticAnalyzerAccessTest, PrivateMemberAliasInsideClassOk) {
 }
 
 TEST(SemanticAnalyzerAccessTest, PrivateMemberAliasPointerDeniedOutside) {
-    Lexer lexer("t.c", "class C { using T = int32; }; int32 main() { C::T* p = null; return 0; }");
+    Lexer lexer("t.c", "class C { using T = int32; }; int32 main() { C::T* p = nullptr; return 0; }");
     Parser parser(lexer.tokenize());
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);

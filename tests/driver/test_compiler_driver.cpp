@@ -382,7 +382,7 @@ TEST_F(CompilerDriverTest, ThreadProgramLinksAndRuns) {
         std::ofstream f(src);
         f << "import std.thread;\n"
              "int64 seen = 0;\n"
-             "void* worker(void* arg) { seen = (int64)arg; return null; }\n"
+             "void* worker(void* arg) { seen = (int64)arg; return nullptr; }\n"
              "int32 main() {\n"
              "    std::Thread t;\n"
              "    t.init();\n"

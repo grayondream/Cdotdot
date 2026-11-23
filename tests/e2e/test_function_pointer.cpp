@@ -174,7 +174,7 @@ TEST_F(FunctionPointerE2E, LibcBsearchCallback) {
             arr[0] = 1; arr[1] = 2; arr[2] = 3; arr[3] = 4; arr[4] = 5;
             int32 key = 4;
             int32* found = (int32*)bsearch(&key, arr, 5, 4, cmp_int);
-            if (found == null) return 1;
+            if (found == nullptr) return 1;
             return *found - 4;
         }
     )", "fp_bsearch.cdd"), 0);

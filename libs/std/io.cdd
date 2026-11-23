@@ -76,7 +76,7 @@ int32 read_int() {
 // newline. Returns the number of bytes stored. Always NUL-terminates.
 int32 read_line(char* buf, int32 cap) {
     // Capacity <= 0 has nowhere to store even the terminator; do not touch buf.
-    if (buf == null || cap <= 0) {
+    if (buf == nullptr || cap <= 0) {
         return 0;
     }
     int32 i = 0;
@@ -112,10 +112,10 @@ usize file_write(void* f, void* buf, usize n) {
 }
 
 // Reads one line (including the newline, if any) into `buf`; returns `buf`
-// on success, or null at end of file.
+// on success, or nullptr at end of file.
 char* file_read_line(char* buf, int32 cap, void* f) {
-    if (buf == null || cap <= 0 || f == null) {
-        return null;
+    if (buf == nullptr || cap <= 0 || f == nullptr) {
+        return nullptr;
     }
     return fgets(buf, cap, f);
 }

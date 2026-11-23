@@ -8,7 +8,7 @@ export namespace std {
 // Stable insertion sort over a contiguous range.
 template<typename T> void sort(T* data, usize len, int32 (*cmp)(T, T)) {
     int32 (*less)(T, T) = cmp;
-    if (less == null || len < 2) {
+    if (less == nullptr || len < 2) {
         return;
     }
     usize i = 1;
@@ -30,7 +30,7 @@ template<typename T> void sort_slice(T[] data, int32 (*cmp)(T, T)) {
 
 template<typename T> bool is_sorted(T* data, usize len, int32 (*cmp)(T, T)) {
     int32 (*less)(T, T) = cmp;
-    if (less == null || len < 2) {
+    if (less == nullptr || len < 2) {
         return true;
     }
     usize i = 1;
@@ -47,7 +47,7 @@ template<typename T> bool is_sorted(T* data, usize len, int32 (*cmp)(T, T)) {
 template<typename T> isize binary_search(T* data, usize len, T key,
                                          int32 (*cmp)(T, T)) {
     int32 (*c)(T, T) = cmp;
-    if (c == null) {
+    if (c == nullptr) {
         return -1;
     }
     usize lo = 0;

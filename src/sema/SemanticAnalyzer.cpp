@@ -41,9 +41,9 @@ static bool qualifiedElementCompatible(Type* target, Type* source) {
                           adjustParameterTypeForSignature(source));
 }
 
-// `null` is a distinct nullptr literal; integer literal 0 remains the C null
-// pointer constant. Both may initialize/compare with pointers, but only `null`
-// participates in overload resolution as a nullptr, never as int/bool.
+// `nullptr` is a distinct null-pointer literal; integer literal 0 remains the
+// C null pointer constant. Both may initialize/compare with pointers, but only
+// `nullptr` participates in overload resolution as a nullptr, never as int/bool.
 static bool isNullLiteralExpr(const ExprAST* expr) {
     return dynamic_cast<const NullExprAST*>(expr) != nullptr;
 }
@@ -5396,14 +5396,14 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
                         "'" + node.callee + "' is deprecated: " + msg, node);
         }
     }
-    // P1-05 / ANN-05: nonnull 形参传字面空（W3005；null 字面量即 0）。
+    // P1-05 / ANN-05: nonnull 形参传空指针字面量（W3005）。
     auto npIt = m_nonnullParams.find(node.callee);
     if (npIt != m_nonnullParams.end()) {
         for (auto& [pidx, pname] : npIt->second) {
             if (pidx < node.args.size()) {
                 if (isNullPointerConstantExpr(node.args[pidx].get())) {
                     emitWarning(DiagnosticCode::WarnNullNonnull,
-                                "null passed to nonnull parameter '" + pname
+                                "nullptr passed to nonnull parameter '" + pname
                                     + "' of '" + node.callee + "'", node);
                 }
             }
@@ -10167,7 +10167,7 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                 if (isNullLiteralExpr(param->defaultValue.get())) {
                     Type* pt = stripTypedef(param->type);
                     if (!pt || pt->kind != TypeKind::Pointer) {
-                        emitError("null default argument requires a pointer parameter",
+                        emitError("nullptr default argument requires a pointer parameter",
                                   *param);
                     }
                 } else {

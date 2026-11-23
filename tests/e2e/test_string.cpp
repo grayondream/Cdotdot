@@ -414,7 +414,7 @@ TEST_F(StringE2E, EmptyStringInvariants) {
             if (s.capacity() < 1) { return 2; }
             const char* p = s;
             // malloc 不清零：p[0] 内容未定义。不变量 = p 非空（cap>=1 保证）。
-            if (p == null) { return 3; }
+            if (p == nullptr) { return 3; }
             return 0;
         }
     )", "str22.cdd"), 0);

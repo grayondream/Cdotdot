@@ -678,7 +678,7 @@ llvm::Value* CodegenContext::castValue(llvm::Value* val, llvm::Type* targetLLVMT
     }
 
     // Null-pointer constant / address conversions (TYP-24). Without these a
-    // `T* p = null;` or pointer/integer comparison produced mismatched types.
+    // `T* p = nullptr;` or pointer/integer comparison produced mismatched types.
     if (srcType->isIntegerTy() && targetLLVMType->isPointerTy()) {
         return builder.CreateIntToPtr(val, targetLLVMType, "inttoptr");
     }

@@ -22,7 +22,7 @@ struct DefaultArgValue {
     double doubleVal = 0;
     bool isChar = false;
     char charVal = 0;
-    // `null` default argument: materialize a null pointer for this parameter.
+    // `nullptr` default argument: materialize a null pointer for this parameter.
     bool isNull = false;
 };
 
@@ -142,10 +142,10 @@ public:
     llvm::Value* codegen(CodegenContext& ctx) override;
 };
 
-// `null` is a distinct null-pointer literal of type `nullptr` (TypeKind::Nullptr),
+// `nullptr` is a distinct null-pointer literal of type `nullptr` (TypeKind::Nullptr),
 // not NumberExprAST(0).  It converts only to pointer types and participates in
 // pointer overload resolution like C++ nullptr; integer literal 0 remains the
-// separate C null-pointer constant.
+// separate C null-pointer constant.  `null` is no longer a keyword.
 class NullExprAST : public ExprAST {
 public:
     llvm::Value* codegen(CodegenContext& ctx) override;

@@ -50,7 +50,7 @@ struct Thread {
             return false;
         }
         this->last_error = 0;
-        int32 rc = pthread_create(&this->handle, null, fn, arg);
+        int32 rc = pthread_create(&this->handle, nullptr, fn, arg);
         if (rc != 0) {
             this->last_error = rc;
             this->handle = 0;
@@ -67,7 +67,7 @@ struct Thread {
             this->last_error = -1;
             return false;
         }
-        int32 rc = pthread_join(this->handle, null);
+        int32 rc = pthread_join(this->handle, nullptr);
         if (rc != 0) {
             this->last_error = rc;
             return false;
@@ -116,7 +116,7 @@ struct Mutex {
     void init() {
         this->initialized = false;
         this->last_error = 0;
-        int32 rc = pthread_mutex_init((void*)&this->storage[0], null);
+        int32 rc = pthread_mutex_init((void*)&this->storage[0], nullptr);
         if (rc == 0) {
             this->initialized = true;
         } else {
@@ -190,7 +190,7 @@ struct ConditionVariable {
     void init() {
         this->initialized = false;
         this->last_error = 0;
-        int32 rc = pthread_cond_init((void*)&this->storage[0], null);
+        int32 rc = pthread_cond_init((void*)&this->storage[0], nullptr);
         if (rc == 0) {
             this->initialized = true;
         } else {
@@ -213,7 +213,7 @@ struct ConditionVariable {
     }
 
     bool wait(std::Mutex* mtx) {
-        if (!this->initialized || mtx == null || !mtx->initialized) {
+        if (!this->initialized || mtx == nullptr || !mtx->initialized) {
             this->last_error = -1;
             return false;
         }

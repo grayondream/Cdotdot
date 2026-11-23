@@ -12,12 +12,12 @@ export namespace std {
 compile_time int64 CLOCKS_PER_SEC = 1000000;
 
 int64 unix_seconds() {
-    return time(null);
+    return time(nullptr);
 }
 
 // Coarse wall-clock milliseconds (second resolution).
 int64 unix_millis() {
-    return time(null) * 1000;
+    return time(nullptr) * 1000;
 }
 
 int64 process_ticks() {

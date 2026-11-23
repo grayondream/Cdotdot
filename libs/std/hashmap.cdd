@@ -21,9 +21,9 @@ template<typename K, typename V> struct HashMap {
     bool (*eq_fn)(K, K);
 
     void init(usize (*hash)(K), bool (*eq)(K, K)) {
-        this->keys = null;
-        this->values = null;
-        this->states = null;
+        this->keys = nullptr;
+        this->values = nullptr;
+        this->states = nullptr;
         this->cap = 0;
         this->len = 0;
         this->tombstones = 0;
@@ -32,14 +32,14 @@ template<typename K, typename V> struct HashMap {
     }
 
     void destroy() {
-        if (this->keys != null) {
+        if (this->keys != nullptr) {
             std::dealloc(this->keys);
             std::dealloc(this->values);
             std::dealloc(this->states);
         }
-        this->keys = null;
-        this->values = null;
-        this->states = null;
+        this->keys = nullptr;
+        this->values = nullptr;
+        this->states = nullptr;
         this->cap = 0;
         this->len = 0;
         this->tombstones = 0;
@@ -79,10 +79,10 @@ template<typename K, typename V> struct HashMap {
         K* newKeys = (K*)std::alloc_zeroed(newCap, compile_time.size_of(K));
         V* newValues = (V*)std::alloc_zeroed(newCap, compile_time.size_of(V));
         uint8* newStates = (uint8*)std::alloc_zeroed(newCap, compile_time.size_of(uint8));
-        if (newKeys == null || newValues == null || newStates == null) {
-            if (newKeys != null) std::dealloc(newKeys);
-            if (newValues != null) std::dealloc(newValues);
-            if (newStates != null) std::dealloc(newStates);
+        if (newKeys == nullptr || newValues == nullptr || newStates == nullptr) {
+            if (newKeys != nullptr) std::dealloc(newKeys);
+            if (newValues != nullptr) std::dealloc(newValues);
+            if (newStates != nullptr) std::dealloc(newStates);
             return false;
         }
 
@@ -100,7 +100,7 @@ template<typename K, typename V> struct HashMap {
             }
             i = i + 1;
         }
-        if (oldKeys != null) {
+        if (oldKeys != nullptr) {
             std::dealloc(oldKeys);
             std::dealloc(oldValues);
             std::dealloc(oldStates);
@@ -112,7 +112,7 @@ template<typename K, typename V> struct HashMap {
     void put_raw(K key, V value) {
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
-        if (hf == null || ef == null) return;
+        if (hf == nullptr || ef == nullptr) return;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
@@ -153,17 +153,17 @@ template<typename K, typename V> struct HashMap {
 
     V* get_ptr(K key) {
         if (this->cap == 0) {
-            return null;
+            return nullptr;
         }
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
-        if (hf == null || ef == null) return null;
+        if (hf == nullptr || ef == nullptr) return nullptr;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
             uint8 state = this->states[at];
             if (state == 0) {
-                return null;
+                return nullptr;
             }
             if (state == 1 && ef(this->keys[at], key)) {
                 return &this->values[at];
@@ -171,22 +171,22 @@ template<typename K, typename V> struct HashMap {
             at = (at + 1) & (this->cap - 1);
             probes = probes + 1;
         }
-        return null;
+        return nullptr;
     }
 
     bool get(K key, V* out) {
         V* slot = this->get_ptr(key);
-        if (slot == null) {
+        if (slot == nullptr) {
             return false;
         }
-        if (out != null) {
+        if (out != nullptr) {
             *out = *slot;
         }
         return true;
     }
 
     bool contains(K key) {
-        return this->get_ptr(key) != null;
+        return this->get_ptr(key) != nullptr;
     }
 
     bool remove(K key) {
@@ -195,7 +195,7 @@ template<typename K, typename V> struct HashMap {
         }
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
-        if (hf == null || ef == null) return false;
+        if (hf == nullptr || ef == nullptr) return false;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
@@ -216,7 +216,7 @@ template<typename K, typename V> struct HashMap {
     }
 
     void clear() {
-        if (this->states != null) {
+        if (this->states != nullptr) {
             std::bytes_set(this->states, 0, this->cap * compile_time.size_of(uint8));
         }
         this->len = 0;

@@ -1174,7 +1174,7 @@ std::unique_ptr<ExprAST> Parser::parsePrimaryImpl() {
         advance();
         return std::make_unique<BoolLiteralExprAST>(false);
     }
-    // null literal: a distinct nullptr literal, not integer 0.
+    // nullptr literal: a distinct null-pointer literal, not integer 0.
     if (token->type == TokenType::TOKEN_NULL) {
         advance();
         return std::make_unique<NullExprAST>();

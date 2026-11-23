@@ -92,13 +92,13 @@ static std::string compileIR(const std::string& source) {
     return ir;
 }
 
-TEST_F(ErgonomicsE2E, NullptrIsNotAKeyword) {
-    EXPECT_FALSE(compiles("int32 main() { int32* p = nullptr; return p == null ? 0 : 1; }"));
+TEST_F(ErgonomicsE2E, NullIsNotAKeyword) {
+    EXPECT_FALSE(compiles("int32 main() { int32* p = null; return p == nullptr ? 0 : 1; }"));
 }
 
-TEST_F(ErgonomicsE2E, NullPointerLiteralStillWorks) {
+TEST_F(ErgonomicsE2E, NullptrLiteralWorks) {
     EXPECT_EQ(runSource(
-        "int32 main() { int32* p = null; return p == null ? 0 : 1; }"), 0);
+        "int32 main() { int32* p = nullptr; return p == nullptr ? 0 : 1; }"), 0);
 }
 
 TEST_F(ErgonomicsE2E, OptionalConditionAndMethods) {
@@ -226,8 +226,8 @@ TEST_F(ErgonomicsE2E, SequencePropertiesAndRange) {
             string s = string.new("abcd");
             if (s.len != 4 || s.len() != 4) return 4;
             if (s.capacity < 4 || s.capacity() < 4) return 5;
-            if (s.data == null || s.data[0] != 'a') return 6;
-            if (v.data == null || v.data[0] != 'a') return 7;
+            if (s.data == nullptr || s.data[0] != 'a') return 6;
+            if (v.data == nullptr || v.data[0] != 'a') return 7;
             string_view mid = v[1:3];
             if (mid.len != 2 || mid[0] != 'b' || mid[1] != 'c') return 8;
             int32[] sl = a[1:3];

@@ -236,7 +236,7 @@ TEST_F(StringOwnershipE2E, PassByValueIndependent) {
 }
 
 // I4 (D6): `return s;`（局部 string）→ 移动——返回值独占缓冲、源存储置零，
-// 双 destroy 安全（moved-from s 的 free(null) 无害）。
+// 双 destroy 安全（moved-from s 的 free(nullptr) 无害）。
 TEST_F(StringOwnershipE2E, ReturnMovesLocal) {
     EXPECT_EQ(runSource(R"(
         string f() {
@@ -360,7 +360,7 @@ TEST_F(StringOwnershipE2E, BraceInitStringFieldCopies) {
     )", "own_struct_brace.cdd"), 0);
 }
 
-// Found issue（I4 review）: 未初始化 `string s;` 零初始化 {null,0,0}——
+// Found issue（I4 review）: 未初始化 `string s;` 零初始化 {nullptr,0,0}——
 // fresh 赋值 free 守卫安全（不 free 野指针）、值正确、destroy 一次即安全。
 TEST_F(StringOwnershipE2E, UninitializedStringLocalAssignSafe) {
     EXPECT_EQ(runSource(R"(
@@ -582,7 +582,7 @@ TEST_F(StringOwnershipE2E, ResultAssignErrToOkReleasesOldError) {
 }
 
 // 同上——valid→invalid 释放并置零后，再 invalid→valid 不得双 free（value 槽
-// 已零化，assign helper 的 free(null) 无害），值正确。
+// 已零化，assign helper 的 free(nullptr) 无害），值正确。
 TEST_F(StringOwnershipE2E, OptionalInvalidateThenRevalidateSafe) {
     EXPECT_EQ(runSource(R"(
         struct T { optional<string> o; };

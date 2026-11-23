@@ -2,7 +2,7 @@
 // Import with `import std.mem;` and use as `std::alloc(...)` etc.
 //
 // The backing allocator is mimalloc (bundled in thirdparty/mimalloc and linked
-// by the driver). Allocation failure returns null; no exceptions/abort.
+// by the driver). Allocation failure returns nullptr; no exceptions/abort.
 // Owned containers use explicit init/destroy (C semantics).
 module std.mem;
 
@@ -82,7 +82,7 @@ bool is_aligned(void* p, usize align) {
 
 void* aligned_alloc(usize align, usize size) {
     if (align == 0 || (align & (align - 1)) != 0) {
-        return null;
+        return nullptr;
     }
     return mi_malloc_aligned(size, align);
 }
@@ -103,20 +103,20 @@ void* alignmalloc(usize size, usize align) {
 
 // ----- placement construction (caller-owned storage, no allocation) -----
 
-// Carve an aligned sub-range out of `buffer`. Returns null when the buffer is
-// null, the alignment is not a power of two, or the range does not fit.
+// Carve an aligned sub-range out of `buffer`. Returns nullptr when the buffer is
+// nullptr, the alignment is not a power of two, or the range does not fit.
 void* placement_alloc(void* buffer, usize capacity, usize size, usize align) {
-    if (buffer == null || align == 0 || (align & (align - 1)) != 0) {
-        return null;
+    if (buffer == nullptr || align == 0 || (align & (align - 1)) != 0) {
+        return nullptr;
     }
     usize base = (usize)buffer;
     usize start = align_up(base, align);
     if (start < base) {
-        return null;
+        return nullptr;
     }
     usize offset = start - base;
     if (offset > capacity || size > capacity - offset) {
-        return null;
+        return nullptr;
     }
     return (void*)start;
 }
@@ -124,8 +124,8 @@ void* placement_alloc(void* buffer, usize capacity, usize size, usize align) {
 // Construct a value in caller-provided storage. This is the POD analogue of
 // placement new; it performs no allocation and does not run destructors.
 template<typename T> T* placement_new(void* buffer, T value) {
-    if (buffer == null) {
-        return null;
+    if (buffer == nullptr) {
+        return nullptr;
     }
     T* p = (T*)buffer;
     *p = value;
@@ -158,28 +158,28 @@ Allocator allocator_default() {
     a.alloc_fn = default_alloc;
     a.resize_fn = default_resize;
     a.free_fn = default_free;
-    a.ctx = null;
+    a.ctx = nullptr;
     return a;
 }
 
 void* allocator_alloc(Allocator* a, usize size) {
-    if (a == null) return null;
+    if (a == nullptr) return nullptr;
     void* (*fn)(void*, usize) = a->alloc_fn;
-    if (fn == null) return null;
+    if (fn == nullptr) return nullptr;
     return fn(a->ctx, size);
 }
 
 void* allocator_resize(Allocator* a, void* ptr, usize size) {
-    if (a == null) return null;
+    if (a == nullptr) return nullptr;
     void* (*fn)(void*, void*, usize) = a->resize_fn;
-    if (fn == null) return null;
+    if (fn == nullptr) return nullptr;
     return fn(a->ctx, ptr, size);
 }
 
 void allocator_free(Allocator* a, void* ptr) {
-    if (a == null) return;
+    if (a == nullptr) return;
     void (*fn)(void*, void*) = a->free_fn;
-    if (fn == null) return;
+    if (fn == nullptr) return;
     fn(a->ctx, ptr);
 }
 
@@ -203,10 +203,10 @@ void* arena_alloc(Arena* a, usize size, usize align) {
     }
     usize start = align_up(a->used, align);
     if (start > a->cap) {
-        return null;
+        return nullptr;
     }
     if (size > a->cap - start) {
-        return null;
+        return nullptr;
     }
     char* p = (char*)a->base;
     a->used = start + size;
@@ -228,16 +228,16 @@ void arena_reset(Arena* a) {
 Arena arena_create(usize cap) {
     Arena a;
     a.base = mi_malloc(cap);
-    a.cap = a.base == null ? 0 : cap;
+    a.cap = a.base == nullptr ? 0 : cap;
     a.used = 0;
     return a;
 }
 
 void arena_destroy(Arena* a) {
-    if (a->base != null) {
+    if (a->base != nullptr) {
         mi_free(a->base);
     }
-    a->base = null;
+    a->base = nullptr;
     a->cap = 0;
     a->used = 0;
 }
@@ -254,13 +254,13 @@ struct Pool {
 };
 
 void pool_init(Pool* p, usize block_size, usize align) {
-    p->free_list = null;
+    p->free_list = nullptr;
     p->block_size = block_size;
     p->block_align = align == 0 ? 1 : align;
 }
 
 void* pool_alloc(Pool* p) {
-    if (p->free_list != null) {
+    if (p->free_list != nullptr) {
         void* block = p->free_list;
         p->free_list = *(void**)block;
         return block;
@@ -269,7 +269,7 @@ void* pool_alloc(Pool* p) {
 }
 
 void pool_free(Pool* p, void* block) {
-    if (block == null) {
+    if (block == nullptr) {
         return;
     }
     *(void**)block = p->free_list;
@@ -278,12 +278,12 @@ void pool_free(Pool* p, void* block) {
 
 void pool_destroy(Pool* p) {
     void* cur = p->free_list;
-    while (cur != null) {
+    while (cur != nullptr) {
         void* next = *(void**)cur;
         mi_free(cur);
         cur = next;
     }
-    p->free_list = null;
+    p->free_list = nullptr;
 }
 
 } // namespace std

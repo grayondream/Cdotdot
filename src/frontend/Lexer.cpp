@@ -89,13 +89,13 @@ static const std::unordered_map<std::string, TokenType> keywordMap = {
 
     // ===== 布尔（如果你支持）=====
     {"bool", TokenType::TOKEN_BOOL},
-    // Review 2.3: `null` is the sole null-pointer spelling. `nullptr` is no
-    // longer a keyword (it resolves as an ordinary unknown identifier).
+    // `nullptr` is the sole null-pointer spelling. `null` is no longer a
+    // keyword (it resolves as an ordinary unknown identifier).
 
     // ===== 新增关键字 =====
     {"true", TokenType::TOKEN_TRUE},
     {"false", TokenType::TOKEN_FALSE},
-    {"null", TokenType::TOKEN_NULL},
+    {"nullptr", TokenType::TOKEN_NULL},
     {"namespace", TokenType::TOKEN_NAMESPACE},
     {"module", TokenType::TOKEN_MODULE},
     {"import", TokenType::TOKEN_IMPORT},

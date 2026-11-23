@@ -116,7 +116,7 @@ TEST_F(SliceE2ETest, DecayThroughAssignment) {
     )", "test_slice_assign.cdd"), 0);
 }
 
-// TYP-12 D3: an uninitialized slice variable is the empty slice {null, 0}.
+// TYP-12 D3: an uninitialized slice variable is the empty slice {nullptr, 0}.
 TEST_F(SliceE2ETest, UninitializedSliceIsEmpty) {
     EXPECT_EQ(runSource(R"(
         int64 probe(int32[] s) { return s.len; }

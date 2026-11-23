@@ -131,8 +131,8 @@ TEST_F(ExprLiteralsE2E, OffsetofValueUsedInComputation) {
 TEST_F(ExprLiteralsE2E, NullPointerIsNullPointerConstant) {
     EXPECT_EQ(runSource(R"(
         int32 main() {
-            int32* p = null;
-            if (p != null) return 1;
+            int32* p = nullptr;
+            if (p != nullptr) return 1;
             if (p != 0) return 2;
             return 0;
         }
@@ -142,7 +142,7 @@ TEST_F(ExprLiteralsE2E, NullPointerIsNullPointerConstant) {
 TEST_F(ExprLiteralsE2E, NullPointerInBoolContext) {
     EXPECT_EQ(runSource(R"(
         int32 main() {
-            int32* p = null;
+            int32* p = nullptr;
             if (!p) return 0;
             return 1;
         }

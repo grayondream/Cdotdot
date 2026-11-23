@@ -16,17 +16,17 @@ template<typename T> struct Deque {
     usize len;
 
     void init() {
-        this->data = null;
+        this->data = nullptr;
         this->cap = 0;
         this->head = 0;
         this->len = 0;
     }
 
     void destroy() {
-        if (this->data != null) {
+        if (this->data != nullptr) {
             std::dealloc(this->data);
         }
-        this->data = null;
+        this->data = nullptr;
         this->cap = 0;
         this->head = 0;
         this->len = 0;
@@ -49,7 +49,7 @@ template<typename T> struct Deque {
             nc = nc * 2;
         }
         T* np = (T*)std::alloc_zeroed(nc, compile_time.size_of(T));
-        if (np == null) {
+        if (np == nullptr) {
             return false;
         }
         usize i = 0;
@@ -58,7 +58,7 @@ template<typename T> struct Deque {
             np[i] = this->data[src];
             i = i + 1;
         }
-        if (this->data != null) {
+        if (this->data != nullptr) {
             std::dealloc(this->data);
         }
         this->data = np;
@@ -93,7 +93,7 @@ template<typename T> struct Deque {
         }
         usize tail = (this->head + this->len - 1) & (this->cap - 1);
         this->len = this->len - 1;
-        if (out != null) {
+        if (out != nullptr) {
             *out = this->data[tail];
         }
         return true;
@@ -103,7 +103,7 @@ template<typename T> struct Deque {
         if (this->len == 0) {
             return false;
         }
-        if (out != null) {
+        if (out != nullptr) {
             *out = this->data[this->head];
         }
         this->head = (this->head + 1) & (this->cap - 1);

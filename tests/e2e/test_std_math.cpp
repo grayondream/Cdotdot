@@ -171,7 +171,7 @@ TEST_F(StdMathTest, GlobalExternNotReachableViaNamespace) {
         import std.math;
         int32 main() {
             void* p = std::malloc(100);
-            return p != null ? 0 : 1;
+            return p != nullptr ? 0 : 1;
         }
     )", "math_f2.cdd");
     ASSERT_NE(ast, nullptr);

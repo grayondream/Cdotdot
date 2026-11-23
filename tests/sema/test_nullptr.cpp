@@ -1,4 +1,4 @@
-// `null` must be a distinct null-pointer literal, not the integer constant 0.
+// `nullptr` must be a distinct null-pointer literal, not the integer constant 0.
 // Integer 0 keeps its C null-pointer-constant meaning.
 #include <gtest/gtest.h>
 
@@ -41,13 +41,13 @@ bool hasError(const AnalyzeResult& result, const std::string& needle) {
 } // namespace
 
 TEST(NullLiteral, DoesNotConvertToIntegerOrBool) {
-    auto intInit = analyzeSource("int32 main() { int32 x = null; return x; }");
+    auto intInit = analyzeSource("int32 main() { int32 x = nullptr; return x; }");
     EXPECT_TRUE(hasError(intInit, "nullptr") || hasError(intInit, "incompatible"));
-    auto boolInit = analyzeSource("int32 main() { bool b = null; return b ? 1 : 0; }");
+    auto boolInit = analyzeSource("int32 main() { bool b = nullptr; return b ? 1 : 0; }");
     EXPECT_TRUE(hasError(boolInit, "nullptr") || hasError(boolInit, "incompatible"));
-    auto floatInit = analyzeSource("int32 main() { float64 f = null; return 0; }");
+    auto floatInit = analyzeSource("int32 main() { float64 f = nullptr; return 0; }");
     EXPECT_TRUE(hasError(floatInit, "nullptr") || hasError(floatInit, "incompatible"));
-    auto intReturn = analyzeSource("int32 f() { return null; } int32 main() { return f(); }");
+    auto intReturn = analyzeSource("int32 f() { return nullptr; } int32 main() { return f(); }");
     EXPECT_TRUE(hasError(intReturn, "nullptr") || hasError(intReturn, "incompatible"));
 }
 
@@ -55,11 +55,11 @@ TEST(NullLiteral, ConvertsToObjectVoidAndFunctionPointers) {
     auto result = analyzeSource(R"(
         void noop() {}
         int32 main() {
-            int32* p = null;
-            const int32* cp = null;
-            void* v = null;
-            void (*fp)() = null;
-            return p == null && cp == null && v == null && fp == null ? 0 : 1;
+            int32* p = nullptr;
+            const int32* cp = nullptr;
+            void* v = nullptr;
+            void (*fp)() = nullptr;
+            return p == nullptr && cp == nullptr && v == nullptr && fp == nullptr ? 0 : 1;
         }
     )");
     EXPECT_TRUE(result.errors.empty());
@@ -67,7 +67,7 @@ TEST(NullLiteral, ConvertsToObjectVoidAndFunctionPointers) {
 
 TEST(NullLiteral, IntegerZeroRemainsNullPointerConstant) {
     auto result = analyzeSource(
-        "int32 main() { int32* p = 0; return p == null ? 0 : 1; }");
+        "int32 main() { int32* p = 0; return p == nullptr ? 0 : 1; }");
     EXPECT_TRUE(result.errors.empty());
 }
 
@@ -75,13 +75,13 @@ TEST(NullLiteral, OverloadPicksPointerOverIntegerAndBool) {
     auto pointerVsInt = analyzeSource(R"(
         int32 pick(int32 x) { return 1; }
         int32 pick(int32* p) { return 2; }
-        int32 main() { return pick(null); }
+        int32 main() { return pick(nullptr); }
     )");
     EXPECT_TRUE(pointerVsInt.errors.empty());
     auto pointerVsBool = analyzeSource(R"(
         int32 pick(bool b) { return 1; }
         int32 pick(int32* p) { return 2; }
-        int32 main() { return pick(null); }
+        int32 main() { return pick(nullptr); }
     )");
     EXPECT_TRUE(pointerVsBool.errors.empty());
 }
@@ -90,26 +90,26 @@ TEST(NullLiteral, VoidAndObjectPointerOverloadsAreAmbiguous) {
     auto result = analyzeSource(R"(
         int32 pick(void* p) { return 1; }
         int32 pick(int32* p) { return 2; }
-        int32 main() { return pick(null); }
+        int32 main() { return pick(nullptr); }
     )");
     EXPECT_TRUE(hasError(result, "ambiguous"));
 }
 
 TEST(NullLiteral, BooleanParameterDoesNotAcceptNull) {
     auto result = analyzeSource(
-        "int32 take(bool b) { return b ? 1 : 0; } int32 main() { return take(null); }");
+        "int32 take(bool b) { return b ? 1 : 0; } int32 main() { return take(nullptr); }");
     EXPECT_TRUE(hasError(result, "no matching") || hasError(result, "nullptr"));
 }
 
 TEST(NullLiteral, ComparisonRules) {
     auto ok = analyzeSource(R"(
         int32 main() {
-            int32* p = null;
-            return p == null && null == p && null == null && null == 0 && 0 == null ? 0 : 1;
+            int32* p = nullptr;
+            return p == nullptr && nullptr == p && nullptr == nullptr && nullptr == 0 && 0 == nullptr ? 0 : 1;
         }
     )");
     EXPECT_TRUE(ok.errors.empty());
-    auto bad = analyzeSource("int32 main() { return null == 1 ? 0 : 1; }");
+    auto bad = analyzeSource("int32 main() { return nullptr == 1 ? 0 : 1; }");
     EXPECT_TRUE(hasError(bad, "comparison") || hasError(bad, "nullptr"));
 }
 
@@ -117,14 +117,14 @@ TEST(NullLiteral, TernaryWithPointerProducesPointer) {
     auto ok = analyzeSource(R"(
         int32 main() {
             bool c = true;
-            int32* q = null;
-            int32* p = c ? null : q;
-            return p == null ? 0 : 1;
+            int32* q = nullptr;
+            int32* p = c ? nullptr : q;
+            return p == nullptr ? 0 : 1;
         }
     )");
     EXPECT_TRUE(ok.errors.empty());
     auto bad = analyzeSource(
-        "int32 main() { bool c = true; int32 x = c ? null : 1; return x; }");
+        "int32 main() { bool c = true; int32 x = c ? nullptr : 1; return x; }");
     EXPECT_TRUE(hasError(bad, "ternary") || hasError(bad, "nullptr"));
 }
 
@@ -132,7 +132,7 @@ TEST(NullLiteral, NullDefaultArgumentOnMethod) {
     auto result = analyzeSource(R"(
         class CNullDefault {
         public:
-            int32 read(int32* p = null) { return p == null ? 0 : 1; }
+            int32 read(int32* p = nullptr) { return p == nullptr ? 0 : 1; }
         };
         int32 main() { CNullDefault c; return c.read(); }
     )");
@@ -141,12 +141,12 @@ TEST(NullLiteral, NullDefaultArgumentOnMethod) {
 
 TEST(NullLiteral, NullDefaultArgumentOnlyForPointers) {
     auto ok = analyzeSource(R"(
-        int32 read(int32* p = null) { return p == null ? 0 : 1; }
+        int32 read(int32* p = nullptr) { return p == nullptr ? 0 : 1; }
         int32 main() { return read(); }
     )");
     EXPECT_TRUE(ok.errors.empty());
     auto bad = analyzeSource(R"(
-        int32 read(int32 x = null) { return x; }
+        int32 read(int32 x = nullptr) { return x; }
         int32 main() { return read(); }
     )");
     EXPECT_TRUE(hasError(bad, "nullptr") || hasError(bad, "default"));

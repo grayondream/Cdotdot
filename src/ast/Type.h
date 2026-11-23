@@ -19,7 +19,7 @@ enum class AccessLevel {
 
 enum class TypeKind {
     Void,
-    // Distinct null-pointer literal type (`null`), not integer 0.  This
+    // Distinct null-pointer literal type (`nullptr`), not integer 0.  This
     // type exists only on expressions and is never declarable.
     Nullptr,
     Char,

@@ -115,14 +115,14 @@ void section_aliases() {
     println("== 2. using ==");
     Integer n = 7;
     Point p = {1, 2};
-    IntPtr ip = null;
+    IntPtr ip = nullptr;
     IntArr arr = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     Opt o = {true, 42};
     Size s = 9;
     Speed sp = 3.25;
     check(n == 7, "using int32");
     check(p.x + p.y == 3, "anonymous struct alias");
-    check(ip == null, "pointer alias");
+    check(ip == nullptr, "pointer alias");
     int32 dx = 3; IntPtr dpx = &dx; *dpx = 4; check(dx == 4, "pointer alias deref");
     // 数组别名：下标 / sizeof / slice 退化全部可用。
     check(arr[0] == 0 && arr[9] == 9, "array alias subscript");
@@ -329,7 +329,7 @@ void section_pointers() {
     check(sorted == 1, "qsort callback");
     int32 key = 4;
     int32* found = (int32*)bsearch(&key, ns, 5, 4, cmp_int);
-    check(found != null && *found == 4, "bsearch callback");
+    check(found != nullptr && *found == 4, "bsearch callback");
 }
 
 // ---------------------------------------------------------------------------
@@ -701,7 +701,7 @@ void section_asm() {
 void section_libc() {
     println("== 20. libc binding ==");
     void* p = malloc(64);
-    check(p != null, "malloc");
+    check(p != nullptr, "malloc");
     char* buf = (char*)p;
     const char* src = "hello";                 // literal → const char* (read-only)
     memcpy(buf, src, 5);
@@ -724,7 +724,7 @@ compile_time int32 g_ctexpr = 10 * 4 + 2;
 int32 g_zero;
 int32 g_init = 5;
 int32 g_counter;
-int32[] g_slice;                                   // 未初始化全局切片 = {null, 0}
+int32[] g_slice;                                   // 未初始化全局切片 = {nullptr, 0}
 
 class Bag {
 public:
@@ -991,7 +991,7 @@ void* mt_worker(void* arg) {
     for (int64 i = 0; i < n; i = i + 1) {
         mt_counter.fetch_add(1);
     }
-    return null;
+    return nullptr;
 }
 
 void section_atomic_thread() {

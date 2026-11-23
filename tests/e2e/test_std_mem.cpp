@@ -99,7 +99,7 @@ TEST_F(StdMemTest, AllocReturnsNonNull) {
         import std.mem;
         int32 main() {
             void* p = std::alloc(16);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             std::dealloc(p);
             return 0;
         }
@@ -111,7 +111,7 @@ TEST_F(StdMemTest, AllocZeroedClearsMemory) {
         import std.mem;
         int32 main() {
             int32* p = (int32*)std::alloc_zeroed(2, 4);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if (p[0] != 0 || p[1] != 0) return 2;
             std::dealloc(p);
             return 0;
@@ -124,10 +124,10 @@ TEST_F(StdMemTest, ResizePreservesData) {
         import std.mem;
         int32 main() {
             int32* p = (int32*)std::alloc(4);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             p[0] = 42;
             int32* q = (int32*)std::resize(p, 64);
-            if (q == null) return 2;
+            if (q == nullptr) return 2;
             if (q[0] != 42) return 3;
             std::dealloc(q);
             return 0;
@@ -153,7 +153,7 @@ TEST_F(StdMemTest, IsAligned) {
         import std.mem;
         int32 main() {
             void* p = std::aligned_alloc(16, 32);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if (!std::is_aligned(p, 16)) return 2;
             // 偏移 1 字节后不再 16 对齐。
             void* off = (void*)((usize)p + 1);
@@ -169,7 +169,7 @@ TEST_F(StdMemTest, AlignedAllocIsAligned) {
         import std.mem;
         int32 main() {
             void* p = std::aligned_alloc(64, 128);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if ((usize)p % 64 != 0) return 2;
             std::aligned_free(p);
             return 0;
@@ -181,9 +181,9 @@ TEST_F(StdMemTest, AlignedAllocFailsOnBadAlignment) {
     EXPECT_EQ(runWithImports(R"(
         import std.mem;
         int32 main() {
-            // 非 2 的幂对齐：posix_memalign 返回 EINVAL → aligned_alloc 返回 null。
+            // 非 2 的幂对齐：posix_memalign 返回 EINVAL → aligned_alloc 返回 nullptr。
             void* p = std::aligned_alloc(24, 128);
-            return p == null ? 0 : 1;
+            return p == nullptr ? 0 : 1;
         }
     )", "mem_alignfail.cdd"), 0);
 }
@@ -194,7 +194,7 @@ TEST_F(StdMemTest, BackendIsMimalloc) {
         int32 main() {
             if (std::backend_name() != "mimalloc") return 1;
             void* p = std::alloc(8);
-            if (p == null) return 2;
+            if (p == nullptr) return 2;
             std::dealloc(p);
             return 0;
         }
@@ -207,9 +207,9 @@ TEST_F(StdMemTest, AllocatorInterface) {
         int32 main() {
             std::Allocator a = std::allocator_default();
             void* p = std::allocator_alloc(&a, 16);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             p = std::allocator_resize(&a, p, 64);
-            if (p == null) return 2;
+            if (p == nullptr) return 2;
             std::allocator_free(&a, p);
             return 0;
         }
@@ -224,14 +224,14 @@ TEST_F(StdMemTest, ArenaBumpAllocator) {
             std::Arena a;
             std::arena_init(&a, buf, 256);
             void* p = std::arena_alloc(&a, 16, 8);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if (!std::is_aligned(p, 8)) return 2;
             void* q = std::arena_alloc(&a, 32, 8);
-            if (q == null || q == p) return 3;
+            if (q == nullptr || q == p) return 3;
             if (std::arena_remaining(&a) == 0) return 4;
             std::arena_reset(&a);
             if (std::arena_remaining(&a) != 256) return 5;
-            if (std::arena_alloc(&a, 512, 8) != null) return 6;
+            if (std::arena_alloc(&a, 512, 8) != nullptr) return 6;
             return 0;
         }
     )", "mem_arena.cdd"), 0);
@@ -245,7 +245,7 @@ TEST_F(StdMemTest, PoolReusesBlocks) {
             std::pool_init(&p, 32, 16);
             void* a = std::pool_alloc(&p);
             void* b = std::pool_alloc(&p);
-            if (a == null || b == null || a == b) return 1;
+            if (a == nullptr || b == nullptr || a == b) return 1;
             std::pool_free(&p, a);
             void* c = std::pool_alloc(&p);
             if (c != a) return 2;
@@ -262,16 +262,16 @@ TEST_F(StdMemTest, AlignedMallocAliases) {
         import std.mem;
         int32 main() {
             void* p = std::aligned_malloc(32, 16);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if (!std::is_aligned(p, 16)) return 2;
             std::aligned_free(p);
 
             void* q = std::alignmalloc(32, 32);
-            if (q == null) return 3;
+            if (q == nullptr) return 3;
             if (!std::is_aligned(q, 32)) return 4;
             std::aligned_free(q);
 
-            if (std::aligned_malloc(32, 24) != null) return 5;
+            if (std::aligned_malloc(32, 24) != nullptr) return 5;
             return 0;
         }
     )", "mem_aligned_malloc.cdd"), 0);
@@ -284,12 +284,12 @@ TEST_F(StdMemTest, PlacementNewScalarAndAggregate) {
         int32 main() {
             int32 buf[4];
             int32* x = std::placement_new<int32>((void*)buf, 42);
-            if (x == null || *x != 42) return 1;
+            if (x == nullptr || *x != 42) return 1;
 
             Pair pbuf;
             Pair pv = {7, 8};
             Pair* y = std::placement_new<Pair>((void*)&pbuf, pv);
-            if (y == null || y->a != 7 || y->b != 8) return 2;
+            if (y == nullptr || y->a != 7 || y->b != 8) return 2;
             return 0;
         }
     )", "mem_placement_new.cdd"), 0);
@@ -301,14 +301,14 @@ TEST_F(StdMemTest, PlacementAllocStaysInBuffer) {
         int32 main() {
             char buf[64];
             void* p = std::placement_alloc((void*)buf, 64, 16, 16);
-            if (p == null) return 1;
+            if (p == nullptr) return 1;
             if (!std::is_aligned(p, 16)) return 2;
             usize off = (usize)p - (usize)buf;
             if (off + 16 > 64) return 3;
 
-            if (std::placement_alloc((void*)buf, 8, 16, 16) != null) return 4;
-            if (std::placement_alloc((void*)buf, 64, 16, 24) != null) return 5;
-            if (std::placement_alloc(null, 64, 16, 16) != null) return 6;
+            if (std::placement_alloc((void*)buf, 8, 16, 16) != nullptr) return 4;
+            if (std::placement_alloc((void*)buf, 64, 16, 24) != nullptr) return 5;
+            if (std::placement_alloc(nullptr, 64, 16, 16) != nullptr) return 6;
             return 0;
         }
     )", "mem_placement_alloc.cdd"), 0);

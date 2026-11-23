@@ -96,13 +96,13 @@ static int runWithImports(const std::string& source, const std::string& filename
 TEST_F(StdThreadTest, JoinableAndIds) {
     EXPECT_EQ(runWithImports(R"(
         import std.thread;
-        void* noop(void* arg) { return null; }
+        void* noop(void* arg) { return nullptr; }
         int32 main() {
             std::Thread t;
             t.init();
             if (t.joinable()) return 1;
             if (t.get_id() != 0) return 2;
-            if (!t.start(noop, null)) return 3;
+            if (!t.start(noop, nullptr)) return 3;
             if (!t.joinable()) return 4;
             if (t.get_id() == 0) return 5;
             usize id = t.get_id();
@@ -120,21 +120,21 @@ TEST_F(StdThreadTest, JoinableAndIds) {
 TEST_F(StdThreadTest, RepeatedLifecycleReturnsFalse) {
     EXPECT_EQ(runWithImports(R"(
         import std.thread;
-        void* noop(void* arg) { return null; }
+        void* noop(void* arg) { return nullptr; }
         int32 main() {
             std::Thread t;
             t.init();
             if (t.join()) return 10;
             if (t.detach()) return 11;
-            if (!t.start(noop, null)) return 1;
-            if (t.start(noop, null)) return 2;
+            if (!t.start(noop, nullptr)) return 1;
+            if (t.start(noop, nullptr)) return 2;
             if (!t.join()) return 3;
             if (t.join()) return 4;
             if (t.detach()) return 5;
 
             std::Thread d;
             d.init();
-            if (!d.start(noop, null)) return 6;
+            if (!d.start(noop, nullptr)) return 6;
             if (!d.detach()) return 7;
             if (d.join()) return 8;
             if (d.detach()) return 9;
@@ -151,12 +151,12 @@ TEST_F(StdThreadTest, DetachRunsToCompletion) {
         std::Atomic<bool> done = {false};
         void* worker(void* arg) {
             done.store(true);
-            return null;
+            return nullptr;
         }
         int32 main() {
             std::Thread t;
             t.init();
-            if (!t.start(worker, null)) return 1;
+            if (!t.start(worker, nullptr)) return 1;
             if (!t.detach()) return 2;
             for (int32 i = 0; i < 1000; i = i + 1) {
                 if (done.load()) return 0;
@@ -197,7 +197,7 @@ TEST_F(StdThreadTest, ThreadLocalIsPerThread) {
             tls = tls + 1;
             tls = tls + 1;
             results[id] = tls;
-            return null;
+            return nullptr;
         }
         int32 main() {
             std::Thread t0; std::Thread t1; std::Thread t2; std::Thread t3;
@@ -228,7 +228,7 @@ TEST_F(StdThreadTest, AtomicCounterStress) {
             for (int64 i = 0; i < n; i = i + 1) {
                 counter.fetch_add(1);
             }
-            return null;
+            return nullptr;
         }
         int32 main() {
             std::Thread t0; std::Thread t1; std::Thread t2; std::Thread t3;
@@ -252,7 +252,7 @@ TEST_F(StdThreadTest, StartJoinPassesArgument) {
         int64 seen = 0;
         void* worker(void* arg) {
             seen = (int64)arg;
-            return null;
+            return nullptr;
         }
         int32 main() {
             std::Thread t;
@@ -275,16 +275,16 @@ TEST_F(StdThreadTest, MutexProtectsCounter) {
                 counter = counter + 1;
                 m.unlock();
             }
-            return null;
+            return nullptr;
         }
         int32 main() {
             m.init();
             std::Thread t0; std::Thread t1; std::Thread t2; std::Thread t3;
             t0.init(); t1.init(); t2.init(); t3.init();
-            if (!t0.start(worker, null)) return 1;
-            if (!t1.start(worker, null)) return 2;
-            if (!t2.start(worker, null)) return 3;
-            if (!t3.start(worker, null)) return 4;
+            if (!t0.start(worker, nullptr)) return 1;
+            if (!t1.start(worker, nullptr)) return 2;
+            if (!t2.start(worker, nullptr)) return 3;
+            if (!t3.start(worker, nullptr)) return 4;
             if (!t0.join()) return 5;
             if (!t1.join()) return 6;
             if (!t2.join()) return 7;
@@ -331,14 +331,14 @@ TEST_F(StdThreadTest, ConditionVariableSignalAndBroadcast) {
             }
             released = released + 1;
             m.unlock();
-            return null;
+            return nullptr;
         }
         int32 main() {
             m.init();
             cv.init();
             std::Thread t;
             t.init();
-            if (!t.start(waiter, null)) return 1;
+            if (!t.start(waiter, nullptr)) return 1;
             m.lock();
             while (!ready) {
                 if (!cv.wait(&m)) return 2;

@@ -120,8 +120,8 @@ TEST_F(AnnotationSemantics, DeprecatedFieldW3004) {
 TEST_F(AnnotationSemantics, NonNullLiteralNullW3005) {
     EXPECT_TRUE(hasWarning(
         "int32 f([[nonnull]] int32* p) { return *p; }\n"
-        "int32 main() { return f(null); }",
-        "null passed to nonnull parameter 'p' of 'f'"));
+        "int32 main() { return f(nullptr); }",
+        "nullptr passed to nonnull parameter 'p' of 'f'"));
 }
 
 // ---- P1-05 / T7 硬化（回归 pin）----

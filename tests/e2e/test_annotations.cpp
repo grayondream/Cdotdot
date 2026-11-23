@@ -191,7 +191,7 @@ TEST_F(AnnotationLayoutE2E, NonNullParamAttrIR) {
     // 经 param attr 检查：遍历函数参数。
     Lexer lexer("ann_nn_attr.cdd",
                 "int32 f([[nonnull]] int32* p) { return *p; }\n"
-                "int32 main() { return f(null); }");
+                "int32 main() { return f(nullptr); }");
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
     auto ast = parser.parse();

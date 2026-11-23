@@ -92,7 +92,7 @@
 |---|---|---|
 | `constexpr` | `[removed]` | 见 §2；定向迁移诊断保留 |
 | `true` / `false` | `[impl]` | 布尔字面量 |
-| `null` | `[impl]` | 唯一空指针字面量；`nullptr` 不再是关键字（Review 2.3） |
+| `nullptr` | `[impl]` | 唯一空指针字面量；`null` 不再是关键字 |
 | `comptime` | `[remove]` | 统一并入 `compile_time`；token 已移除（CT-01 / NG-12 / DEC-18） |
 | `compile_time` | `[impl]` | 上下文关键字：声明修饰符（函数/变量）+ 编译期命名空间 |
 | `compile_only` | `[impl]` | 上下文关键字：仅编译期自由函数；无运行期符号（CT-24） |

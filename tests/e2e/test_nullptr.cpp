@@ -69,21 +69,21 @@ TEST_F(NullLiteralE2E, OverloadPicksPointerOverInteger) {
     EXPECT_EQ(runSource(R"(
         int32 pick(int32 x) { return 1; }
         int32 pick(int32* p) { return 2; }
-        int32 main() { return pick(null) - 2; }
+        int32 main() { return pick(nullptr) - 2; }
     )"), 0);
 }
 
 TEST_F(NullLiteralE2E, NullPointerAssignmentAndComparison) {
     EXPECT_EQ(runSource(R"(
         int32 main() {
-            int32* p = null;
-            if (p != null) return 1;
-            if (!(null == p)) return 2;
-            if (!(null == null)) return 3;
-            if (!(null == 0)) return 4;
-            if (null) return 5;
-            if (!(!null)) return 6;
-            if (null && true) return 7;
+            int32* p = nullptr;
+            if (p != nullptr) return 1;
+            if (!(nullptr == p)) return 2;
+            if (!(nullptr == nullptr)) return 3;
+            if (!(nullptr == 0)) return 4;
+            if (nullptr) return 5;
+            if (!(!nullptr)) return 6;
+            if (nullptr && true) return 7;
             return 0;
         }
     )"), 0);
@@ -91,7 +91,7 @@ TEST_F(NullLiteralE2E, NullPointerAssignmentAndComparison) {
 
 TEST_F(NullLiteralE2E, NullDefaultArgument) {
     EXPECT_EQ(runSource(R"(
-        int32 read(int32* p = null) { return p == null ? 0 : 1; }
+        int32 read(int32* p = nullptr) { return p == nullptr ? 0 : 1; }
         int32 main() { return read(); }
     )"), 0);
 }
@@ -100,23 +100,23 @@ TEST_F(NullLiteralE2E, TernaryNullProducesNullPointer) {
     EXPECT_EQ(runSource(R"(
         int32 main() {
             bool c = true;
-            int32* q = null;
-            int32* p = c ? null : q;
-            return p == null ? 0 : 1;
+            int32* q = nullptr;
+            int32* p = c ? nullptr : q;
+            return p == nullptr ? 0 : 1;
         }
     )"), 0);
 }
 
 TEST_F(NullLiteralE2E, VoidPointerReturnAndFunctionPointerInit) {
     EXPECT_EQ(runSource(R"(
-        void* empty() { return null; }
+        void* empty() { return nullptr; }
         void noop() {}
         int32 main() {
-            if (empty() != null) return 1;
-            void (*fp)() = null;
-            if (fp != null) return 2;
+            if (empty() != nullptr) return 1;
+            void (*fp)() = nullptr;
+            if (fp != nullptr) return 2;
             fp = noop;
-            if (fp == null) return 3;
+            if (fp == nullptr) return 3;
             return 0;
         }
     )"), 0);

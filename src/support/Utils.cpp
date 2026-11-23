@@ -60,7 +60,7 @@ static std::string TokenTypeToString(TokenType type) {
         case TokenType::TOKEN_OPERATOR:   return "operator";
         case TokenType::TOKEN_TRUE:       return "true";
         case TokenType::TOKEN_FALSE:      return "false";
-        case TokenType::TOKEN_NULL:       return "null";
+        case TokenType::TOKEN_NULL:       return "nullptr";
         case TokenType::TOKEN_NAMESPACE:  return "namespace";
         case TokenType::TOKEN_MODULE:     return "module";
         case TokenType::TOKEN_IMPORT:     return "import";

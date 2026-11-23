@@ -383,7 +383,7 @@ int conversionRank(Type* from, Type* to) {
         return 1;
     }
 
-    // The null pointer constant (an integer, incl. the `null` literal) converts
+    // The integer null pointer constant (literal 0) converts
     // to any pointer; ranked worst so real pointer arguments win.
     if (fw > 0 && to->kind == TypeKind::Pointer) return 3;
 

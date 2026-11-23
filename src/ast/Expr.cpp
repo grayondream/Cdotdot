@@ -611,7 +611,7 @@ llvm::Value* BinaryExprAST::codegen(CodegenContext& ctx) {
         return builder.CreateGEP(elemTy, ptrVal, idxVal, "ptradd");
     }
 
-    // Pointer vs integer comparison (e.g. `p == null`, `0 != p`): compare as
+    // Pointer vs integer comparison (e.g. `p == nullptr`, `0 != p`): compare as
     // integers of pointer width. `opType` below would otherwise be the pointer
     // type and leave the integer operand unconverted (ICmp type assert), while
     // converting to the integer's own width could truncate the address.
@@ -1686,7 +1686,7 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
                 // int/char defaults to a float value when the param is FP).
                 if (dv.isNull) {
                     if (!paramLLVM->isPointerTy()) {
-                        LOGE("null default argument for non-pointer param {}", i);
+                        LOGE("nullptr default argument for non-pointer param {}", i);
                         return nullptr;
                     }
                     defVal = llvm::ConstantPointerNull::get(
@@ -1882,7 +1882,7 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
                 // char default must produce a float constant.
                 if (dv.isNull) {
                     if (!paramLLVM->isPointerTy()) {
-                        LOGE("null default argument for non-pointer param {}", i);
+                        LOGE("nullptr default argument for non-pointer param {}", i);
                         return nullptr;
                     }
                     defVal = llvm::ConstantPointerNull::get(

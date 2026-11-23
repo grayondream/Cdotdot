@@ -16,7 +16,7 @@ string env_get(string_view name) {
     string n = string.new(name);
     char* v = getenv(n.data);
     n.destroy();
-    if (v == null) {
+    if (v == nullptr) {
         return string.new("");
     }
     return string.new(str_from_c(v));

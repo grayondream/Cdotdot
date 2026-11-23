@@ -17,8 +17,8 @@ template<typename K> struct HashSet {
     bool (*eq_fn)(K, K);
 
     void init(usize (*hash)(K), bool (*eq)(K, K)) {
-        this->keys = null;
-        this->states = null;
+        this->keys = nullptr;
+        this->states = nullptr;
         this->cap = 0;
         this->len = 0;
         this->tombstones = 0;
@@ -27,12 +27,12 @@ template<typename K> struct HashSet {
     }
 
     void destroy() {
-        if (this->keys != null) {
+        if (this->keys != nullptr) {
             std::dealloc(this->keys);
             std::dealloc(this->states);
         }
-        this->keys = null;
-        this->states = null;
+        this->keys = nullptr;
+        this->states = nullptr;
         this->cap = 0;
         this->len = 0;
         this->tombstones = 0;
@@ -59,9 +59,9 @@ template<typename K> struct HashSet {
         usize oldCap = this->cap;
         K* newKeys = (K*)std::alloc_zeroed(newCap, compile_time.size_of(K));
         uint8* newStates = (uint8*)std::alloc_zeroed(newCap, compile_time.size_of(uint8));
-        if (newKeys == null || newStates == null) {
-            if (newKeys != null) std::dealloc(newKeys);
-            if (newStates != null) std::dealloc(newStates);
+        if (newKeys == nullptr || newStates == nullptr) {
+            if (newKeys != nullptr) std::dealloc(newKeys);
+            if (newStates != nullptr) std::dealloc(newStates);
             return false;
         }
         this->keys = newKeys;
@@ -76,7 +76,7 @@ template<typename K> struct HashSet {
             }
             i = i + 1;
         }
-        if (oldKeys != null) {
+        if (oldKeys != nullptr) {
             std::dealloc(oldKeys);
             std::dealloc(oldStates);
         }
@@ -85,7 +85,7 @@ template<typename K> struct HashSet {
 
     void insert_raw(K key) {
         usize (*hf)(K) = this->hash_fn;
-        if (hf == null) return;
+        if (hf == nullptr) return;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
@@ -128,7 +128,7 @@ template<typename K> struct HashSet {
         }
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
-        if (hf == null || ef == null) return false;
+        if (hf == nullptr || ef == nullptr) return false;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
@@ -151,7 +151,7 @@ template<typename K> struct HashSet {
         }
         usize (*hf)(K) = this->hash_fn;
         bool (*ef)(K, K) = this->eq_fn;
-        if (hf == null || ef == null) return false;
+        if (hf == nullptr || ef == nullptr) return false;
         usize at = hf(key) & (this->cap - 1);
         usize probes = 0;
         while (probes < this->cap) {
@@ -172,7 +172,7 @@ template<typename K> struct HashSet {
     }
 
     void clear() {
-        if (this->states != null) {
+        if (this->states != nullptr) {
             std::bytes_set(this->states, 0, this->cap * compile_time.size_of(uint8));
         }
         this->len = 0;

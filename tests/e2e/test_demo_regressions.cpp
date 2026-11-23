@@ -543,7 +543,7 @@ TEST_F(DemoRegressionE2E, SelfReferentialClassPointerField) {
         class Node { public: Node* next; int32 v; };
         int32 main() {
             Node a; Node b;
-            a.next = &b; a.v = 1; b.next = null; b.v = 2;
+            a.next = &b; a.v = 1; b.next = nullptr; b.v = 2;
             return a.next->v + a.v - 3;
         }
     )", "reg_class_self.cdd"), 0);

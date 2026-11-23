@@ -657,8 +657,8 @@ TEST_F(CodegenContextTest, ConstexprLocalVariable) {
     ctx->popScope();
 }
 
-// Found issue（I4 review）: 未初始化 `string` 局部必须零初始化 {null,0,0}——
-// D7 赋值 helper 的 free 守卫（oldPtr != null）绝不能看到野指针。扩展
+// Found issue（I4 review）: 未初始化 `string` 局部必须零初始化 {nullptr,0,0}——
+// D7 赋值 helper 的 free 守卫（oldPtr != nullptr）绝不能看到野指针。扩展
 // TYP-12 D3 的 slice 零初始化先例到 string / 含 string 聚合。
 TEST_F(CodegenContextTest, UninitializedStringLocalIsZeroed) {
     ctx->pushScope(); // Simulate being inside a function

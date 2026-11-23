@@ -198,7 +198,7 @@ type  := 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 's'
 
 ## 11. `std.mem`（P1-09 / STD-05）`[impl]`
 
-`import std.mem;` 后用 `std::alloc(...)` 等。分配失败返回 `null`（C 语义，调用方
+`import std.mem;` 后用 `std::alloc(...)` 等。分配失败返回 `nullptr`（C 语义，调用方
 检查），不抛异常不 abort。**后端固定为 mimalloc**（`thirdparty/mimalloc`，静态链接，
 `MI_OVERRIDE=ON`）；`std::backend_name()` 返回 `"mimalloc"`。模块自包含 extern 声明。
 
@@ -206,21 +206,21 @@ type  := 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 's'
 |---|---|
 | `void* alloc(usize size)` | `mi_malloc` |
 | `void* alloc_zeroed(usize count, usize size)` | `mi_calloc`（零初始化） |
-| `void* resize(void* p, usize size)` | `mi_realloc`（保内容，失败 null 原指针有效） |
+| `void* resize(void* p, usize size)` | `mi_realloc`（保内容，失败返回 nullptr，原指针有效） |
 | `void  dealloc(void* p)` | `mi_free` |
 | `void* bytes_copy/move/set/compare(...)` | libc 字节操作（STD-03，不调元素析构） |
 | `usize align_up(usize n, usize align)` | 向上取整到 2 的幂倍数 |
 | `usize align_down(usize n, usize align)` | 向下取整到 2 的幂倍数 |
 | `bool is_aligned(void* p, usize align)` | 指针按 2 的幂对齐检测 |
-| `void* aligned_alloc(usize align, usize size)` | `mi_malloc_aligned`（失败 null） |
+| `void* aligned_alloc(usize align, usize size)` | `mi_malloc_aligned`（失败返回 nullptr） |
 | `void* aligned_malloc(usize size, usize align)` | size-first 别名；等价于 `aligned_alloc(align,size)` |
 | `void* alignmalloc(usize size, usize align)` | `aligned_malloc` 的短别名 |
 | `void  aligned_free(void* p)` | `mi_free` |
-| `void* placement_alloc(void* buffer, usize capacity, usize size, usize align)` | 在调用方缓冲区内切出对齐子区间；越界/非法对齐返回 null |
+| `void* placement_alloc(void* buffer, usize capacity, usize size, usize align)` | 在调用方缓冲区内切出对齐子区间；越界/非法对齐返回 nullptr |
 | `template<typename T> T* placement_new(void* buffer, T value)` | 在调用方存储中构造 POD 值；不分配、不析构 |
 
 `align_up/down/is_aligned` 的 `align` 须为 2 的幂（非 2 的幂行为未定义）；
-`aligned_alloc`/`aligned_malloc` 的 `align` 必须为 2 的幂（违反返回 null）。
+`aligned_alloc`/`aligned_malloc` 的 `align` 必须为 2 的幂（违反返回 nullptr）。
 `placement_alloc` 只做地址计算，不拥有缓冲区；`placement_new` 的存储须已对齐到
 `alignof(T)`，生命周期由调用方管理。
 
@@ -242,7 +242,7 @@ void  allocator_free(Allocator*, void*);
 
 struct Arena { void* base; usize cap; usize used; };
 void  arena_init(Arena*, void* base, usize cap);
-void* arena_alloc(Arena*, usize size, usize align); // OOB -> null
+void* arena_alloc(Arena*, usize size, usize align); // OOB -> nullptr
 usize arena_remaining(Arena*);
 void  arena_reset(Arena*);
 Arena arena_create(usize cap);   // mimalloc-backed

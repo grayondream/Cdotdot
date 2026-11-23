@@ -65,7 +65,7 @@ bool parse_i64(string_view s, int32 base, int64* out) {
     if (!any) {
         return false;
     }
-    if (out != null) {
+    if (out != nullptr) {
         *out = neg ? -value : value;
     }
     return true;
@@ -109,7 +109,7 @@ bool parse_u64(string_view s, int32 base, uint64* out) {
     if (!any) {
         return false;
     }
-    if (out != null) {
+    if (out != nullptr) {
         *out = value;
     }
     return true;
@@ -120,7 +120,7 @@ bool parse_i32(string_view s, int32* out) {
     if (!parse_i64(s, 10, &v)) {
         return false;
     }
-    if (out != null) {
+    if (out != nullptr) {
         *out = (int32)v;
     }
     return true;
@@ -191,7 +191,7 @@ bool parse_float64(string_view s, float64* out) {
     if (neg) {
         value = -value;
     }
-    if (out != null) {
+    if (out != nullptr) {
         *out = value;
     }
     return true;
