@@ -251,15 +251,26 @@ static bool isConstCharPointer(Type* t) {
 
 int conversionRank(Type* from, Type* to) {
     if (!from || !to) return -1;
-    if (typesEqual(from, to)) return 0;
+    if (typesIdentical(adjustParameterTypeForSignature(from),
+                       adjustParameterTypeForSignature(to)))
+        return 0;
 
     while (from->kind == TypeKind::Typedef) from = static_cast<TypedefType*>(from)->aliasedType;
     while (to->kind == TypeKind::Typedef) to = static_cast<TypedefType*>(to)->aliasedType;
     if (!from || !to) return -1;
-    if (typesEqual(from, to)) return 0;
+    if (typesIdentical(adjustParameterTypeForSignature(from),
+                       adjustParameterTypeForSignature(to)))
+        return 0;
 
-    // Arrays decay to a pointer to their first element.
-    if (from->kind == TypeKind::Array && to->kind == TypeKind::Pointer) return 1;
+    // Arrays decay to a pointer to their first element, preserving element
+    // qualifiers.  A void target ranks below a qualified object pointer.
+    if (from->kind == TypeKind::Array && to->kind == TypeKind::Pointer) {
+        if (!pointerConversionAllowed(to, from)) return -1;
+        const Type* targetBase = to->base;
+        while (targetBase && targetBase->kind == TypeKind::Typedef)
+            targetBase = static_cast<const TypedefType*>(targetBase)->aliasedType;
+        return targetBase && targetBase->kind == TypeKind::Void ? 2 : 1;
+    }
 
     // TYP-12: an array decays to a slice view of itself (zero-copy).
     if (from->kind == TypeKind::Array && to->kind == TypeKind::Slice &&
@@ -320,10 +331,21 @@ int conversionRank(Type* from, Type* to) {
         if (hasFallback) return 3;
     }
 
-    // C pointer conversions (MEM-10): any pointer converts to any other pointer,
-    // notably `T*` <-> `void*`. Ranked worse than exact/widening conversions so
-    // overload resolution still prefers a specific parameter type.
-    if (from->kind == TypeKind::Pointer && to->kind == TypeKind::Pointer) return 2;
+    // C pointer conversions: compatible targets with qualifier addition, plus
+    // object <-> void*.  A qualified object pointer ranks above void*.
+    if (from->kind == TypeKind::Pointer && to->kind == TypeKind::Pointer) {
+        if (!pointerConversionAllowed(to, from)) return -1;
+        const Type* targetBase = to->base;
+        const Type* sourceBase = from->base;
+        while (targetBase && targetBase->kind == TypeKind::Typedef)
+            targetBase = static_cast<const TypedefType*>(targetBase)->aliasedType;
+        while (sourceBase && sourceBase->kind == TypeKind::Typedef)
+            sourceBase = static_cast<const TypedefType*>(sourceBase)->aliasedType;
+        return (targetBase && targetBase->kind == TypeKind::Void) ||
+                       (sourceBase && sourceBase->kind == TypeKind::Void)
+                   ? 2
+                   : 1;
+    }
 
     // A function designator converts to a pointer to a compatible function.
     if (from->kind == TypeKind::Function && to->kind == TypeKind::Pointer &&

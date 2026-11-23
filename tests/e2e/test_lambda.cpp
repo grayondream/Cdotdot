@@ -185,7 +185,7 @@ TEST_F(LambdaE2E, QsortComparator) {
         int32 main() {
             int32 arr[5] = { 5, 2, 4, 1, 3 };
             // 无捕获 lambda 作 qsort 比较器（经函数指针实参传递）。
-            int32 (*fp)(const void*, const void*) = [](const void* a, const void* b) {
+            int32 (*fp)(void*, void*) = [](void* a, void* b) {
                 int32 x = *(const int32*)a;
                 int32 y = *(const int32*)b;
                 if (x < y) return -1;

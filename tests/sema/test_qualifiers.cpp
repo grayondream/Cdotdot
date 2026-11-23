@@ -129,3 +129,74 @@ TEST(QualifierSignature, RestrictIsNotAnOverload) {
     EXPECT_EQ(typeToMangledSignature(parseTypeOnly("int32* restrict")),
               typeToMangledSignature(parseTypeOnly("int32*")));
 }
+
+TEST(QualifierPointers, HelperRejectsDrop) {
+    EXPECT_FALSE(pointerConversionAllowed(parseTypeOnly("int32*"),
+                                          parseTypeOnly("const int32*")));
+    EXPECT_FALSE(pointerConversionAllowed(parseTypeOnly("const int32**"),
+                                          parseTypeOnly("int32**")));
+}
+
+TEST(QualifierPointers, AcceptsQualifierAddition) {
+    EXPECT_TRUE(analyzeSource(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* p = &x;
+            const int32* cp = p;
+            volatile int32* vp = p;
+            int32** pp = &p;
+            int32* const* cpp = pp;
+            return *cp + *vp + **cpp;
+        }
+    )").errors.empty());
+}
+
+TEST(QualifierPointers, RejectsQualifierDrop) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 x = 1;
+            const int32* p = &x;
+            int32* q = p;
+            return *q;
+        }
+    )"), "const"));
+}
+
+TEST(QualifierPointers, RejectsUnsafeMultiLevelAddition) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* p = &x;
+            int32** pp = &p;
+            const int32** cpp = pp;
+            return 0;
+        }
+    )"), "const"));
+}
+
+TEST(QualifierPointers, RejectsDifferentPointeeTypes) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            float64 f = 1.0;
+            float64* fp = &f;
+            int32* ip = fp;
+            return 0;
+        }
+    )"), "float64"));
+}
+
+TEST(QualifierPointers, RejectsArbitraryIntegerToPointer) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 x = 5;
+            int32* p = x;
+            return 0;
+        }
+    )"), "pointer"));
+}
+
+TEST(QualifierPointers, AcceptsNullPointerConstant) {
+    EXPECT_TRUE(analyzeSource(
+        "int32 main() { int32* p = 0; return p == null ? 0 : 1; }")
+                    .errors.empty());
+}

@@ -5,6 +5,7 @@
 #include "ast/Stmt.h"
 #include "ast/Decl.h"
 #include "ast/Type.h"
+#include "ast/TypeUtils.h"
 #include "ast/Mangle.h"
 #include "sema/TemplateRegistry.h"
 #include "support/Utf8.h"
@@ -25,6 +26,21 @@ static Type* stripTypedef(Type* type) {
         type = static_cast<TypedefType*>(type)->aliasedType;
     }
     return type;
+}
+
+// C null pointer constants are integer constant expressions with value zero.
+// The parser represents both `0` and `null` as NumberExprAST(0).
+static bool isNullPointerConstantExpr(const ExprAST* expr) {
+    auto* number = dynamic_cast<const NumberExprAST*>(expr);
+    return number && number->value == 0 && number->valueHi == 0;
+}
+
+// Assignment diagnostics are passed the assignment node; other callers pass
+// the value expression itself.
+static const ExprAST* assignedValueExpr(const ExprAST& node) {
+    if (auto* assignment = dynamic_cast<const AssignmentExprAST*>(&node))
+        return assignment->rhs.get();
+    return &node;
 }
 
 // PAR-11 review C2: an inferred lambda return type must follow the ordinary
@@ -519,14 +535,20 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
         if (isDerivedFrom(right, left)) return true;
         return false;
     }
-    if (left->kind == right->kind) return true;
+    if (left->kind == right->kind && left->kind != TypeKind::Pointer) return true;
     if (isArithmeticType(left) && isArithmeticType(right)) return true;
-    if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Pointer) return true;
+    if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Pointer)
+        return pointerConversionAllowed(left, right);
+    // Integer-to-pointer remains type-compatible only so the expression-aware
+    // callers can recognize the null pointer constant; non-zero integers are
+    // rejected at initialization/assignment/argument/return sites.
     if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Int32) return true;
     if (left->kind == TypeKind::Int32 && right->kind == TypeKind::Pointer) return true;
     // Arrays decay to a pointer to their first element.
-    if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Array) return true;
-    if (left->kind == TypeKind::Array && right->kind == TypeKind::Pointer) return true;
+    if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Array)
+        return pointerConversionAllowed(left, right);
+    if (left->kind == TypeKind::Array && right->kind == TypeKind::Pointer)
+        return pointerConversionAllowed(right, left);
     return false;
 }
 
@@ -545,6 +567,12 @@ Type* SemanticAnalyzer::getCommonType(Type* left, Type* right) const {
 
 std::string SemanticAnalyzer::typeToString(Type* type) const {
     if (!type) return "<unknown>";
+    // Keep qualifiers at the level where they belong.  The old switch only
+    // looked at a pointer's own isConst and dropped pointee const entirely.
+    if (type->kind == TypeKind::Pointer || type->isConst || type->isVolatile ||
+        type->isRestrict) {
+        return qualifiedTypeToString(type);
+    }
     switch (type->kind) {
         case TypeKind::Void: return "void";
         case TypeKind::Char: return "char";
@@ -862,7 +890,16 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
     if (lhsS->kind == TypeKind::Slice && rhsS->kind == TypeKind::Array)
         return typesEqual(static_cast<SliceType*>(lhsS)->elementType,
                           static_cast<ArrayType*>(rhsS)->elementType) ? lhsRaw : nullptr;
-    if (lhsS->kind == rhsS->kind) {
+    if (lhsS->kind == TypeKind::Pointer &&
+        (rhsS->kind == TypeKind::Pointer || rhsS->kind == TypeKind::Array)) {
+        if (pointerConversionAllowed(lhsS, rhsS)) return lhsRaw;
+        emitError(DiagnosticCode::SemIncompatibleAssignment,
+                  "cannot assign '" + typeToString(rhs) + "' to '" +
+                      typeToString(lhs) + "': incompatible pointer targets or qualifiers",
+                  node);
+        return nullptr;
+    }
+    if (lhsS->kind == rhsS->kind && lhsS->kind != TypeKind::Pointer) {
         // P1-02 (TYP-13/14): Optional/Result are strict in their type
         // arguments — the generic same-kind rule would mis-accept
         // int32? = float64?.
@@ -883,8 +920,17 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
         }
         return lhsRaw;
     }
-    if (isPointerOrArray(lhsS) && isPointerOrArray(rhsS)) return lhsRaw;
-    if (isPointerOrArray(lhsS) && isIntegerType(rhsS)) return lhsRaw;
+    if (lhsS->kind == TypeKind::Pointer && isIntegerType(rhsS)) {
+        if (!isNullPointerConstantExpr(assignedValueExpr(node))) {
+            emitError(DiagnosticCode::SemIncompatibleAssignment,
+                      "cannot convert non-zero integer '" + typeToString(rhs) +
+                          "' to pointer '" + typeToString(lhs) +
+                          "'; only the null pointer constant is allowed",
+                      node);
+            return nullptr;
+        }
+        return lhsRaw;
+    }
     // P1-06 (FMT-03): str -> char* implicit byte view (drops the UTF-8
     // guarantee and the length); char* -> str is NOT implicit (use
     // str_from_c). Targets of type str are same-kind (above).
@@ -8186,6 +8232,16 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                               node);
                     return;
                 }
+            }
+            Type* targetStripped = stripTypedef(node.type);
+            if (targetStripped && targetStripped->kind == TypeKind::Pointer &&
+                initType && isIntegerType(initType) &&
+                !isNullPointerConstantExpr(node.initExpr.get())) {
+                emitError("cannot initialize pointer '" + node.name + "' from non-zero integer '" +
+                              typeToString(initType) +
+                              "'; only the null pointer constant is allowed",
+                          node);
+                return;
             }
             if (initType && !typesCompatible(node.type, initType) &&
                 !hasUserConversion(initType, node.type)) {

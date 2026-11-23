@@ -36,6 +36,14 @@ Type* adjustParameterTypeForSignature(const Type* type);
 // compared.  restrict is deliberately excluded: it is optimization-only.
 bool typesIdentical(const Type* a, const Type* b);
 
+// C pointer assignment compatibility.  The target may add const/volatile at
+// the pointer's immediate pointee level, but may not drop qualifiers.  Deeper
+// qualifiers may not be added unsafely (`int32** -> const int32**` is false;
+// `int32** -> int32* const*` is true).  Void object pointers convert with the
+// same qualifier rule; function pointers do not convert to void*.  restrict is
+// ignored.
+bool pointerConversionAllowed(const Type* target, const Type* source);
+
 // Render qualifiers at the level where they belong, e.g. `const int32*`,
 // `int32* const`, and `const int32* const restrict`.
 std::string qualifiedTypeToString(const Type* type);

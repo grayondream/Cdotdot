@@ -280,6 +280,131 @@ Type* adjustParameterTypeForSignature(const Type* type) {
     return clone;
 }
 
+namespace {
+
+const Type* stripTypedefsForQualifiers(const Type* type) {
+    while (type && type->kind == TypeKind::Typedef)
+        type = static_cast<const TypedefType*>(type)->aliasedType;
+    return type;
+}
+
+bool qualifiersMayBeAdded(const Type* target, const Type* source) {
+    if (source->isConst && !target->isConst) return false;
+    if (source->isVolatile && !target->isVolatile) return false;
+    return true;
+}
+
+const Type* stripTopLevelQualifiers(const Type* type) {
+    if (!type->isConst && !type->isVolatile && !type->isRestrict)
+        return type;
+    Type* clone = cloneType(type);
+    clone->isConst = false;
+    clone->isVolatile = false;
+    clone->isRestrict = false;
+    return clone;
+}
+
+bool isRecordType(const Type* type) {
+    return type && (type->kind == TypeKind::Struct ||
+                    type->kind == TypeKind::Class);
+}
+
+const Type* recordParent(const Type* type) {
+    if (!type) return nullptr;
+    if (type->kind == TypeKind::Struct) {
+        const auto* record = static_cast<const StructType*>(type);
+        if (record->base) return record->base;
+        if (record->baseClass.empty()) return nullptr;
+        if (auto* parent = TypeContext::instance().getStruct(record->baseClass))
+            return parent;
+        if (auto* parent = TypeContext::instance().getClass(record->baseClass))
+            return parent;
+        return nullptr;
+    }
+    if (type->kind == TypeKind::Class) {
+        if (type->base) return type->base;
+        const auto* record = static_cast<const ClassType*>(type);
+        if (record->baseClass.empty()) return nullptr;
+        if (auto* parent = TypeContext::instance().getClass(record->baseClass))
+            return parent;
+        if (auto* parent = TypeContext::instance().getStruct(record->baseClass))
+            return parent;
+        return nullptr;
+    }
+    return nullptr;
+}
+
+bool isDerivedRecord(const Type* derived, const Type* base) {
+    derived = stripTypedefsForQualifiers(derived);
+    base = stripTypedefsForQualifiers(base);
+    if (!isRecordType(derived) || !isRecordType(base)) return false;
+    for (int depth = 0; derived && depth < 64; ++depth) {
+        const std::string* derivedName = nullptr;
+        const std::string* baseName = nullptr;
+        if (derived->kind == TypeKind::Struct)
+            derivedName = &static_cast<const StructType*>(derived)->name;
+        else if (derived->kind == TypeKind::Class)
+            derivedName = &static_cast<const ClassType*>(derived)->name;
+        if (base->kind == TypeKind::Struct)
+            baseName = &static_cast<const StructType*>(base)->name;
+        else if (base->kind == TypeKind::Class)
+            baseName = &static_cast<const ClassType*>(base)->name;
+        if (derivedName && baseName && *derivedName == *baseName) return true;
+        derived = recordParent(derived);
+    }
+    return false;
+}
+
+} // namespace
+
+bool pointerConversionAllowed(const Type* target, const Type* source) {
+    target = stripTypedefsForQualifiers(target);
+    source = stripTypedefsForQualifiers(source);
+    if (!target || !source || target->kind != TypeKind::Pointer) return false;
+
+    const Type* targetBase = stripTypedefsForQualifiers(target->base);
+    const Type* sourceBase = nullptr;
+    if (source->kind == TypeKind::Pointer) {
+        sourceBase = stripTypedefsForQualifiers(source->base);
+    } else if (source->kind == TypeKind::Array) {
+        // Array-to-pointer decay preserves the element qualifiers.
+        sourceBase = stripTypedefsForQualifiers(
+            static_cast<const ArrayType*>(source)->elementType);
+    } else {
+        return false;
+    }
+    if (!targetBase || !sourceBase) return false;
+
+    const bool targetFunction = targetBase->kind == TypeKind::Function;
+    const bool sourceFunction = sourceBase->kind == TypeKind::Function;
+    if (targetFunction || sourceFunction) {
+        // Function pointers do not convert to/from object pointers.
+        return targetFunction && sourceFunction &&
+               typesIdentical(targetBase, sourceBase);
+    }
+
+    if (targetBase->kind == TypeKind::Void ||
+        sourceBase->kind == TypeKind::Void) {
+        return qualifiersMayBeAdded(targetBase, sourceBase);
+    }
+
+    if (targetBase->kind != sourceBase->kind) {
+        return qualifiersMayBeAdded(targetBase, sourceBase) &&
+               isDerivedRecord(sourceBase, targetBase);
+    }
+    if (!qualifiersMayBeAdded(targetBase, sourceBase)) return false;
+
+    // Only the immediate pointee level may gain qualifiers.  Anything deeper
+    // must already be identical (`int32** -> const int32**` is unsafe).
+    if (typesIdentical(stripTopLevelQualifiers(targetBase),
+                       stripTopLevelQualifiers(sourceBase))) {
+        return true;
+    }
+    // Single-inheritance derived-to-base pointer conversion is safe only at
+    // this immediate level; pointer-to-pointer covariance remains rejected.
+    return isDerivedRecord(sourceBase, targetBase);
+}
+
 bool typesIdentical(const Type* a, const Type* b) {
     if (!a || !b) return a == b;
     if (a->kind != b->kind) return false;
