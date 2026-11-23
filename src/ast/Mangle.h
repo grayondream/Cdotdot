@@ -5,6 +5,9 @@
 class Type;
 
 std::string typeToMangled(Type* type);
+// Signature mangling: applies C parameter adjustment (top-level cv/restrict
+// ignored) and preserves pointee cv and reference-ness.
+std::string typeToMangledSignature(Type* type);
 std::string mangleFunction(const std::string& name, const std::vector<Type*>& paramTypes);
 
 // Mark a function name as having C linkage (extern "C" / extern declarations):

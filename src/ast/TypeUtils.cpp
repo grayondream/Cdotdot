@@ -269,6 +269,17 @@ Type* qualifyTopLevel(const Type* type, bool isConst, bool isVolatile) {
     return qualifyType(type, TypeQualifiers{isConst, isVolatile, false});
 }
 
+Type* adjustParameterTypeForSignature(const Type* type) {
+    if (!type) return nullptr;
+    if (!type->isConst && !type->isVolatile && !type->isRestrict)
+        return const_cast<Type*>(type);
+    Type* clone = cloneType(type);
+    clone->isConst = false;
+    clone->isVolatile = false;
+    clone->isRestrict = false;
+    return clone;
+}
+
 bool typesIdentical(const Type* a, const Type* b) {
     if (!a || !b) return a == b;
     if (a->kind != b->kind) return false;

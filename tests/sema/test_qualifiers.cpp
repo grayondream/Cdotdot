@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ast/Decl.h"
+#include "ast/Mangle.h"
 #include "ast/Type.h"
 #include "ast/TypeUtils.h"
 #include "frontend/Lexer.h"
@@ -106,4 +107,25 @@ TEST(QualifierTypeCore, IdentityDistinguishesPointeeConst) {
                                 parseTypeOnly("int32* const")));
     EXPECT_TRUE(typesIdentical(parseTypeOnly("const int32*"),
                                parseTypeOnly("const int32*")));
+}
+
+TEST(QualifierSignature, TopLevelConstByValueIsNotAnOverload) {
+    EXPECT_EQ(typeToMangledSignature(parseTypeOnly("const int32")),
+              typeToMangledSignature(parseTypeOnly("int32")));
+    EXPECT_TRUE(typesIdentical(
+        adjustParameterTypeForSignature(parseTypeOnly("const int32")),
+        adjustParameterTypeForSignature(parseTypeOnly("int32"))));
+}
+
+TEST(QualifierSignature, PointeeConstIsAnOverload) {
+    EXPECT_NE(typeToMangledSignature(parseTypeOnly("int32*")),
+              typeToMangledSignature(parseTypeOnly("const int32*")));
+    EXPECT_FALSE(typesIdentical(
+        adjustParameterTypeForSignature(parseTypeOnly("int32*")),
+        adjustParameterTypeForSignature(parseTypeOnly("const int32*"))));
+}
+
+TEST(QualifierSignature, RestrictIsNotAnOverload) {
+    EXPECT_EQ(typeToMangledSignature(parseTypeOnly("int32* restrict")),
+              typeToMangledSignature(parseTypeOnly("int32*")));
 }

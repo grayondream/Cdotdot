@@ -1,5 +1,6 @@
 #include "Symbol.h"
 #include "Decl.h"
+#include "ast/TypeUtils.h"
 
 bool typesEqual(Type* a, Type* b) {
     if (!a || !b) return a == b;
@@ -78,6 +79,24 @@ bool typesEqual(Type* a, Type* b) {
         default:
             return true; // All primitive types with same kind are equal
     }
+}
+
+// Function types in overload sets compare their adjusted signatures: by-value
+// top-level cv/restrict is not part of the signature, while pointee cv and
+// reference-ness are.
+static bool functionSignaturesIdentical(const FunctionType* a,
+                                        const FunctionType* b) {
+    if (a->isVarArg != b->isVarArg) return false;
+    if (!typesIdentical(adjustParameterTypeForSignature(a->returnType),
+                        adjustParameterTypeForSignature(b->returnType)))
+        return false;
+    if (a->paramTypes.size() != b->paramTypes.size()) return false;
+    for (size_t i = 0; i < a->paramTypes.size(); ++i) {
+        if (!typesIdentical(adjustParameterTypeForSignature(a->paramTypes[i]),
+                            adjustParameterTypeForSignature(b->paramTypes[i])))
+            return false;
+    }
+    return true;
 }
 
 static int integerWidth(TypeKind kind) {
@@ -418,7 +437,7 @@ bool Scope::declare(const std::string& name, Symbol* sym) {
         if (existing->type->kind == TypeKind::Function && sym->type->kind == TypeKind::Function) {
             auto* existingFunc = static_cast<FunctionType*>(existing->type);
             auto* newFunc = static_cast<FunctionType*>(sym->type);
-            if (typesEqual(existingFunc, newFunc)) {
+            if (functionSignaturesIdentical(existingFunc, newFunc)) {
                 return false; // Duplicate exact signature
             }
         } else if (existing->type->kind != TypeKind::Function && sym->type->kind != TypeKind::Function) {

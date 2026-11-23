@@ -27,6 +27,10 @@ Type* qualifyType(const Type* type, TypeQualifiers qualifiers);
 // type.  Returns the original pointer when neither qualifier is present.
 Type* qualifyTopLevel(const Type* type, bool isConst, bool isVolatile);
 
+// C signature adjustment: top-level const/volatile/restrict on a by-value
+// parameter or return is ignored.  Pointee qualifiers are preserved.
+Type* adjustParameterTypeForSignature(const Type* type);
+
 // Structural type identity.  const/volatile at every level, reference-ness,
 // pointer targets, aggregate names, array lengths, and function signatures are
 // compared.  restrict is deliberately excluded: it is optimization-only.
