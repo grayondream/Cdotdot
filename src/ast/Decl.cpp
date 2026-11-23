@@ -82,7 +82,7 @@ static void storeScalarInitializer(CodegenContext& ctx, llvm::Value* dest,
     if (expr.isLValue) v = readLValue(ctx, expr, v);
     if (targetType) v = ctx.castValue(v, expr.type, ctx.getLLVMType(targetType));
     if (destLLVM) v = ctx.castValue(v, destLLVM);
-    ctx.getBuilder().CreateStore(v, dest);
+    ctx.storeValue(dest, v, targetType);
 }
 
 // Emit stores for `{a, b, ...}` into an already allocated aggregate `dest`.
@@ -1274,7 +1274,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                             ((st->kind == TypeKind::Struct || st->kind == TypeKind::Class) &&
                              ctx.aggregateHasStringField(st));
             if (needZero) {
-                ctx.getBuilder().CreateStore(llvm::Constant::getNullValue(llvmType), alloca);
+                ctx.storeValue(alloca, llvm::Constant::getNullValue(llvmType), type);
             }
         }
     }
@@ -1308,7 +1308,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
             Type* st = stripTypedefs(type);
             if (st && st->kind == TypeKind::Slice) {
                 llvm::Value* slVal = emitSliceLiteral(ctx, type, initList);
-                if (slVal) ctx.getBuilder().CreateStore(slVal, alloca);
+                if (slVal) ctx.storeValue(alloca, slVal, type);
                 sliceLiteralInit = true;
             }
         }
@@ -1321,7 +1321,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                          elem->kind == TypeKind::Union ||
                          elem->kind == TypeKind::Optional ||
                          elem->kind == TypeKind::Result)) {
-                ctx.getBuilder().CreateStore(llvm::Constant::getNullValue(llvmType), alloca);
+                ctx.storeValue(alloca, llvm::Constant::getNullValue(llvmType), type);
             }
             emitAggregateInitializer(ctx, alloca, type, initList);
         } else {
@@ -1364,7 +1364,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                     ctx.emitAggregateStringCopy(alloca, initVal, strType,
                                                 /*assign=*/false);
                 } else {
-                    ctx.getBuilder().CreateStore(initVal, alloca);
+                    ctx.storeValue(alloca, initVal, type);
                 }
             }
         }
@@ -1597,13 +1597,14 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
 
     if (initList) {
         ArrayType astArray(elementType, effectiveSize);
-        ctx.getBuilder().CreateStore(llvm::Constant::getNullValue(arrType), alloca);
+        ctx.storeValue(alloca, llvm::Constant::getNullValue(arrType), &astArray);
         emitAggregateInitializer(ctx, alloca, &astArray, initList);
     } else if (initExpr) {
         llvm::Value* initVal = initExpr->codegen(ctx);
         if (initVal) {
             if (initExpr->isLValue) initVal = readLValue(ctx, *initExpr, initVal);
-            ctx.getBuilder().CreateStore(initVal, alloca);
+            ArrayType astArray(elementType, effectiveSize);
+            ctx.storeValue(alloca, initVal, &astArray);
         }
     }
 

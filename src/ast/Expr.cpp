@@ -1728,9 +1728,7 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
         while (objT && objT->kind == TypeKind::Typedef)
             objT = static_cast<TypedefType*>(objT)->aliasedType;
         if (objT && objT->kind == TypeKind::Pointer && object->isLValue) {
-            auto& builder = ctx.getBuilder();
-            objVal = builder.CreateLoad(llvm::PointerType::get(ctx.getContext(), 0), objVal,
-                                        "objderef");
+            objVal = ctx.loadValue(objVal, objT);
         }
     }
 
@@ -2421,25 +2419,19 @@ llvm::Value* ArrayAccessExprAST::codegen(CodegenContext& ctx) {
     } else if (arrType && arrType->kind == TypeKind::Slice) {
         // TYP-12: load the {ptr, len} view, then index through its pointer.
         auto* st = static_cast<SliceType*>(arrType);
-        auto* sliceTy = ctx.getLLVMType(arrType);
-        auto& builder = ctx.getBuilder();
-        if (array->isLValue) arrVal = builder.CreateLoad(sliceTy, arrVal);
+        if (array->isLValue) arrVal = ctx.loadValue(arrVal, arrType);
         if (st->elementType) elemTy = ctx.getLLVMType(st->elementType);
-        arrVal = builder.CreateExtractValue(arrVal, {0}, "slice.ptr");
+        arrVal = ctx.getBuilder().CreateExtractValue(arrVal, {0}, "slice.ptr");
     } else if (arrType && arrType->kind == TypeKind::String) {
         // P1-06 (FMT-02): load the {ptr, len, cap} header, index its buffer.
-        auto* strTy = ctx.getLLVMType(arrType);
-        auto& builder = ctx.getBuilder();
-        if (array->isLValue) arrVal = builder.CreateLoad(strTy, arrVal);
+        if (array->isLValue) arrVal = ctx.loadValue(arrVal, arrType);
         elemTy = llvm::Type::getInt8Ty(ctx.getContext());
-        arrVal = builder.CreateExtractValue(arrVal, {0}, "string.ptr");
+        arrVal = ctx.getBuilder().CreateExtractValue(arrVal, {0}, "string.ptr");
     } else if (arrType && arrType->kind == TypeKind::Str) {
         // P1-06 (FMT-01): load the {ptr, len} header, index its buffer.
-        auto* strTy = ctx.getLLVMType(arrType);
-        auto& builder = ctx.getBuilder();
-        if (array->isLValue) arrVal = builder.CreateLoad(strTy, arrVal);
+        if (array->isLValue) arrVal = ctx.loadValue(arrVal, arrType);
         elemTy = llvm::Type::getInt8Ty(ctx.getContext());
-        arrVal = builder.CreateExtractValue(arrVal, {0}, "str.ptr");
+        arrVal = ctx.getBuilder().CreateExtractValue(arrVal, {0}, "str.ptr");
     }
 
     auto& builder = ctx.getBuilder();
@@ -2797,7 +2789,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
     if (valType && valType->kind == TypeKind::Pointer &&
         valBase && valBase->kind == TypeKind::Union) {
         if (object->isLValue) {
-            objVal = builder.CreateLoad(llvm::PointerType::get(ctx.getContext(), 0), objVal, "deref");
+            objVal = ctx.loadValue(objVal, valType);
         }
         llvm::Type* unionLLVM = ctx.getLLVMType(valBase);
         if (!unionLLVM) return nullptr;
@@ -2854,7 +2846,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         // (a cast, a call result, `&x`, ...); only lvalue objects are addresses
         // of a variable that stores the pointer (MEM-10).
         if (object->isLValue) {
-            objVal = builder.CreateLoad(llvm::PointerType::get(ctx.getContext(), 0), objVal, "deref");
+            objVal = ctx.loadValue(objVal, valType);
         }
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {
@@ -2877,7 +2869,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         auto* classType = static_cast<ClassType*>(valBase);
         // Load the pointer unless the object already produced a pointer value.
         if (object->isLValue) {
-            objVal = builder.CreateLoad(llvm::PointerType::get(ctx.getContext(), 0), objVal, "deref");
+            objVal = ctx.loadValue(objVal, valType);
         }
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {
