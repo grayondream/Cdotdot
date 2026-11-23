@@ -2411,7 +2411,15 @@ llvm::Value* ArrayAccessExprAST::codegen(CodegenContext& ctx) {
         llvm::Value* obj = array->codegen(ctx);
         llvm::Value* idx = index->codegen(ctx);
         if (!obj || !idx) return nullptr;
-        if (!memberOperator) obj = emitRValue(ctx, *array, obj);
+        if (!memberOperator) {
+            Type* objParam = resolvedParamTypes.empty()
+                                 ? nullptr : resolvedParamTypes[0];
+            if (objParam && isReferenceType(objParam)) {
+                obj = ctx.bindReference(*array, obj, objParam);
+            } else {
+                obj = emitRValue(ctx, *array, obj);
+            }
+        }
         idx = emitRValue(ctx, *index, idx);
         return ctx.getBuilder().CreateCall(calleeFn, {obj, idx}, "idxcalltmp");
     }

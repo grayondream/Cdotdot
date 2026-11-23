@@ -408,6 +408,8 @@ public:
     std::string mangledCallee;
     // Member operator[] needs the object address as the implicit `this`.
     bool memberOperator = false;
+    // Declared parameter types of the resolved operator[] (object, index).
+    std::vector<Type*> resolvedParamTypes;
 
     ArrayAccessExprAST(std::unique_ptr<ExprAST> arr, std::unique_ptr<ExprAST> idx)
         : array(std::move(arr)), index(std::move(idx)) {}

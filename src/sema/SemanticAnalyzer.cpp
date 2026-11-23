@@ -5814,9 +5814,16 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
             Symbol* resolved = overloadSet->resolve(params);
             if (resolved && resolved->type &&
                 resolved->type->kind == TypeKind::Function) {
-                node.mangledCallee = mangleFunction("operator[]", params);
-                node.type = static_cast<FunctionType*>(resolved->type)->returnType;
-                node.isLValue = false;
+                auto* ft = static_cast<FunctionType*>(resolved->type);
+                node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
+                node.resolvedParamTypes = ft->paramTypes;
+                if (ft->returnType && isReferenceType(ft->returnType)) {
+                    node.type = referenceReferent(ft->returnType);
+                    node.isLValue = true;
+                } else {
+                    node.type = ft->returnType;
+                    node.isLValue = false;
+                }
                 return;
             }
         }
@@ -5843,6 +5850,7 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
                 auto* ft = static_cast<FunctionType*>(method->type);
                 node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
                 node.memberOperator = true;
+                node.resolvedParamTypes = ft->paramTypes;
                 if (ft->returnType && ft->returnType->isReference) {
                     node.type = ft->returnType->base;
                     node.isLValue = true;

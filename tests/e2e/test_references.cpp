@@ -183,3 +183,29 @@ TEST_F(ReferencesE2E, TemplateReferenceWritesThrough) {
         int32 main() { int32 x = 1; set_ref(x, 6); return x - 6; }
     )"), 0);
 }
+
+TEST_F(ReferencesE2E, MemberOperatorSubscriptIsWritableReference) {
+    EXPECT_EQ(runSource(R"(
+        struct BufferMemberSub {
+            int32 data[2];
+            int32& operator[](int32 i) { return this->data[i]; }
+        };
+        int32 main() {
+            BufferMemberSub b;
+            b[0] = 5;
+            return b.data[0] - 5;
+        }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, FreeOperatorSubscriptIsWritableReference) {
+    EXPECT_EQ(runSource(R"(
+        struct BufferFreeSub { int32 data[2]; };
+        int32& operator[](BufferFreeSub& b, int32 i) { return b.data[i]; }
+        int32 main() {
+            BufferFreeSub b;
+            b[0] = 6;
+            return b.data[0] - 6;
+        }
+    )"), 0);
+}
