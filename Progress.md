@@ -1906,3 +1906,28 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
   - `git diff --check` 无输出。
 - 提交：`bcd3f64`。
+
+
+## 2026-11-23 — 名称修饰补漏：变参、复合限定符、C linkage
+
+- 背景：在符号修饰单射化后继续审查，复现出三类剩余问题：
+  - `f(int32)` 与 `f(int32, ...)` 的符号同为 `f_int32`；`f(0, 5)` 调用变参重载时 codegen 报 “expects 1 args, got 2”，变参定义被静默丢弃。
+  - `slice<const int32>` 与 `const slice<int32>`、`optional<const int32>` 与 `const optional<int32>`、`result<const A,B>` 与 `const result<A,B>`、`const int32[2]` 与 `int32[2]` 的修饰名相同。
+  - C linkage 按裸名字全局生效：`extern int32 f(int32);` 后定义 CDD 重载 `int32 f(int64)`，后者也生成裸 `f`，并覆盖 extern 声明；零参函数与同名全局变量也会共用裸符号（LLVM 仅自动改名而源级符号已不一致）。
+- 修复：
+  - `mangleFunction` 增加 `isVarArg`，变参签名追加 `_vararg`；`CallExprAST`/`MethodCallExprAST` 等新增 `resolvedVarArg`，直接调用、间接调用、函数指针、方法、运算符、constexpr 查表统一传递。
+  - 类型编码把数组/切片/optional/result/函数/指针自身的限定符放到构造器后缀，避免与元素/返回类型的限定符前缀混淆；`using` 别名展开时把外层限定符合并进别名顶层。
+  - C linkage 改为按签名记录：`markCName`/`markNamespaceCName` 接收参数类型与 vararg，`mangleFunction` 只在签名匹配时返回裸 C 名；同名 CDD 重载继续修饰。
+  - `Scope::declare` 拒绝函数与对象同名；函数声明路径对先声明变量后声明函数的情况补诊断，关闭零参函数/全局变量裸符号冲突。
+  - 间接调用/表达式 callee 的 LLVM `FunctionType` 与 vararg 提升使用 `resolvedVarArg`，修复变参函数指针调用。
+  - `docs/spec/abi.md` 更新 C linkage 按签名、`_vararg`、复合限定符后缀规则。
+- 测试：
+  - `TypeNodeTest`：变参/非变参函数名、复合限定符层级、C linkage 仅匹配签名。
+  - `OverloadingE2E`：变参重载调用、extern C 名与 CDD 重载共存。
+  - `SliceSemTest.FunctionAndVariableShareNoOrdinaryIdentifier`：函数/对象同名拒绝。
+- 验证：
+  - 全量 **2144/2144** 通过。
+  - `examples/all_features.cdd` 编译运行输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 提交：`21d0eea`。
