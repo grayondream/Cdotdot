@@ -1,5 +1,6 @@
 #include "CodegenContext.h"
 #include "ast/Type.h"
+#include "ast/TypeUtils.h"
 #include "ast/LayoutBuilder.h"
 #include "ast/Mangle.h"
 #include "ast/Expr.h"
@@ -164,7 +165,7 @@ bool CodegenContext::isGlobalScope() const {
 llvm::Value* CodegenContext::lookupVariable(const std::string& name) {
     Symbol* sym = currentScope()->lookup(name);
     if (!sym || !sym->value) return nullptr;
-    return builder.CreateLoad(getLLVMType(sym->type), sym->value, name);
+    return loadValue(sym->value, sym->type);
 }
 
 llvm::Value* CodegenContext::lookupVariableAddr(const std::string& name) {
@@ -177,10 +178,7 @@ llvm::Value* CodegenContext::loadValue(llvm::Value* ptr, Type* type) {
     if (!ptr) return nullptr;
     if (!ptr->getType()->isPointerTy()) return ptr;
 
-    Type* t = type;
-    while (t && t->kind == TypeKind::Typedef) {
-        t = static_cast<TypedefType*>(t)->aliasedType;
-    }
+    Type* t = stripTypedefPreservingQualifiers(type);
 
     // Arrays decay to a pointer to their first element in value contexts.
     if (t && t->kind == TypeKind::Array) {
@@ -210,6 +208,7 @@ llvm::Value* CodegenContext::loadValue(llvm::Value* ptr, Type* type) {
                 builder.CreateLoad(carrier, addr, "atomic.load");
             load->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
             load->setAlignment(llvm::Align(bits / 8));
+            load->setVolatile(t->isVolatile);
             return valueFromAtomicCarrier(load, t, carrier);
         }
     }
@@ -220,21 +219,29 @@ llvm::Value* CodegenContext::loadValue(llvm::Value* ptr, Type* type) {
     if (t && t->isAtomic) {
         load->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
     }
+    if (t) load->setVolatile(t->isVolatile);
     return load;
+}
+
+void CodegenContext::storeValue(llvm::Value* ptr, llvm::Value* value, Type* type) {
+    if (!ptr || !value) return;
+    Type* t = stripTypedefPreservingQualifiers(type);
+    llvm::StoreInst* store = builder.CreateStore(value, ptr);
+    if (t) store->setVolatile(t->isVolatile);
 }
 
 llvm::Value* CodegenContext::loadBitFieldValue(llvm::Value* unitAddr,
                                                uint64_t bitOffset,
                                                uint32_t bitWidth,
                                                Type* fieldType,
-                                               uint32_t unitBits) {
+                                               uint32_t unitBits,
+                                               bool isVolatile) {
     if (!unitAddr) return nullptr;
     llvm::Type* unit = llvm::Type::getIntNTy(*context, unitBits);
-    Type* ft = fieldType;
-    while (ft && ft->kind == TypeKind::Typedef) {
-        ft = static_cast<TypedefType*>(ft)->aliasedType;
-    }
-    llvm::Value* raw = builder.CreateLoad(unit, unitAddr, "bf.load");
+    Type* ft = stripTypedefPreservingQualifiers(fieldType);
+    llvm::LoadInst* unitLoad = builder.CreateLoad(unit, unitAddr, "bf.load");
+    unitLoad->setVolatile(isVolatile);
+    llvm::Value* raw = unitLoad;
     if (bitOffset != 0) {
         raw = builder.CreateLShr(raw,
                                  llvm::ConstantInt::get(unit, bitOffset),
@@ -258,7 +265,8 @@ void CodegenContext::storeBitFieldValue(llvm::Value* unitAddr,
                                         uint32_t bitWidth,
                                         Type* fieldType,
                                         llvm::Value* val,
-                                        uint32_t unitBits) {
+                                        uint32_t unitBits,
+                                        bool isVolatile) {
     if (!unitAddr || !val) return;
     llvm::Type* unit = llvm::Type::getIntNTy(*context, unitBits);
     // 值扩展/截断到单元位宽（packed 区域单元可宽于基类型）。
@@ -268,7 +276,9 @@ void CodegenContext::storeBitFieldValue(llvm::Value* unitAddr,
     } else if (valBits > unitBits) {
         val = builder.CreateTrunc(val, unit, "bf.narrow");
     }
-    llvm::Value* old = builder.CreateLoad(unit, unitAddr, "bf.old");
+    llvm::LoadInst* oldLoad = builder.CreateLoad(unit, unitAddr, "bf.old");
+    oldLoad->setVolatile(isVolatile);
+    llvm::Value* old = oldLoad;
     // wMask = 低 bitWidth 位全 1；fieldMask = wMask << bitOffset。
     llvm::Value* wMask = llvm::ConstantInt::get(
         unit, llvm::APInt::getLowBitsSet(unitBits, bitWidth));
@@ -277,7 +287,9 @@ void CodegenContext::storeBitFieldValue(llvm::Value* unitAddr,
     llvm::Value* cleared = builder.CreateAnd(old, builder.CreateNot(fieldMask), "bf.clear");
     llvm::Value* v = builder.CreateAnd(val, wMask, "bf.vtrunc");
     v = builder.CreateShl(v, llvm::ConstantInt::get(unit, bitOffset), "bf.vshl");
-    builder.CreateStore(builder.CreateOr(cleared, v, "bf.stored"), unitAddr);
+    llvm::StoreInst* store =
+        builder.CreateStore(builder.CreateOr(cleared, v, "bf.stored"), unitAddr);
+    store->setVolatile(isVolatile);
 }
 
 void CodegenContext::declareVariable(const std::string& name, llvm::Value* alloca, Type* type) {

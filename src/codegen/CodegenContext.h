@@ -42,8 +42,14 @@ public:
     void declareVariable(const std::string& name, llvm::Value* alloca, Type* type);
 
     // Load the value denoted by an lvalue pointer. Arrays decay to a pointer to
-    // their first element instead of being loaded by value.
+    // their first element instead of being loaded by value. A volatile-qualified
+    // type emits a volatile load.
     llvm::Value* loadValue(llvm::Value* ptr, Type* type);
+
+    // Store a source-level value through an lvalue pointer. A volatile-qualified
+    // type emits a volatile store. Compiler bookkeeping stores should keep using
+    // the raw IRBuilder.
+    void storeValue(llvm::Value* ptr, llvm::Value* value, Type* type);
 
     // P1-07 / CG-09: bit-field storage-unit read/write (read-modify-write).
     // unitAddr points at the integer storage unit (materialized LLVM field);
@@ -56,10 +62,10 @@ public:
     // shifts the value in, and stores (no atomicity).
     llvm::Value* loadBitFieldValue(llvm::Value* unitAddr, uint64_t bitOffset,
                                    uint32_t bitWidth, Type* fieldType,
-                                   uint32_t unitBits);
+                                   uint32_t unitBits, bool isVolatile = false);
     void storeBitFieldValue(llvm::Value* unitAddr, uint64_t bitOffset,
                             uint32_t bitWidth, Type* fieldType, llvm::Value* val,
-                            uint32_t unitBits);
+                            uint32_t unitBits, bool isVolatile = false);
 
     llvm::Type* getLLVMType(Type* type);
 

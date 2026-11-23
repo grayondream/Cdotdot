@@ -1,5 +1,6 @@
 #include "Expr.h"
 #include "Type.h"
+#include "TypeUtils.h"
 #include "Symbol.h"
 #include "LayoutBuilder.h"
 #include "codegen/CodegenContext.h"
@@ -91,7 +92,9 @@ static llvm::Value* readLValue(CodegenContext& ctx, ExprAST& e, llvm::Value* v) 
     if (!e.isLValue) return v;
     if (e.isBitFieldAccess()) {
         auto& ma = static_cast<MemberAccessExprAST&>(e);
-        return ctx.loadBitFieldValue(v, ma.bitOffset, ma.bitWidth, e.type, ma.unitBits);
+        Type* t = stripTypedefPreservingQualifiers(e.type);
+        return ctx.loadBitFieldValue(v, ma.bitOffset, ma.bitWidth, e.type,
+                                     ma.unitBits, t && t->isVolatile);
     }
     return ctx.loadValue(v, e.type);
 }
@@ -758,9 +761,11 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
                 return ptrVal;
             }
             // Fallback when the operand type is unknown/lowering cannot tell.
-            llvm::Type* pointeeType = ctx.getLLVMType(opType ? opType->base : nullptr);
-            if (!pointeeType) pointeeType = llvm::Type::getInt8Ty(ctx.getContext());
-            return builder.CreateLoad(pointeeType, ptrVal, "dereftmp");
+            if (!opType || !opType->base) {
+                return builder.CreateLoad(llvm::Type::getInt8Ty(ctx.getContext()),
+                                          ptrVal, "dereftmp");
+            }
+            return ctx.loadValue(ptrVal, opType->base);
         }
         case UnaryOp::PreInc:
         case UnaryOp::PreDec: {
@@ -768,12 +773,16 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
             if (operand->isBitFieldAccess()) {
                 auto* ma = static_cast<MemberAccessExprAST*>(operand.get());
                 Type* ft = stripTypedefsT12(operand->type);
-                llvm::Value* oldVal = ctx.loadBitFieldValue(v, ma->bitOffset, ma->bitWidth, ft, ma->unitBits);
+                Type* qualified = stripTypedefPreservingQualifiers(operand->type);
+                const bool isVolatile = qualified && qualified->isVolatile;
+                llvm::Value* oldVal = ctx.loadBitFieldValue(
+                    v, ma->bitOffset, ma->bitWidth, ft, ma->unitBits, isVolatile);
                 llvm::Value* one = llvm::ConstantInt::get(oldVal->getType(), 1);
                 llvm::Value* newVal = (op == UnaryOp::PreInc)
                     ? builder.CreateAdd(oldVal, one, "preinc")
                     : builder.CreateSub(oldVal, one, "predec");
-                ctx.storeBitFieldValue(v, ma->bitOffset, ma->bitWidth, ft, newVal, ma->unitBits);
+                ctx.storeBitFieldValue(v, ma->bitOffset, ma->bitWidth, ft,
+                                       newVal, ma->unitBits, isVolatile);
                 return newVal;
             }
             // CON-01: atomic operand — atomicrmw add/sub 1 (seq_cst).
@@ -783,11 +792,12 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
                 llvm::Type* carrier = ctx.getAtomicCarrierType(ot, bits);
                 if (carrier) {
                     llvm::Value* one = llvm::ConstantInt::get(carrier, 1);
-                    llvm::Value* rmw = builder.CreateAtomicRMW(
+                    llvm::AtomicRMWInst* rmw = builder.CreateAtomicRMW(
                         op == UnaryOp::PreInc ? llvm::AtomicRMWInst::Add
                                               : llvm::AtomicRMWInst::Sub,
                         v, one, llvm::Align(bits / 8),
                         llvm::AtomicOrdering::SequentiallyConsistent);
+                    rmw->setVolatile(ot->isVolatile);
                     llvm::Value* next =
                         op == UnaryOp::PreInc
                             ? builder.CreateAdd(rmw, one, "preinc")
@@ -801,7 +811,7 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
                 ? ctx.getLLVMType(operand->type)
                 : llvm::Type::getInt32Ty(ctx.getContext());
             if (!loadType) loadType = llvm::Type::getInt32Ty(ctx.getContext());
-            llvm::Value* oldVal = builder.CreateLoad(loadType, v, "preold");
+            llvm::Value* oldVal = ctx.loadValue(v, operand->type);
 
             llvm::Value* newVal = nullptr;
             if (loadType->isPointerTy()) {
@@ -819,7 +829,7 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
                     ? builder.CreateAdd(oldVal, one, "preinc")
                     : builder.CreateSub(oldVal, one, "predec");
             }
-            builder.CreateStore(newVal, v);
+            ctx.storeValue(v, newVal, operand->type);
             return newVal;
         }
         case UnaryOp::AddressOf: return v;
@@ -1861,12 +1871,16 @@ llvm::Value* AssignmentExprAST::codegen(CodegenContext& ctx) {
         auto& builder = ctx.getBuilder();
         llvm::Value* result = readLValue(ctx, *rhs, rhsVal);
         Type* ft = stripTypedefsT12(lhs->type);
+        Type* qualified = stripTypedefPreservingQualifiers(lhs->type);
+        const bool isVolatile = qualified && qualified->isVolatile;
         if (llvm::Type* dest = ctx.getLLVMType(ft)) {
             result = ctx.castValue(result, rhs->type, dest);
         }
         if (op != AssignOp::Assign) {
             // 复合赋值：先读当前位域值（基础类型宽度），运算后 RMW 写回。
-            llvm::Value* cur = ctx.loadBitFieldValue(unitAddr, lma->bitOffset, lma->bitWidth, ft, lma->unitBits);
+            llvm::Value* cur = ctx.loadBitFieldValue(
+                unitAddr, lma->bitOffset, lma->bitWidth, ft, lma->unitBits,
+                isVolatile);
             switch (op) {
                 case AssignOp::AddAssign:   result = builder.CreateAdd(cur, result, "addassign"); break;
                 case AssignOp::SubAssign:   result = builder.CreateSub(cur, result, "subassign"); break;
@@ -1881,7 +1895,8 @@ llvm::Value* AssignmentExprAST::codegen(CodegenContext& ctx) {
                 default: break;
             }
         }
-        ctx.storeBitFieldValue(unitAddr, lma->bitOffset, lma->bitWidth, ft, result, lma->unitBits);
+        ctx.storeBitFieldValue(unitAddr, lma->bitOffset, lma->bitWidth, ft,
+                               result, lma->unitBits, isVolatile);
         return result;
     }
 
@@ -1998,7 +2013,7 @@ llvm::Value* AssignmentExprAST::codegen(CodegenContext& ctx) {
                 builder.CreateCall(freeFn, {oldPtr});
                 builder.CreateBr(storeBB);
                 builder.SetInsertPoint(storeBB);
-                builder.CreateStore(result, lhsVal);
+                ctx.storeValue(lhsVal, result, lhs->type);
             } else {
                 // 活值 → 深拷贝赋值（自赋值守卫 + free 旧缓冲 + 拷贝）。
                 auto savedIP = builder.saveIP();
@@ -2029,11 +2044,12 @@ llvm::Value* AssignmentExprAST::codegen(CodegenContext& ctx) {
             llvm::StoreInst* store = builder.CreateStore(storeVal, lhsVal);
             store->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
             store->setAlignment(llvm::Align(bits / 8));
+            store->setVolatile(lt->isVolatile);
             return result;
         }
     }
 
-    llvm::StoreInst* store = builder.CreateStore(result, lhsVal);
+    ctx.storeValue(lhsVal, result, lhs->type);
     return result;
 }
 
@@ -2321,11 +2337,15 @@ llvm::Value* PostfixIncDecExprAST::codegen(CodegenContext& ctx) {
     if (operand->isBitFieldAccess()) {
         auto* ma = static_cast<MemberAccessExprAST*>(operand.get());
         Type* ft = stripTypedefsT12(operand->type);
-        llvm::Value* oldVal = ctx.loadBitFieldValue(addr, ma->bitOffset, ma->bitWidth, ft, ma->unitBits);
+        Type* qualified = stripTypedefPreservingQualifiers(operand->type);
+        const bool isVolatile = qualified && qualified->isVolatile;
+        llvm::Value* oldVal = ctx.loadBitFieldValue(
+            addr, ma->bitOffset, ma->bitWidth, ft, ma->unitBits, isVolatile);
         llvm::Value* one = llvm::ConstantInt::get(oldVal->getType(), 1);
         llvm::Value* newVal = isIncrement ? builder.CreateAdd(oldVal, one, "postinc")
                                           : builder.CreateSub(oldVal, one, "postdec");
-        ctx.storeBitFieldValue(addr, ma->bitOffset, ma->bitWidth, ft, newVal, ma->unitBits);
+        ctx.storeBitFieldValue(addr, ma->bitOffset, ma->bitWidth, ft,
+                               newVal, ma->unitBits, isVolatile);
         return oldVal;
     }
     // CON-01: atomic operand — atomicrmw add/sub 1; yield the OLD value.
@@ -2335,15 +2355,16 @@ llvm::Value* PostfixIncDecExprAST::codegen(CodegenContext& ctx) {
         llvm::Type* carrier = ctx.getAtomicCarrierType(ot, bits);
         if (carrier) {
             llvm::Value* one = llvm::ConstantInt::get(carrier, 1);
-            llvm::Value* old = builder.CreateAtomicRMW(
+            llvm::AtomicRMWInst* old = builder.CreateAtomicRMW(
                 isIncrement ? llvm::AtomicRMWInst::Add : llvm::AtomicRMWInst::Sub,
                 addr, one, llvm::Align(bits / 8),
                 llvm::AtomicOrdering::SequentiallyConsistent);
+            old->setVolatile(ot->isVolatile);
             return ctx.valueFromAtomicCarrier(old, ot, carrier);
         }
     }
     llvm::Type* loadType = operand->type ? ctx.getLLVMType(operand->type) : llvm::Type::getInt32Ty(ctx.getContext());
-    llvm::Value* oldVal = builder.CreateLoad(loadType, addr, "postold");
+    llvm::Value* oldVal = ctx.loadValue(addr, operand->type);
     llvm::Value* newVal = nullptr;
     if (loadType->isPointerTy()) {
         // 指针自增/自减按元素步进（GEP），不能 CreateAdd（opaque ptr 是字节
@@ -2360,7 +2381,7 @@ llvm::Value* PostfixIncDecExprAST::codegen(CodegenContext& ctx) {
         newVal = isIncrement ? builder.CreateAdd(oldVal, one, "postinc")
                              : builder.CreateSub(oldVal, one, "postdec");
     }
-    builder.CreateStore(newVal, addr);
+    ctx.storeValue(addr, newVal, operand->type);
     return oldVal;
 }
 
@@ -2751,9 +2772,11 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
     auto finishMember = [&](llvm::Value* addr) -> llvm::Value* {
         if (!spilledRvalue) return addr;
         if (isBitField) {
-            return ctx.loadBitFieldValue(addr, bitOffset, bitWidth, type, unitBits);
+            Type* qualified = stripTypedefPreservingQualifiers(type);
+            return ctx.loadBitFieldValue(addr, bitOffset, bitWidth, type,
+                                         unitBits, qualified && qualified->isVolatile);
         }
-        return builder.CreateLoad(ctx.getLLVMType(type), addr, "member.val");
+        return ctx.loadValue(addr, type);
     };
 
     // Union members all live at offset 0: GEP to field 0 gives the address of
