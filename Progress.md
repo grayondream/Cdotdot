@@ -1818,3 +1818,22 @@
   - `examples/all_features.cdd` → `ALL FEATURES OK`。
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
 - 提交：`0c18876`。
+
+
+## 2026-11-23 — 空指针字面量改名为 `nullptr`
+
+- 背景：上一阶段把 `null` 改成真正的 nullptr 语义，但语言拼写仍是 `null`；本次将唯一拼写统一为 C++ 风格的 `nullptr`。
+- 修改：
+  - `Lexer` 关键字表 `{"nullptr", TOKEN_NULL}`，移除 `{"null", TOKEN_NULL}`；`null` 现在按普通未声明标识符报错。
+  - `tokenToString(TOKEN_NULL)` 输出 `nullptr`；parser 注释与 W3005 诊断文本同步为 `nullptr`。
+  - 标准库 `libs/std/*.cdd`、`examples/all_features.cdd`、全部 sema/e2e/driver 测试源码中的空指针字面量迁移为 `nullptr`。
+  - `docs/spec/{keywords,grammar,conversions,stdlib}.md` 更新：`nullptr` 是唯一关键字，`null` 不再是关键字；保留整数 `0` 的 C 空指针常量语义。
+  - `docs/superpowers` 下的历史计划/快照保留旧拼写，作为历史记录。
+- 测试：
+  - `ErgonomicsE2E.NullIsNotAKeyword` 验证 `null` 编译失败；`ErgonomicsE2E.NullptrLiteralWorks` 验证 `nullptr` 正常。
+  - 原有 2116 个测试全部迁移并通过。
+- 验证：
+  - 全量 **2116/2116** 通过。
+  - `examples/all_features.cdd` → `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
+- 提交：`54ad61b`。
