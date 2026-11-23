@@ -1,5 +1,7 @@
 # CDD 1.0 详细待办（工程 backlog）
 
+> **进度快照（2026-11-23，指针/整数隐式转换收口）**：修复 `typesCompatible` 将 `int32` 与指针双向视为类型兼容导致的隐式转换漏洞。移除指针↔`int32` 的 type-only 特例；新增表达式感知的 `isImplicitlyConvertibleTo`：仅 `nullptr` 与整数空指针常量 `0` 可隐式进入指针，指针→整数一律拒绝。覆盖初始化、返回、三元、`auto` 返回、闭包/函数指针间接调用、聚合/切片/auto 数组初始化等路径；间接调用同时补上实参数量与类型检查（含引用绑定）。`c ? 0 : p` / `c ? p : 0` 正确得到指针类型，`c ? p : 5` 与 `int32 y = p` 报错。新增 11 个 sema 测试、2 个 e2e。全量 **2129/2129** 通过，`examples/all_features.cdd` 输出 `ALL FEATURES OK`，16 个 quick benchmark 校验和全部一致。提交：`848d7ec`。
+
 > **进度快照（2026-11-23，空指针字面量改名为 `nullptr`）**：将语言唯一空指针字面量从 `null` 全面改为 `nullptr`。lexer 关键字、token 文本、parser 错误提示与规范同步；`null` 不再是关键字，作为普通未声明标识符报错。标准库（`libs/std/*.cdd`）、示例、sema/e2e/driver 测试及 `docs/spec` 全部迁移到 `nullptr`；`nullptr` 仍保持独立 `TypeKind::Nullptr`、只转指针、重载/比较/`?:`/默认实参等既有语义。全量 **2116/2116** 通过，`examples/all_features.cdd` 输出 `ALL FEATURES OK`，16 个 quick benchmark 校验和全部一致。提交：`54ad61b`。
 
 > **进度快照（2026-11-23，null 空指针字面量）**：修复 `null` 被解析成 `NumberExprAST(0)`、因而按 `int32 0` 参与隐式转换和重载解析的问题。`null` 现在生成独立 `NullExprAST`，类型为 `TypeKind::Nullptr`，只隐式转换为对象/`void`/函数指针，不转换为整数、`bool`、`optional`/`result` 或聚合；整数 `0` 仍保留 C 空指针常量语义。重载解析中 `f(int32)`/`f(int32*)` 选指针，`f(void*)`/`f(int32*)` 对 `null` 产生歧义，`bool` 形参不接收 `null`；初始化、赋值、返回、比较、条件/`!`、`?:`、指针默认实参、全局/`auto` 变量均按 nullptr 处理。新增 15 个 sema/e2e 回归测试。全量 **2116/2116** 通过，`examples/all_features.cdd` 输出 `ALL FEATURES OK`，16 个 quick benchmark 校验和全部一致。提交：`0c18876`。
@@ -241,7 +243,7 @@
 - `[ ]` **TYP-21** ABI 类型检查：`[[repr(C)]]` 下布局可预测；位域布局规则（见 DEC-08）。
 - `[x]` **TYP-22** `(新)` **整数提升与常规算术转换**：转换等级、signed×unsigned 混合规则（细化 TYP-19）。已实现于 `usualArithmeticType`/`promoteArithmeticType`/`isUnsignedArithmeticType`（`src/ast/Symbol.cpp`）：sema 按提升+常规算术转换取公共类型，codegen 按有/无符号选 `udiv`/`urem`、无符号比较、`lshr`/`ashr`，并按源符号选 `zext`/`sext`、`uitofp`/`sitofp`（规范见 `docs/spec/conversions.md` §3/§5）。
 - `[~]` **TYP-23** `(新)` **隐式/显式转换矩阵**：标量、指针、数组、struct/class、enum、Optional/Result 的完整转换表。（规范矩阵见 `docs/spec/conversions.md` §4；`enum` 强类型 TYP-20 与常规算术转换 TYP-22 已落地；隐式**窄化**仍按兼容处理，其余 `[plan]` 项待实现）
-- `[x]` **TYP-24** **空指针常量语义**：`null` 是唯一空指针字面量；`nullptr` 于 2026-10-29 移除（Review 2.3）。`null` 只隐式转指针；`NULL` 宏不提供（无预处理器）。见 `docs/spec/conversions.md`。
+- `[x]` **TYP-24** **空指针常量语义**：`nullptr` 是唯一空指针字面量；`null` 不再是关键字。仅 `nullptr` 与整数常量 `0` 可隐式转指针；指针→整数、非零整数→指针均须显式转换（表达式感知，2026-11-23）。`NULL` 宏不提供（无预处理器）。见 `docs/spec/conversions.md`。
 - `[x]` **TYP-25** `(新)` enum 默认底层类型、枚举常量作用域与限定访问（细化 TYP-09）。枚举常量可作值/常量表达式（含 `= -1`、`= 1+2+4`），支持限定访问 `A::Red` 与限定类型名 `cfg::Mode`（无需 `enum` 关键字）；显式底层类型 `enum E : uint8`（含 `typedef enum : uint16 {...}`）已实现。
 - `[x]` **TYP-26** `(新)` 字符串字面量类型、`str`/`String` 生命周期与所有权（细化 FMT-01/02）。2026-10-08 完成（随 P1-06）：字面量类型 = `str`；所有权/边界见 DEC-20。
 - `[~]` **TYP-27** `(新)` 聚合类型 ABI：按值传参/返回（byval/sret）、端序、默认对齐与成员内边距（细化 MEM-09）。（草案见 `docs/spec/abi.md`）

@@ -1837,3 +1837,24 @@
   - `examples/all_features.cdd` → `ALL FEATURES OK`。
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
 - 提交：`54ad61b`。
+
+
+## 2026-11-23 — 指针/整数隐式转换漏洞修复
+
+- 背景：`typesCompatible` 为识别空指针常量，保留了 `int32` 与指针双向兼容的 type-only 特例。结果 `int32 y = p;`、`return p;`、`c ? p : 0`、`auto` 返回、闭包/函数指针实参等路径可绕过表达式检查；`c ? p : 5` 也可被接受。CLI 探针确认上述用例均被错误放行。
+- 根因：类型兼容性判断不携带表达式信息。空指针常量只能由表达式（字面量 `0`）识别，不能由 `int32` 类型本身识别；反向指针→整数更不应有隐式通道。
+- 修复：
+  - `typesCompatible` 移除指针↔`int32` 特例。
+  - 新增 `SemanticAnalyzer::isImplicitlyConvertibleTo(target, source, expr)`：指针目标仅接受 `nullptr` 或整数空指针常量 `0`；其余走类型兼容。
+  - 初始化、静态/全局初始化、返回、`auto` 返回、切片/聚合/auto 数组初始化、optional/result `value_or`、闭包与 lambda 实参统一改用表达式感知判定。
+  - 比较运算保留 `p == 0` / `0 == p`；三元运算符显式识别指针 + 空指针常量，`c ? 0 : p` 与 `c ? p : 0` 生成指针，`c ? p : 5` 报错。
+  - 函数指针/间接调用新增实参数量与类型检查，引用参数走 `referenceBindingAllowed`；修复后 `fp(x)`、`[](int32& r){...}(x)` 仍工作。
+- 测试：
+  - `tests/sema/test_implicit_conversions.cpp`：指针→整数（初始化/返回/三元）、非零整数→指针（三元/函数指针/闭包/auto 返回）、空指针常量合法路径、指针与 0 比较、显式转换。
+  - `tests/e2e/test_nullptr.cpp`：整数 `0` 在指针三元中的运行时转换；函数指针与捕获闭包的空指针实参。
+- 验证：
+  - 全量 **2129/2129** 通过。
+  - `examples/all_features.cdd` → `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
+  - 探针：`int32 y = p`、`return p`、`c ? p : 5`、`f(5)`、捕获闭包 `g(5)`、`auto` 返回 `5` 均报错；`int32* p = 0`、`c ? 0 : p`、`f(0)`、`g(0)` 仍通过。
+- 提交：`848d7ec`。
