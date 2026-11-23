@@ -107,6 +107,34 @@ TEST_F(NullLiteralE2E, TernaryNullProducesNullPointer) {
     )"), 0);
 }
 
+TEST_F(NullLiteralE2E, IntegerZeroInPointerTernary) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            bool c = true;
+            int32 x = 1;
+            int32* p = &x;
+            int32* a = c ? 0 : p;
+            int32* b = c ? p : 0;
+            int32* d = false ? 0 : p;
+            if (a != nullptr) return 1;
+            if (b != p || d != p) return 2;
+            return 0;
+        }
+    )"), 0);
+}
+
+TEST_F(NullLiteralE2E, IntegerZeroForFunctionPointerAndClosureArgs) {
+    EXPECT_EQ(runSource(R"(
+        int32 check(int32* p) { return p == nullptr ? 0 : 1; }
+        int32 main() {
+            int32 captured = 1;
+            auto f = [](int32* p) { return p == nullptr ? 0 : 1; };
+            auto g = [captured](int32* p) { return p == nullptr ? 0 : 1; };
+            return check(0) + f(0) + g(0);
+        }
+    )"), 0);
+}
+
 TEST_F(NullLiteralE2E, VoidPointerReturnAndFunctionPointerInit) {
     EXPECT_EQ(runSource(R"(
         void* empty() { return nullptr; }

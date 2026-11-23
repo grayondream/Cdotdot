@@ -39,6 +39,12 @@ public:
     // Reject non-zero integer expressions flowing into pointer destinations.
     bool checkNullPointerConversion(Type* target, Type* source,
                                     const ExprAST* expr, ASTNode& node);
+    // Expression-aware compatibility for assignment/initialization/argument/
+    // return positions.  Unlike the context-free typesCompatible(), this admits
+    // only the integer null pointer constant (literal 0) into a pointer and
+    // never admits the reverse pointer-to-integer direction.
+    bool isImplicitlyConvertibleTo(Type* target, Type* source,
+                                   const ExprAST& expr) const;
     // SG-11: find an accessible `operator T()` whose result can be converted
     // to `to` (exact match or one user conversion + standard conversion).
     FunctionType* findUserConversion(Type* from, Type* to,
@@ -48,6 +54,7 @@ public:
     // Wrap a class condition with its boolean conversion sequence.
     bool coerceUserCondition(std::unique_ptr<ExprAST>& cond, Type*& condType);
     Type* checkFunctionCall(const std::string& name, const std::vector<std::unique_ptr<ExprAST>>& args, ExprAST& node, FunctionType** outFuncType = nullptr);
+    bool checkIndirectCallArguments(CallExprAST& node, FunctionType* funcType);
 
     // P1-03 / GEN-03: 解析类型树中的 TypeInstance 占位为具体实例类型。
     Type* resolveTypeInstance(Type* t, ASTNode& at);

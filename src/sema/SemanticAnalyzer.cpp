@@ -568,11 +568,11 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     if (isArithmeticType(left) && isArithmeticType(right)) return true;
     if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Pointer)
         return pointerConversionAllowed(left, right);
-    // Integer-to-pointer remains type-compatible only so the expression-aware
-    // callers can recognize the null pointer constant; non-zero integers are
-    // rejected at initialization/assignment/argument/return sites.
-    if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Int32) return true;
-    if (left->kind == TypeKind::Int32 && right->kind == TypeKind::Pointer) return true;
+    // Integer/pointer compatibility is expression-aware: the integer null
+    // pointer constant is handled by isImplicitlyConvertibleTo() and
+    // checkNullPointerConversion().  Keeping a type-only rule here admitted
+    // arbitrary `int32* -> int32` and `5 -> int32*` conversions in callers
+    // that only had the type, not the expression.
     // Arrays decay to a pointer to their first element.
     if (left->kind == TypeKind::Pointer && right->kind == TypeKind::Array)
         return pointerConversionAllowed(left, right);
@@ -810,16 +810,22 @@ Type* SemanticAnalyzer::checkBinaryTypes(BinaryOp op, Type* left, Type* right, E
                     return typeCtx->getInt32();
                 }
                 if (ls && rs && ls->kind == TypeKind::Pointer &&
-                    isIntegerType(rs) && !isNullPointerConstantExpr(rhsExpr)) {
-                    emitError("comparison between pointer and non-zero integer is invalid",
-                              node);
-                    return nullptr;
+                    isIntegerType(rs)) {
+                    if (!isNullPointerConstantExpr(rhsExpr)) {
+                        emitError("comparison between pointer and non-zero integer is invalid",
+                                  node);
+                        return nullptr;
+                    }
+                    return typeCtx->getInt32();
                 }
                 if (ls && rs && rs->kind == TypeKind::Pointer &&
-                    isIntegerType(ls) && !isNullPointerConstantExpr(lhsExpr)) {
-                    emitError("comparison between pointer and non-zero integer is invalid",
-                              node);
-                    return nullptr;
+                    isIntegerType(ls)) {
+                    if (!isNullPointerConstantExpr(lhsExpr)) {
+                        emitError("comparison between pointer and non-zero integer is invalid",
+                                  node);
+                        return nullptr;
+                    }
+                    return typeCtx->getInt32();
                 }
             }
             // Pointer comparisons are symmetric: either direction may add
@@ -940,6 +946,20 @@ bool SemanticAnalyzer::checkNullPointerConversion(Type* target, Type* source,
                   "'; only the null pointer constant is allowed",
               node);
     return false;
+}
+
+bool SemanticAnalyzer::isImplicitlyConvertibleTo(Type* target, Type* source,
+                                                 const ExprAST& expr) const {
+    Type* targetStripped = stripTypedef(target);
+    Type* sourceStripped = stripTypedef(source);
+    if (!targetStripped || !sourceStripped) return false;
+    if (targetStripped->kind == TypeKind::Pointer &&
+        !targetStripped->isReference) {
+        if (sourceStripped->kind == TypeKind::Nullptr) return true;
+        if (isIntegerType(sourceStripped))
+            return isNullPointerConstantExpr(&expr);
+    }
+    return typesCompatible(target, source);
 }
 
 Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node) {
@@ -4985,7 +5005,8 @@ void SemanticAnalyzer::analyzeOptionalMethod(MethodCallExprAST& node, Type* objT
         return;
     }
     if (node.methodName == "value_or") {
-        if (argTypes.size() != 1 || !typesCompatible(opt->elementType, argTypes[0])) {
+        if (argTypes.size() != 1 ||
+            !isImplicitlyConvertibleTo(opt->elementType, argTypes[0], *node.args[0])) {
             emitError("'value_or()' requires one value compatible with '" +
                           typeToString(opt->elementType) + "'", node);
             node.type = nullptr;
@@ -5030,7 +5051,8 @@ void SemanticAnalyzer::analyzeResultMethod(MethodCallExprAST& node, Type* objTyp
         return;
     }
     if (node.methodName == "value_or") {
-        if (argTypes.size() != 1 || !typesCompatible(res->successType, argTypes[0])) {
+        if (argTypes.size() != 1 ||
+            !isImplicitlyConvertibleTo(res->successType, argTypes[0], *node.args[0])) {
             emitError("'value_or()' requires one value compatible with '" +
                           typeToString(res->successType) + "'", node);
             node.type = nullptr;
@@ -5061,7 +5083,8 @@ bool SemanticAnalyzer::analyzeClosureCall(CallExprAST& node,
     for (size_t i = 0; i < node.args.size(); ++i) {
         Type* at = getExprType(*node.args[i]);
         if (!at) continue;
-        if (!typesCompatible(closure->closureParamTypes[i], at)) {
+        if (!isImplicitlyConvertibleTo(closure->closureParamTypes[i], at,
+                                       *node.args[i])) {
             emitError("closure argument " + std::to_string(i) + ": expected '" +
                           typeToString(closure->closureParamTypes[i]) +
                           "', got '" + typeToString(at) + "'",
@@ -5073,6 +5096,43 @@ bool SemanticAnalyzer::analyzeClosureCall(CallExprAST& node,
     node.resolvedParamTypes = closure->closureParamTypes;
     node.type = closure->closureReturnType;
     node.isLValue = false;
+    return true;
+}
+
+bool SemanticAnalyzer::checkIndirectCallArguments(CallExprAST& node,
+                                                  FunctionType* funcType) {
+    if (!funcType) return false;
+    const size_t fixed = funcType->paramTypes.size();
+    if ((!funcType->isVarArg && node.args.size() != fixed) ||
+        (funcType->isVarArg && node.args.size() < fixed)) {
+        emitError("indirect call expects " + std::to_string(fixed) +
+                      " argument(s), got " + std::to_string(node.args.size()),
+                  node);
+        return false;
+    }
+    const size_t checked = std::min(node.args.size(), fixed);
+    for (size_t i = 0; i < checked; ++i) {
+        Type* argType = getExprType(*node.args[i]);
+        if (!argType) continue;
+        if (isReferenceType(funcType->paramTypes[i])) {
+            bool needsTemporary = false;
+            std::string reason;
+            bool isBitField = false;
+            if (auto* member = dynamic_cast<MemberAccessExprAST*>(node.args[i].get()))
+                isBitField = member->isBitField;
+            if (!referenceBindingAllowed(funcType->paramTypes[i], argType,
+                                         node.args[i]->isLValue, isBitField,
+                                         needsTemporary, &reason)) {
+                emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                          "cannot bind argument " + std::to_string(i + 1) +
+                              " of indirect call: " + reason,
+                          node);
+                return false;
+            }
+            continue;
+        }
+        checkAssignmentTypes(funcType->paramTypes[i], argType, *node.args[i]);
+    }
     return true;
 }
 
@@ -5140,7 +5200,11 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
             return;
         }
         auto* ft = static_cast<FunctionType*>(pointee);
-        for (auto& arg : node.args) getExprType(*arg);
+        if (!checkIndirectCallArguments(node, ft)) {
+            node.type = nullptr;
+            node.isLValue = false;
+            return;
+        }
         node.resolvedParamTypes = ft->paramTypes;
         node.type = ft->returnType;
         node.isLValue = false;
@@ -5232,7 +5296,11 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
         if (st && st->kind == TypeKind::Pointer && pointee &&
             pointee->kind == TypeKind::Function) {
             auto* funcType = static_cast<FunctionType*>(pointee);
-            for (auto& arg : node.args) getExprType(*arg);
+            if (!checkIndirectCallArguments(node, funcType)) {
+                node.type = nullptr;
+                node.isLValue = false;
+                return;
+            }
             node.isIndirect = true;
             node.resolvedParamTypes = funcType->paramTypes;
             node.type = funcType->returnType;
@@ -5715,9 +5783,41 @@ void SemanticAnalyzer::visit(TernaryExprAST& node) {
     Type* br = strippedBranch(elseType);
     const bool pointerPair = bl && br && bl->kind == TypeKind::Pointer &&
                              br->kind == TypeKind::Pointer;
+    // C's conditional operator allows the integer null pointer constant in a
+    // pointer branch, but no other integer.  This is expression-aware: the
+    // type-only compatibility check cannot distinguish `0` from `5`.
+    bool pointerNullConstant = false;
+    Type* pointerNullType = nullptr;
+    if (bl && br && !pointerPair) {
+        if (bl->kind == TypeKind::Pointer && isIntegerType(br)) {
+            if (!isNullPointerConstantExpr(node.elseExpr.get())) {
+                emitError("ternary branches have incompatible types: '" +
+                              typeToString(thenType) + "' and '" +
+                              typeToString(elseType) + "'",
+                          node);
+                node.type = nullptr;
+                node.isLValue = false;
+                return;
+            }
+            pointerNullConstant = true;
+            pointerNullType = thenType;
+        } else if (br->kind == TypeKind::Pointer && isIntegerType(bl)) {
+            if (!isNullPointerConstantExpr(node.then.get())) {
+                emitError("ternary branches have incompatible types: '" +
+                              typeToString(thenType) + "' and '" +
+                              typeToString(elseType) + "'",
+                          node);
+                node.type = nullptr;
+                node.isLValue = false;
+                return;
+            }
+            pointerNullConstant = true;
+            pointerNullType = elseType;
+        }
+    }
     const bool compatible = pointerPair
         ? (typesCompatible(bl, br) || typesCompatible(br, bl))
-        : typesCompatible(bl, br);
+        : (pointerNullConstant || typesCompatible(bl, br));
     if (bl && br && !(isArithmeticType(bl) && isArithmeticType(br)) &&
         !compatible) {
         emitError("ternary branches have incompatible types: '" +
@@ -5728,7 +5828,8 @@ void SemanticAnalyzer::visit(TernaryExprAST& node) {
         return;
     }
 
-    node.type = getCommonType(thenType, elseType);
+    node.type = pointerNullConstant ? pointerNullType
+                                    : getCommonType(thenType, elseType);
     if (pointerPair) {
         // Pick the more-qualified branch as the composite type, so `p : cp`
         // does not silently drop const in the result.
@@ -7644,7 +7745,23 @@ void SemanticAnalyzer::visit(LambdaCallExprAST& node) {
     for (size_t i = 0; i < np; ++i) {
         Type* argType = getExprType(*node.args[i]);
         Type* paramType = node.lambda->params[i]->type;
-        if (argType && paramType && !typesCompatible(paramType, argType)) {
+        if (!argType || !paramType) continue;
+        if (isReferenceType(paramType)) {
+            bool needsTemporary = false;
+            std::string reason;
+            bool isBitField = false;
+            if (auto* member = dynamic_cast<MemberAccessExprAST*>(node.args[i].get()))
+                isBitField = member->isBitField;
+            if (!referenceBindingAllowed(paramType, argType, node.args[i]->isLValue,
+                                         isBitField, needsTemporary, &reason)) {
+                emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                          "cannot bind argument " + std::to_string(i + 1) +
+                              " of lambda call: " + reason,
+                          node);
+            }
+            continue;
+        }
+        if (!isImplicitlyConvertibleTo(paramType, argType, *node.args[i])) {
             emitError("lambda argument " + std::to_string(i) + ": expected '" +
                           typeToString(paramType) + "', got '" + typeToString(argType) + "'",
                       node);
@@ -7737,7 +7854,7 @@ void SemanticAnalyzer::resolveDesignators(InitializerListExprAST& node, Type* ag
                           elemType, it, node.initializers[i].get(), node)) {
                 continue;
             }
-            if (it && !typesCompatible(elemType, it)) {
+            if (it && !isImplicitlyConvertibleTo(elemType, it, *node.initializers[i])) {
                 emitError("slice element type mismatch: expected '" + typeToString(elemType) +
                           "', got '" + typeToString(it) + "'", node);
             }
@@ -8202,7 +8319,8 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
                 }
             }
             m_pendingAutoVoidReturns.clear();
-        } else if (!typesCompatible(m_inferredAutoReturn, retValType)) {
+        } else if (!isImplicitlyConvertibleTo(m_inferredAutoReturn, retValType,
+                                             *node.value)) {
             emitError("auto function '" + currentFunction->name +
                           "' has inconsistent return types: '" +
                           typeToString(m_inferredAutoReturn) + "' vs '" +
@@ -8219,7 +8337,8 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
             return;
         }
         if (currentFunction && retValType &&
-            !typesCompatible(currentFunction->returnType, retValType) &&
+            !isImplicitlyConvertibleTo(currentFunction->returnType, retValType,
+                                       *node.value) &&
             !hasUserConversion(retValType, currentFunction->returnType)) {
             emitError("return type mismatch in function '" +
                           std::string(currentFunction->name) + "': expected '" +
@@ -8449,7 +8568,9 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                               target->type, initType, node.initExpr.get(), node)) {
                 return;
             }
-            if (initType && !typesCompatible(target->type, initType)) {
+            if (initType &&
+                !isImplicitlyConvertibleTo(target->type, initType,
+                                               *node.initExpr)) {
                 emitError("type mismatch in initialization of '" + node.staticClass +
                               "::" + node.staticMember + "': expected '" +
                               typeToString(target->type) + "', got '" +
@@ -8811,7 +8932,9 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                           node);
                 return;
             }
-            if (initType && !typesCompatible(node.type, initType) &&
+            if (initType &&
+                !isImplicitlyConvertibleTo(node.type, initType,
+                                               *node.initExpr) &&
                 !hasUserConversion(initType, node.type)) {
                 emitError("type mismatch in initialization of '" + node.name + "': expected '" 
                     + typeToString(node.type) + "', got '" + typeToString(initType) + "'", node);
@@ -8982,7 +9105,9 @@ void SemanticAnalyzer::visit(ArrayDeclAST& node) {
             }
             for (size_t i = 1; i < initList->initializers.size(); ++i) {
                 Type* other = getExprType(*initList->initializers[i]);
-                if (other && !typesCompatible(elem, other)) {
+                if (other &&
+                    !isImplicitlyConvertibleTo(elem, other,
+                                               *initList->initializers[i])) {
                     emitError("auto array '" + node.name +
                                   "' has incompatible element types: '" +
                                   typeToString(elem) + "' vs '" +
