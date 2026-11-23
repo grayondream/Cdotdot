@@ -1879,3 +1879,30 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
   - `git diff --check` 无输出。
 - 提交：`38585ce`。
+
+
+## 2026-11-23 — 符号修饰单射化（MOD-15）
+
+- 背景：用户报告 name mangling 存在问题。复现出多类真实碰撞：
+  - `namespace ns { int32 f(int32); }` 与全局 `int32 ns_f(int32)` 都编码为 `ns_f_int32`，sema 直接报 E2004 重定义。
+  - `f(int32)` 与零参函数 `f_int32()` 都编码为 `f_int32`，后者被静默丢弃或调用错函数。
+  - `f(A,B)` 与 `f_A(B)` 都编码为 `f_A_B`；`f(int32*)` 与 `f(struct int32ptr)` 都编码为 `f_int32ptr`。
+  - 类型编码同样非单射：`Box<A*>` vs `Box<A>*`、`result<A,B>*` vs `result<A,B*>`、不同长度数组等都可能同符号。
+- 根因：旧方案用 `_` 直接拼接限定名/函数名/参数，名称可含 `_`，类型构造器用无边界后缀（`ptr`/`arr`/`res`），数组长度未编码；零参函数保留裸名。只要源标识符或类型组合能拼出相同文本，就会碰撞。
+- 修复：
+  - 新增共享 `mangleQualifiedName`：`::` / `.` 统一为 `.`；Parser、Sema、TemplateRegistry 共用，删除三份重复的 `_` 拍平逻辑。
+  - `mangleFunction`：函数名中的 `_` 双写，参数分隔仍为单个 `_`；零参函数也走同一编码。
+  - `typeToMangled`：struct/class/union/enum/TypeVar/模板实例名改为 `<长度>:<名字>`；数组加入 `size` 与 `sizeParam`；`result` 错误载荷长度前缀化；模板实例加入类型实参计数、值实参计数与值参数名计数；函数类型加入参数计数与 vararg 标志。
+  - 修正 `namespaceCandidates` 对 `.` 前缀的逐层剥离；`CtValue` 的 constexpr 容器识别改为 `std.Vec$...` / `std.Deque$...` / `std.HashMap$...` / `std.HashSet$...`。
+  - 更新 `docs/spec/abi.md` 的 MOD-15 编码规则与 `docs/spec/stdlib.md` 的 C 符号示例。
+- 测试：
+  - `tests/ast/test_type_nodes.cpp`：限定名分隔、类型编码、函数名编码、复合边界（`Box<A*>` vs `Box<A>*`、`result<A,B>*` vs `result<A,B*>`）。
+  - `tests/e2e/test_overloading.cpp`：namespace/flat 名、指针 vs 同名 struct、函数名 vs 修饰名、下划线参数分隔 4 个 e2e。
+  - `tests/sema/test_semantic_analyzer.cpp`：静态成员与扁平全局不再误判碰撞；嵌套 namespace 向外层回退查找。
+  - 既有测试中依赖旧修饰名的断言同步改为新编码；`test_ct_value.cpp` 的容器类型名改用 `std.Vec$...`。
+- 验证：
+  - 全量 **2139/2139** 通过。
+  - `examples/all_features.cdd` 编译运行输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 提交：`bcd3f64`。
