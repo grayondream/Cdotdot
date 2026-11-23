@@ -176,3 +176,10 @@ TEST_F(ReferencesE2E, AggregateCopyCopiesReferenceBinding) {
         }
     )"), 0);
 }
+
+TEST_F(ReferencesE2E, TemplateReferenceWritesThrough) {
+    EXPECT_EQ(runSource(R"(
+        template<typename T> void set_ref(T& value, T next) { value = next; }
+        int32 main() { int32 x = 1; set_ref(x, 6); return x - 6; }
+    )"), 0);
+}

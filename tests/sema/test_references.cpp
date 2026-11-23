@@ -178,3 +178,27 @@ TEST(ReferenceSignature, ValueAndReferenceParametersAreDuplicate) {
     )");
     EXPECT_TRUE(hasError(result, "redefinition") || hasError(result, "duplicate"));
 }
+
+TEST(ReferenceTemplates, DeducesLvalueReference) {
+    auto result = analyzeSource(R"(
+        template<typename T> T identity_ref(T& value) { return value; }
+        int32 main() { int32 x = 4; return identity_ref(x) - 4; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceTemplates, ConstReferenceAcceptsRvalue) {
+    auto result = analyzeSource(R"(
+        template<typename T> T read_ref(const T& value) { return value; }
+        int32 main() { return read_ref(9) - 9; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceTemplates, LvalueReferenceRejectsRvalue) {
+    auto result = analyzeSource(R"(
+        template<typename T> T read_ref(T& value) { return value; }
+        int32 main() { return read_ref(9); }
+    )");
+    EXPECT_TRUE(hasError(result, "rvalue") || hasError(result, "cannot deduce"));
+}

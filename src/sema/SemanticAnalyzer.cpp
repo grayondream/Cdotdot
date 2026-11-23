@@ -5419,6 +5419,27 @@ bool SemanticAnalyzer::tryAnalyzeTemplateCall(CallExprAST& node) {
             // 评审 I1：显式实参定位后推导跳过（plan 钉死：显式优先）。
             if (explicitlyBound.count(static_cast<TypeVarType*>(p)->name)) continue;
             if (!deduce(static_cast<TypeVarType*>(p)->name, a)) return true;
+        } else if (p && p->kind == TypeKind::Pointer && p->isReference &&
+                   p->base) {
+            Type* referent = stripTypedefPreservingQualifiers(p->base);
+            if (referent && referent->kind == TypeKind::TypeVar) {
+                auto* tv = static_cast<TypeVarType*>(referent);
+                if (explicitlyBound.count(tv->name)) continue;
+                if (!node.args[i]->isLValue && !referent->isConst) {
+                    emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                              "cannot deduce a non-const lvalue reference from "
+                              "an rvalue",
+                              node);
+                    return true;
+                }
+                Type* deduced = stripTypedefPreservingQualifiers(a);
+                if (deduced && (referent->isConst || referent->isVolatile)) {
+                    deduced = cloneType(deduced);
+                    deduced->isConst = false;
+                    deduced->isVolatile = false;
+                }
+                if (!deduced || !deduce(tv->name, deduced)) return true;
+            }
         } else if (p && p->kind == TypeKind::Pointer && p->base &&
                    p->base->kind == TypeKind::TypeVar) {
             if (explicitlyBound.count(static_cast<TypeVarType*>(p->base)->name)) continue;

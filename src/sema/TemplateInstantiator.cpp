@@ -1,6 +1,7 @@
 // P1-03 / GEN-05: TemplateInstantiator 实现。覆盖全部 AST 节点族——
 // 漏一个节点 = 含该节点的模板体实例化时静默丢失，新增节点须同步维护。
 #include "sema/TemplateInstantiator.h"
+#include "ast/TypeUtils.h"
 
 #include "sema/TemplateRegistry.h"
 #include "support/LiteralKind.h"
@@ -152,7 +153,12 @@ Type* TemplateInstantiator::rewrite(Type* t) {
             // 实参可能内嵌 TypeInstance 占位（Box<Box<i32>>），须递归解析。
             if (it == m_typeArgs.end()) return t;
             Type* resolved = rewrite(it->second);
-            return t->isAtomic ? applyAtomicQualifier(resolved, t) : resolved;
+            if (t->isAtomic) resolved = applyAtomicQualifier(resolved, t);
+            if (t->isConst || t->isVolatile || t->isRestrict) {
+                resolved = qualifyType(resolved, TypeQualifiers{
+                    t->isConst, t->isVolatile, t->isRestrict});
+            }
+            return resolved;
         }
         case TypeKind::Pointer: {
             Type* base = rewrite(t->base);
@@ -161,6 +167,7 @@ Type* TemplateInstantiator::rewrite(Type* t) {
             p->isConst = t->isConst;
             p->isVolatile = t->isVolatile;
             p->isRestrict = t->isRestrict;
+            p->isReference = t->isReference;
             return p;
         }
         case TypeKind::Function: {
