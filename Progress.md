@@ -1780,8 +1780,19 @@
   - `tests/e2e/test_references.cpp`（局部/参数/返回/临时/`T*&`/引用成员/聚合拷贝/模板/`operator[]`/ABI）。
   - 旧 CastOperators 引用拒绝测试迁移为正向运行时测试。
 - 验证：
-  - 全量 **2082/2082** 通过。
+  - 全量 **2101/2101** 通过。
   - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
   - `python3 benchmarks/run.py --quick`：16 个负载全部跑通，`checksum_ok` 无失败。
   - 探针：非 const rvalue、返回临时、引用成员临时、聚合含引用赋值分别报 E2034/E2003；`const int32&` rvalue 正常；引用 ABI 为指针大小。
-- 提交：`8d2081f`、`c585c89`、`2e39b69`、`cfff274`、`a623bc6`、`3ca7930`。
+- 终审修复（`3fa9702`）：
+  - `->`/`this->`/方法内裸引用成员统一经 `finishMember` 解码。
+  - const 引用 rvalue 增加类型兼容检查，拒绝 `const void&`；`bindReference` 校验 LLVM 类型。
+  - 静态存储的引用聚合诊断拒绝；不可靠的全局绑定不再生成 null。
+  - 成员二元运算符/`operator()` 使用声明参数类型 mangle 并按引用绑定；引用返回暴露 referent。
+  - 间接、函数指针字段、闭包、lambda 调用统一走 `emitCallArgument`。
+  - 拒绝引用形参默认值；重复实例方法重载给出诊断，静态重载保持。
+  - 自由 `operator[]` 校验对象/下标绑定并支持引用下标。
+  - 引用成员初始化检查递归覆盖嵌套与设计化初始化。
+  - const 引用排序不再普遍加罚，改为逐参数缩放评分。
+  - `typeContainsReference` 增加环深度上限。
+- 提交：`8d2081f`、`c585c89`、`2e39b69`、`cfff274`、`a623bc6`、`3ca7930`、`b7d5144`、`3fa9702`。
