@@ -405,6 +405,110 @@ bool pointerConversionAllowed(const Type* target, const Type* source) {
     return isDerivedRecord(sourceBase, targetBase);
 }
 
+Type* qualifyMemberLValue(const Type* memberType, bool objectIsConst,
+                          bool objectIsVolatile) {
+    if (!memberType || (!objectIsConst && !objectIsVolatile))
+        return const_cast<Type*>(memberType);
+    const Type* stripped = stripTypedefsForQualifiers(memberType);
+    if (!stripped) return const_cast<Type*>(memberType);
+    // References are aliases; the containing object's qualifiers do not
+    // propagate to the referent.  The reference itself has no qualifiers.
+    if (stripped->kind == TypeKind::Pointer && stripped->isReference)
+        return const_cast<Type*>(memberType);
+
+    TypeQualifiers qualifiers{objectIsConst, objectIsVolatile, false};
+    if (stripped->kind == TypeKind::Array) {
+        // A const array has const elements; recurse through nested arrays.
+        const auto* array = static_cast<const ArrayType*>(stripped);
+        Type* clone = cloneType(array);
+        auto* arrayClone = static_cast<ArrayType*>(clone);
+        Type* element = const_cast<Type*>(array->elementType);
+        if (objectIsConst || objectIsVolatile) {
+            const Type* elemStripped = stripTypedefsForQualifiers(element);
+            if (elemStripped && elemStripped->kind == TypeKind::Array) {
+                element = qualifyMemberLValue(elemStripped, objectIsConst,
+                                              objectIsVolatile);
+            } else {
+                element = qualifyType(elemStripped, qualifiers);
+            }
+        }
+        arrayClone->elementType = element;
+        return arrayClone;
+    }
+    return qualifyType(stripped, qualifiers);
+}
+
+namespace {
+
+bool hasConstSubobject(const Type* type, int depth) {
+    if (!type || depth > 64) return false;
+    type = stripTypedefsForQualifiers(type);
+    if (!type) return false;
+    if (type->isConst) return true;
+    switch (type->kind) {
+        case TypeKind::Array:
+            return hasConstSubobject(
+                static_cast<const ArrayType*>(type)->elementType, depth + 1);
+        case TypeKind::Struct: {
+            const auto* record = static_cast<const StructType*>(type);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (hasConstSubobject(field.type, depth + 1)) return true;
+            }
+            return record->base && hasConstSubobject(record->base, depth + 1);
+        }
+        case TypeKind::Class: {
+            const auto* record = static_cast<const ClassType*>(type);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (hasConstSubobject(field.type, depth + 1)) return true;
+            }
+            return type->base && hasConstSubobject(type->base, depth + 1);
+        }
+        case TypeKind::Union: {
+            for (const auto& member : static_cast<const UnionType*>(type)->members) {
+                if (hasConstSubobject(member.type, depth + 1)) return true;
+            }
+            return false;
+        }
+        case TypeKind::Optional:
+            return hasConstSubobject(
+                static_cast<const OptionalType*>(type)->elementType, depth + 1);
+        case TypeKind::Result: {
+            const auto* result = static_cast<const ResultType*>(type);
+            return hasConstSubobject(result->successType, depth + 1) ||
+                   hasConstSubobject(result->errorType, depth + 1);
+        }
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
+bool isModifiableLValueType(const Type* type, std::string* reason) {
+    if (!type) {
+        if (reason) *reason = "unknown type";
+        return false;
+    }
+    type = stripTypedefsForQualifiers(type);
+    if (!type) {
+        if (reason) *reason = "unknown type";
+        return false;
+    }
+    if (type->kind == TypeKind::Function) {
+        if (reason) *reason = "function type";
+        return false;
+    }
+    if (hasConstSubobject(type, 0)) {
+        if (reason) *reason = "const";
+        return false;
+    }
+    return true;
+}
+
 bool typesIdentical(const Type* a, const Type* b) {
     if (!a || !b) return a == b;
     if (a->kind != b->kind) return false;

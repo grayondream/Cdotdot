@@ -5277,9 +5277,12 @@ void SemanticAnalyzer::visit(AssignmentExprAST& node) {
         return;
     }
     Type* lhsType = getExprType(*node.lhs);
-    if (lhsType && lhsType->isConst) {
-        emitError("cannot assign to const variable", node);
-        return;
+    if (lhsType) {
+        std::string reason;
+        if (!isModifiableLValueType(lhsType, &reason)) {
+            emitError("cannot assign to " + reason + " lvalue", node);
+            return;
+        }
     }
     if (node.op == AssignOp::Assign &&
         isConstexprContainerExpr(node.rhs.get()) && lhsType) {
@@ -5600,20 +5603,30 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
     // 数组 typedef（typedef int32 IntArr[4]）剥开再判种类。
     Type* strippedArray = stripTypedef(arrayType);
     if (strippedArray && strippedArray->kind == TypeKind::Array) {
-        node.type = static_cast<ArrayType*>(strippedArray)->elementType;
+        // A const array has const elements; a member-array from a const object
+        // already carries the element qualifier.
+        node.type = qualifyMemberLValue(
+            static_cast<ArrayType*>(strippedArray)->elementType,
+            strippedArray->isConst, strippedArray->isVolatile);
     } else if (strippedArray && strippedArray->kind == TypeKind::Pointer) {
+        // Qualifiers on the pointer itself do not propagate to its pointee.
         node.type = strippedArray->base;
     } else if (strippedArray && strippedArray->kind == TypeKind::Slice) {
         // TYP-12: subscripting a slice yields an lvalue of the element type.
+        // A const slice view does not make its elements const.
         node.type = static_cast<SliceType*>(strippedArray)->elementType;
     } else if (strippedArray && strippedArray->kind == TypeKind::String) {
         // P1-06 (FMT-02): subscripting a string yields a byte (char) lvalue;
-        // no bounds check (DEC-06 policy).
-        node.type = typeCtx->getChar();
+        // no bounds check (DEC-06 policy).  A const string exposes const bytes.
+        node.type = qualifyMemberLValue(typeCtx->getChar(),
+                                        strippedArray->isConst,
+                                        strippedArray->isVolatile);
     } else if (strippedArray && strippedArray->kind == TypeKind::Str) {
         // P1-06 (FMT-01): subscripting a string_view yields a byte (char)
-        // lvalue——等价 char_at(i)。
-        node.type = typeCtx->getChar();
+        // lvalue——等价 char_at(i).  A const view is read-only.
+        node.type = qualifyMemberLValue(typeCtx->getChar(),
+                                        strippedArray->isConst,
+                                        strippedArray->isVolatile);
     } else {
         emitError("subscripted value is neither array, slice nor pointer, but '" + typeToString(arrayType) + "'", node);
         node.type = nullptr;
@@ -5730,6 +5743,11 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
         node.accessKind == MemberAccessKind::Arrow ||
         (strippedObj && strippedObj->kind == TypeKind::Pointer);
     const bool memberLValue = pointerAccess || node.object->isLValue;
+    // For arrow/dot-through-pointer the accessed object is the pointee; for a
+    // direct member access it is the object value itself.
+    Type* objectQualType = pointerAccess ? strippedBase : strippedObj;
+    const bool objectIsConst = objectQualType && objectQualType->isConst;
+    const bool objectIsVolatile = objectQualType && objectQualType->isVolatile;
     if (!strippedObj || (strippedObj->kind == TypeKind::Pointer && !strippedBase)) {
         node.type = nullptr;
         node.isLValue = false;
@@ -5820,12 +5838,14 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
             // 评审 I5: propagate object lvalue-ness — `make().value = 5` must
             // not present an rvalue slot as assignable.
             if (node.memberName == "valid") {
-                node.type = TypeContext::instance().getBool();
+                node.type = qualifyMemberLValue(TypeContext::instance().getBool(),
+                                                objectIsConst, objectIsVolatile);
                 node.isLValue = node.object->isLValue;
                 return;
             }
             if (node.memberName == "value") {
-                node.type = optType->elementType;
+                node.type = qualifyMemberLValue(optType->elementType,
+                                                objectIsConst, objectIsVolatile);
                 node.isLValue = node.object->isLValue;
                 return;
             }
@@ -5837,17 +5857,20 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
         if (strippedObj->kind == TypeKind::Result) {
             auto* resType = static_cast<ResultType*>(strippedObj);
             if (node.memberName == "ok") {
-                node.type = TypeContext::instance().getBool();
+                node.type = qualifyMemberLValue(TypeContext::instance().getBool(),
+                                                objectIsConst, objectIsVolatile);
                 node.isLValue = node.object->isLValue;
                 return;
             }
             if (node.memberName == "value") {
-                node.type = resType->successType;
+                node.type = qualifyMemberLValue(resType->successType,
+                                                objectIsConst, objectIsVolatile);
                 node.isLValue = node.object->isLValue;
                 return;
             }
             if (node.memberName == "error") {
-                node.type = resType->errorType;
+                node.type = qualifyMemberLValue(resType->errorType,
+                                                objectIsConst, objectIsVolatile);
                 node.isLValue = node.object->isLValue;
                 return;
             }
@@ -5888,7 +5911,8 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                                            ? cur->semanticFields : cur->fields;
             for (auto& field : lookupFields) {
                 if (field.name == node.memberName) {
-                    node.type = field.type;
+                    node.type = qualifyMemberLValue(field.type, objectIsConst,
+                                                    objectIsVolatile);
                     node.isLValue = memberLValue;
                     // P1-07 / SEM-12: bit-field access marker (isLValue stays
                     // true — the sema assignment gate depends on it; codegen
@@ -5929,7 +5953,8 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                             node.isLValue = false;
                             return;
                         }
-                        node.type = field.type;
+                        node.type = qualifyMemberLValue(field.type, objectIsConst,
+                                                        objectIsVolatile);
                         node.isLValue = memberLValue;
                         node.isBitField = field.bitWidth > 0;
                         node.bitWidth = static_cast<uint32_t>(
@@ -5959,7 +5984,8 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                                            ? classType->semanticFields : classType->fields;
             for (auto& field : lookupFields) {
                 if (field.name == node.memberName) {
-                    node.type = field.type;
+                    node.type = qualifyMemberLValue(field.type, objectIsConst,
+                                                    objectIsVolatile);
                     node.isLValue = memberLValue;
                     // P1-07 / SEM-12: bit-field access marker (see struct path).
                     node.isBitField = field.bitWidth > 0;
@@ -5997,7 +6023,8 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
             while (baseStruct) {
                 for (auto& field : baseStruct->fields) {
                     if (field.name == node.memberName) {
-                        node.type = field.type;
+                        node.type = qualifyMemberLValue(field.type, objectIsConst,
+                                                        objectIsVolatile);
                         node.isLValue = memberLValue;
                         node.isBitField = field.bitWidth > 0;
                         node.bitWidth = static_cast<uint32_t>(

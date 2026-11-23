@@ -36,6 +36,17 @@ Type* adjustParameterTypeForSignature(const Type* type);
 // compared.  restrict is deliberately excluded: it is optimization-only.
 bool typesIdentical(const Type* a, const Type* b);
 
+// Lvalue qualification: a member of a const/volatile object is a const/
+// volatile lvalue.  Arrays qualify their elements; pointer/reference members
+// gain the qualifier on the member itself, not on the pointee/referent.
+Type* qualifyMemberLValue(const Type* memberType, bool objectIsConst,
+                          bool objectIsVolatile);
+
+// C modifiable-lvalue test: false when the object itself is const or an
+// aggregate/array contains a const subobject.  volatile does not prevent
+// modification.  When non-null, `reason` receives a short explanation.
+bool isModifiableLValueType(const Type* type, std::string* reason = nullptr);
+
 // C pointer assignment compatibility.  The target may add const/volatile at
 // the pointer's immediate pointee level, but may not drop qualifiers.  Deeper
 // qualifiers may not be added unsafely (`int32** -> const int32**` is false;

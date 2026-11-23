@@ -200,3 +200,66 @@ TEST(QualifierPointers, AcceptsNullPointerConstant) {
         "int32 main() { int32* p = 0; return p == null ? 0 : 1; }")
                     .errors.empty());
 }
+
+TEST(QualifierConstLValue, RejectsMemberWriteThroughConstObject) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QCS1 { int32 x; };
+        int32 main() { const QCS1 s = {1}; s.x = 2; return s.x; }
+    )"), "const"));
+}
+
+TEST(QualifierConstLValue, RejectsMemberWriteThroughConstPointer) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QCS2 { int32 x; };
+        int32 main() { QCS2 s = {1}; const QCS2* p = &s; p->x = 2; return s.x; }
+    )"), "const"));
+}
+
+TEST(QualifierConstLValue, ConstObjectPointerMemberIsConstPointer) {
+    auto result = analyzeSource(R"(
+        struct QCS3 { int32* p; };
+        int32 main() {
+            int32 x = 1;
+            const QCS3 s = {&x};
+            *s.p = 2;
+            return x;
+        }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(QualifierConstLValue, RejectsAddressOfConstObjectToMutablePointer) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QCS4 { int32 x; };
+        int32 main() { const QCS4 s = {1}; QCS4* p = &s; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierConstLValue, RejectsWholeConstAggregateAssignment) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QCS5 { int32 x; };
+        int32 main() { const QCS5 a = {1}; QCS5 b = {2}; a = b; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierConstLValue, AllowsCopyInitializationFromConstAggregate) {
+    auto result = analyzeSource(R"(
+        struct QCS6 { int32 x; };
+        int32 main() { const QCS6 a = {1}; QCS6 b = a; b.x = 2; return b.x; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(QualifierConstLValue, RejectsAggregateWithConstFieldAssignment) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QCS7 { const int32 x; };
+        int32 main() { QCS7 a = {1}; QCS7 b = {2}; a = b; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierConstLValue, ConstAliasPreservesReadonly) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using CI = const int32;
+        int32 main() { CI x = 1; x = 2; return x; }
+    )"), "const"));
+}
