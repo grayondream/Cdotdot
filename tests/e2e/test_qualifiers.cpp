@@ -91,3 +91,14 @@ TEST_F(QualifiersE2E, ConstMethodReadsState) {
         }
     )"), 0);
 }
+
+TEST_F(QualifiersE2E, ConstStringDataIsReadOnlyAtRuntime) {
+    EXPECT_EQ(runQualifierSource(R"(
+        int32 main() {
+            string s = string.new("abc");
+            const string cs = s;
+            const char* p = cs.data();
+            return p[0] == 'a' ? 0 : 1;
+        }
+    )"), 0);
+}

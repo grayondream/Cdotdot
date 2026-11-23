@@ -284,3 +284,36 @@ TEST(QualifierConstMethods, ConstMethodCannotWriteField) {
         int32 main() { return 0; }
     )"), "const"));
 }
+
+TEST(QualifierBuiltins, ConstStringRejectsAppend) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            string s = string.new("a");
+            const string cs = s;
+            cs.append("b");
+            return 0;
+        }
+    )"), "const"));
+}
+
+TEST(QualifierBuiltins, ConstStringDataIsConstCharPointer) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            string s = string.new("a");
+            const string cs = s;
+            char* p = cs.data();
+            return 0;
+        }
+    )"), "const"));
+}
+
+TEST(QualifierBuiltins, SliceOfConstElementsRejectsWrite) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 a[2] = {1, 2};
+            const int32[] cs = a;
+            cs[0] = 3;
+            return cs[0];
+        }
+    )"), "const"));
+}

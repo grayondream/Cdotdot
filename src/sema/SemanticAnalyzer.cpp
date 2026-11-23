@@ -4610,9 +4610,18 @@ void SemanticAnalyzer::analyzeStrMethod(MethodCallExprAST& node, Type* objType) 
 // destroy) require an addressable receiver at codegen; sema records the
 // signatures only.
 void SemanticAnalyzer::analyzeStringMethod(MethodCallExprAST& node, Type* objType) {
-    (void)objType;
     node.isLValue = false;
     const std::string& name = node.methodName;
+    Type* strippedObject = stripTypedef(objType);
+    const bool objectIsConst = strippedObject && strippedObject->isConst;
+    auto rejectMutating = [&]() {
+        if (!objectIsConst) return false;
+        emitError("cannot call mutating method '" + name +
+                      "' on a const string",
+                  node);
+        node.type = nullptr;
+        return true;
+    };
 
     std::vector<Type*> argTypes;
     for (auto& arg : node.args) {
@@ -4652,10 +4661,14 @@ void SemanticAnalyzer::analyzeStringMethod(MethodCallExprAST& node, Type* objTyp
             return;
         }
         node.builtinMethod = BuiltinMethod::StringData;
-        node.type = new Type(TypeKind::Pointer, typeCtx->getChar());
+        Type* charType = objectIsConst
+            ? qualifyTopLevel(typeCtx->getChar(), true, false)
+            : typeCtx->getChar();
+        node.type = new Type(TypeKind::Pointer, charType);
         return;
     }
     if (name == "destroy") {
+        if (rejectMutating()) return;
         if (!argTypes.empty()) {
             emitError("'destroy()' takes no arguments", node);
             node.type = nullptr;
@@ -4666,6 +4679,7 @@ void SemanticAnalyzer::analyzeStringMethod(MethodCallExprAST& node, Type* objTyp
         return;
     }
     if (name == "append") {
+        if (rejectMutating()) return;
         if (argTypes.size() != 1 || !isStrLike(argTypes[0])) {
             emitError("'append()' requires exactly one string_view argument; use str_from_c for char* buffers", node);
             node.type = nullptr;
@@ -4676,6 +4690,7 @@ void SemanticAnalyzer::analyzeStringMethod(MethodCallExprAST& node, Type* objTyp
         return;
     }
     if (name == "push") {
+        if (rejectMutating()) return;
         if (argTypes.size() != 1 || !isIntegerType(argTypes[0])) {
             emitError("'push()' requires exactly one char argument", node);
             node.type = nullptr;
