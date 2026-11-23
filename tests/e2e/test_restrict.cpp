@@ -83,3 +83,69 @@ TEST_F(RestrictIR, TypedefRestrictParameterGetsNoAlias) {
     ASSERT_FALSE(ir.empty());
     EXPECT_NE(ir.find("ptr noalias"), std::string::npos);
 }
+
+TEST_F(RestrictIR, BlockScopeRestrictEmitsScopeDeclAndAliasScope) {
+    auto ir = compileQualifierIR(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* restrict p = &x;
+            *p = 2;
+            return *p;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_NE(ir.find("llvm.experimental.noalias.scope.decl"), std::string::npos);
+    EXPECT_NE(ir.find("!alias.scope"), std::string::npos);
+}
+
+TEST_F(RestrictIR, BlockScopeRestrictSubscriptHasAliasScope) {
+    auto ir = compileQualifierIR(R"(
+        int32 main() {
+            int32 a[2] = {1, 2};
+            int32* restrict p = a;
+            p[0] = 3;
+            return p[0];
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_NE(ir.find("llvm.experimental.noalias.scope.decl"), std::string::npos);
+    EXPECT_NE(ir.find("!alias.scope"), std::string::npos);
+}
+
+TEST_F(RestrictIR, GlobalRestrictGetsNoPerAccessMetadata) {
+    auto ir = compileQualifierIR(R"(
+        int32* restrict g;
+        int32 main() { int32 x = 1; g = &x; return *g; }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_EQ(ir.find("llvm.experimental.noalias.scope.decl"), std::string::npos);
+    EXPECT_EQ(ir.find("!alias.scope"), std::string::npos);
+}
+
+TEST_F(RestrictIR, MemberRestrictGetsNoPerAccessMetadata) {
+    auto ir = compileQualifierIR(R"(
+        struct RestrictHolder { int32* restrict p; };
+        int32 main() {
+            int32 x = 1;
+            struct RestrictHolder h = {&x};
+            return *h.p;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_EQ(ir.find("llvm.experimental.noalias.scope.decl"), std::string::npos);
+    EXPECT_EQ(ir.find("!alias.scope"), std::string::npos);
+}
+
+TEST_F(RestrictIR, PlainPointerGetsNoScopeMetadata) {
+    auto ir = compileQualifierIR(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* p = &x;
+            *p = 2;
+            return *p;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_EQ(ir.find("llvm.experimental.noalias.scope.decl"), std::string::npos);
+    EXPECT_EQ(ir.find("!alias.scope"), std::string::npos);
+}

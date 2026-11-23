@@ -7,6 +7,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "ast/Symbol.h"
 #include <map>
+#include <unordered_map>
 
 class Type;
 class ExprAST;
@@ -50,6 +51,16 @@ public:
     // type emits a volatile store. Compiler bookkeeping stores should keep using
     // the raw IRBuilder.
     void storeValue(llvm::Value* ptr, llvm::Value* value, Type* type);
+
+    // MEM-04: block-scope restrict pointers. Begin a fresh function scope before
+    // parameter/local registration; declare a restrict pointer's storage; note
+    // the pointer value loaded from that storage; attach alias.scope metadata to
+    // accesses provably derived from the pointer.
+    void beginFunctionRestrictScope(const std::string& functionName);
+    void declareRestrictScope(llvm::Value* storage, const std::string& name);
+    void noteRestrictPointerLoad(llvm::Value* storage,
+                                 llvm::Value* loadedPointer);
+    void applyAliasScope(llvm::Instruction* inst, llvm::Value* addr);
 
     // P1-07 / CG-09: bit-field storage-unit read/write (read-modify-write).
     // unitAddr points at the integer storage unit (materialized LLVM field);
@@ -220,6 +231,15 @@ private:
     std::vector<std::vector<std::pair<llvm::Value*, Type*>>> cleanupScopes;
     std::vector<size_t> breakDeferBoundaries;
     std::vector<size_t> continueDeferBoundaries;
+
+    // MEM-04: per-function alias-scope state. Storage maps a restrict pointer
+    // variable/parameter alloca to its scope; pointer maps the loaded pointer
+    // SSA value to the same scope so derived GEPs can be recognized.
+    std::string restrictFunctionName;
+    llvm::MDNode* restrictDomain{nullptr};
+    std::unordered_map<llvm::Value*, llvm::MDNode*> restrictStorageScopes;
+    std::unordered_map<llvm::Value*, llvm::MDNode*> restrictPointerScopes;
+    llvm::MDNode* restrictScopeForAddress(llvm::Value* addr) const;
 
     // P1-06: lazily synthesized UTF-8 helpers (single instance per module).
     llvm::Function* utf8CharLenAtFn{nullptr};

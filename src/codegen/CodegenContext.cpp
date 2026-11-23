@@ -7,6 +7,9 @@
 #include "ast/Symbol.h"
 #include "support/Log.h"
 #include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Metadata.h"
 
 // P1-07 / CG-09: 位域读取符号扩展判定——无符号整型族 zext，其余（含 isize）
@@ -21,6 +24,56 @@ static bool bitFieldIsUnsigned(Type* t) {
         case TypeKind::UInt128:
         case TypeKind::USize:
             return true;
+        default:
+            return false;
+    }
+}
+
+// A whole-object access is volatile when the object itself or any subobject
+// that participates in the access is volatile.  This is what makes a copy of a
+// struct containing a volatile field volatile without qualifying unrelated
+// member accesses.
+static bool hasVolatileAccess(Type* type, int depth = 0) {
+    if (!type || depth > 64) return false;
+    Type* t = stripTypedefPreservingQualifiers(type);
+    if (!t) return false;
+    if (t->isVolatile) return true;
+    switch (t->kind) {
+        case TypeKind::Array:
+            return hasVolatileAccess(
+                static_cast<ArrayType*>(t)->elementType, depth + 1);
+        case TypeKind::Struct: {
+            auto* record = static_cast<StructType*>(t);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (hasVolatileAccess(field.type, depth + 1)) return true;
+            }
+            return false;
+        }
+        case TypeKind::Class: {
+            auto* record = static_cast<ClassType*>(t);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (hasVolatileAccess(field.type, depth + 1)) return true;
+            }
+            return false;
+        }
+        case TypeKind::Union: {
+            for (const auto& member : static_cast<UnionType*>(t)->members) {
+                if (hasVolatileAccess(member.type, depth + 1)) return true;
+            }
+            return false;
+        }
+        case TypeKind::Optional:
+            return hasVolatileAccess(
+                static_cast<OptionalType*>(t)->elementType, depth + 1);
+        case TypeKind::Result: {
+            auto* result = static_cast<ResultType*>(t);
+            return hasVolatileAccess(result->successType, depth + 1) ||
+                   hasVolatileAccess(result->errorType, depth + 1);
+        }
         default:
             return false;
     }
@@ -208,7 +261,8 @@ llvm::Value* CodegenContext::loadValue(llvm::Value* ptr, Type* type) {
                 builder.CreateLoad(carrier, addr, "atomic.load");
             load->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
             load->setAlignment(llvm::Align(bits / 8));
-            load->setVolatile(t->isVolatile);
+            load->setVolatile(hasVolatileAccess(t));
+            applyAliasScope(load, ptr);
             return valueFromAtomicCarrier(load, t, carrier);
         }
     }
@@ -219,7 +273,11 @@ llvm::Value* CodegenContext::loadValue(llvm::Value* ptr, Type* type) {
     if (t && t->isAtomic) {
         load->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
     }
-    if (t) load->setVolatile(t->isVolatile);
+    if (t) load->setVolatile(hasVolatileAccess(t));
+    if (t && t->kind == TypeKind::Pointer && load->getType()->isPointerTy()) {
+        noteRestrictPointerLoad(ptr, load);
+    }
+    applyAliasScope(load, ptr);
     return load;
 }
 
@@ -227,7 +285,91 @@ void CodegenContext::storeValue(llvm::Value* ptr, llvm::Value* value, Type* type
     if (!ptr || !value) return;
     Type* t = stripTypedefPreservingQualifiers(type);
     llvm::StoreInst* store = builder.CreateStore(value, ptr);
-    if (t) store->setVolatile(t->isVolatile);
+    if (t) store->setVolatile(hasVolatileAccess(t));
+    applyAliasScope(store, ptr);
+}
+
+void CodegenContext::beginFunctionRestrictScope(const std::string& functionName) {
+    restrictFunctionName = functionName;
+    restrictDomain = nullptr;
+    restrictStorageScopes.clear();
+    restrictPointerScopes.clear();
+}
+
+void CodegenContext::declareRestrictScope(llvm::Value* storage,
+                                          const std::string& name) {
+    if (!storage || !builder.GetInsertBlock()) return;
+    llvm::MDBuilder mdBuilder(*context);
+    if (!restrictDomain) {
+        const std::string domainName = restrictFunctionName.empty()
+                                           ? "cdd.restrict"
+                                           : restrictFunctionName;
+        restrictDomain = mdBuilder.createAliasScopeDomain(domainName);
+    }
+    llvm::MDNode* scope = mdBuilder.createAliasScope(name, restrictDomain);
+    llvm::Function* decl = llvm::Intrinsic::getOrInsertDeclaration(
+        module.get(), llvm::Intrinsic::experimental_noalias_scope_decl);
+    llvm::Metadata* scopeMd = scope;
+    llvm::MDNode* scopeList = llvm::MDNode::get(
+        *context, llvm::ArrayRef<llvm::Metadata*>(&scopeMd, 1));
+    llvm::MetadataAsValue* md =
+        llvm::MetadataAsValue::get(*context, scopeList);
+    builder.CreateCall(decl, {md});
+    restrictStorageScopes[storage] = scope;
+}
+
+void CodegenContext::noteRestrictPointerLoad(llvm::Value* storage,
+                                             llvm::Value* loadedPointer) {
+    if (!storage || !loadedPointer ||
+        !loadedPointer->getType()->isPointerTy()) {
+        return;
+    }
+    auto it = restrictStorageScopes.find(storage);
+    if (it != restrictStorageScopes.end()) {
+        restrictPointerScopes[loadedPointer] = it->second;
+    }
+}
+
+llvm::MDNode* CodegenContext::restrictScopeForAddress(
+    llvm::Value* addr) const {
+    if (!addr) return nullptr;
+    auto direct = restrictPointerScopes.find(addr);
+    if (direct != restrictPointerScopes.end()) return direct->second;
+
+    if (auto* gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
+        return restrictScopeForAddress(gep->getPointerOperand());
+    }
+    if (auto* cast = llvm::dyn_cast<llvm::CastInst>(addr)) {
+        return restrictScopeForAddress(cast->getOperand(0));
+    }
+    if (auto* select = llvm::dyn_cast<llvm::SelectInst>(addr)) {
+        llvm::MDNode* a = restrictScopeForAddress(select->getTrueValue());
+        llvm::MDNode* b = restrictScopeForAddress(select->getFalseValue());
+        return a == b ? a : nullptr;
+    }
+    if (auto* phi = llvm::dyn_cast<llvm::PHINode>(addr)) {
+        llvm::MDNode* scope = nullptr;
+        for (llvm::Value* incoming : phi->incoming_values()) {
+            llvm::MDNode* candidate = restrictScopeForAddress(incoming);
+            if (!candidate) return nullptr;
+            if (!scope) scope = candidate;
+            else if (scope != candidate) return nullptr;
+        }
+        return scope;
+    }
+    return nullptr;
+}
+
+void CodegenContext::applyAliasScope(llvm::Instruction* inst,
+                                     llvm::Value* addr) {
+    if (!inst) return;
+    llvm::MDNode* scope = restrictScopeForAddress(addr);
+    if (!scope) return;
+    llvm::Metadata* scopeMd = scope;
+    inst->setMetadata(llvm::LLVMContext::MD_alias_scope,
+                      llvm::MDNode::get(
+                          *context,
+                          llvm::ArrayRef<llvm::Metadata*>(&scopeMd, 1)));
 }
 
 llvm::Value* CodegenContext::loadBitFieldValue(llvm::Value* unitAddr,
@@ -241,6 +383,7 @@ llvm::Value* CodegenContext::loadBitFieldValue(llvm::Value* unitAddr,
     Type* ft = stripTypedefPreservingQualifiers(fieldType);
     llvm::LoadInst* unitLoad = builder.CreateLoad(unit, unitAddr, "bf.load");
     unitLoad->setVolatile(isVolatile);
+    applyAliasScope(unitLoad, unitAddr);
     llvm::Value* raw = unitLoad;
     if (bitOffset != 0) {
         raw = builder.CreateLShr(raw,
@@ -278,6 +421,7 @@ void CodegenContext::storeBitFieldValue(llvm::Value* unitAddr,
     }
     llvm::LoadInst* oldLoad = builder.CreateLoad(unit, unitAddr, "bf.old");
     oldLoad->setVolatile(isVolatile);
+    applyAliasScope(oldLoad, unitAddr);
     llvm::Value* old = oldLoad;
     // wMask = 低 bitWidth 位全 1；fieldMask = wMask << bitOffset。
     llvm::Value* wMask = llvm::ConstantInt::get(
@@ -290,6 +434,7 @@ void CodegenContext::storeBitFieldValue(llvm::Value* unitAddr,
     llvm::StoreInst* store =
         builder.CreateStore(builder.CreateOr(cleared, v, "bf.stored"), unitAddr);
     store->setVolatile(isVolatile);
+    applyAliasScope(store, unitAddr);
 }
 
 void CodegenContext::declareVariable(const std::string& name, llvm::Value* alloca, Type* type) {

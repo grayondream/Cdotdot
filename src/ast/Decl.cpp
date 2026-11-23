@@ -1260,6 +1260,9 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
     if (declAlign) {
         alloca->setAlignment(llvm::Align(declAlign));
     }
+    if (isRestrictQualifiedPointer(type)) {
+        ctx.declareRestrictScope(alloca, name);
+    }
 
     // TYP-12 D3 + I4 found issue: 未初始化聚合零初始化——
     //   * slice → 空 slice {null, 0}（TYP-12 D3）；
@@ -1475,6 +1478,7 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
     }
 
     ctx.pushScope();
+    ctx.beginFunctionRestrictScope(function->getName().str());
 
     unsigned idx = 0;
     for (auto& param : params) {
@@ -1483,6 +1487,9 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
         llvm::AllocaInst* alloca = ctx.getBuilder().CreateAlloca(
             ctx.getLLVMType(param->type), nullptr, param->name);
         ctx.getBuilder().CreateStore(arg, alloca);
+        if (isRestrictQualifiedPointer(param->type)) {
+            ctx.declareRestrictScope(alloca, param->name);
+        }
         ctx.declareVariable(param->name, alloca, param->type);
         idx++;
     }
