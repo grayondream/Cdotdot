@@ -298,6 +298,59 @@ Type* adjustParameterTypeForSignature(const Type* type) {
     return clone;
 }
 
+bool isRestrictQualifiedPointer(const Type* type) {
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    return stripped && stripped->kind == TypeKind::Pointer &&
+           stripped->isRestrict;
+}
+
+bool restrictPlacementValid(const Type* type, std::string* reason) {
+    if (!type) return true;
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    if (!stripped) return true;
+
+    if (stripped->isRestrict) {
+        if (stripped->kind != TypeKind::Pointer) {
+            if (reason) *reason = "restrict qualifier requires a pointer to an object type";
+            return false;
+        }
+        const Type* pointee = stripTypedefPreservingQualifiers(stripped->base);
+        if (!pointee || pointee->kind == TypeKind::Function) {
+            if (reason) *reason = "restrict qualifier requires a pointer to an object type";
+            return false;
+        }
+    }
+
+    switch (stripped->kind) {
+        case TypeKind::Pointer:
+            return restrictPlacementValid(stripped->base, reason);
+        case TypeKind::Array:
+            return restrictPlacementValid(
+                static_cast<const ArrayType*>(stripped)->elementType, reason);
+        case TypeKind::Function: {
+            const auto* fn = static_cast<const FunctionType*>(stripped);
+            if (!restrictPlacementValid(fn->returnType, reason)) return false;
+            for (const Type* param : fn->paramTypes) {
+                if (!restrictPlacementValid(param, reason)) return false;
+            }
+            return true;
+        }
+        case TypeKind::Slice:
+            return restrictPlacementValid(
+                static_cast<const SliceType*>(stripped)->elementType, reason);
+        case TypeKind::Optional:
+            return restrictPlacementValid(
+                static_cast<const OptionalType*>(stripped)->elementType, reason);
+        case TypeKind::Result: {
+            const auto* result = static_cast<const ResultType*>(stripped);
+            return restrictPlacementValid(result->successType, reason) &&
+                   restrictPlacementValid(result->errorType, reason);
+        }
+        default:
+            return true;
+    }
+}
+
 namespace {
 
 const Type* stripTypedefsForQualifiers(const Type* type) {

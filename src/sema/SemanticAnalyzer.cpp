@@ -8178,6 +8178,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                       node);
         }
     }
+    checkRestrictPlacement(node.type, node);
     // P1-05 / ANN-06: 变量注解验证。
     validateAnnotations(node.annotations, node, "variable");
     // P1-05 / ANN-05: 弃用类型使用（W3004）与弃用变量记录。
@@ -8517,6 +8518,7 @@ void SemanticAnalyzer::visit(ArrayDeclAST& node) {
     // AGG-11 评审 I2: array declarations are var declarations (DS5) — a
     // private nested type must not slip through as the element type.
     node.elementType = resolveTypeInstance(node.elementType, node);
+    checkRestrictPlacement(node.elementType, node);
 
     // `auto a[] = { ... }` / `auto a[N] = { ... }`: infer the element type
     // from the first brace initializer. Closure types are nominal, so all
@@ -8749,6 +8751,13 @@ void SemanticAnalyzer::checkBitFieldField(FieldInfo& f, ASTNode& node) {
     }
 }
 
+void SemanticAnalyzer::checkRestrictPlacement(Type* type, ASTNode& at) {
+    std::string reason;
+    if (!restrictPlacementValid(type, &reason)) {
+        emitError(DiagnosticCode::SemInvalidRestrictPlacement, reason, at);
+    }
+}
+
 void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
     // P1-03 / GEN-03: 实例字段/方法签名中的实例占位先解析。
     for (auto& f : node.fields) {
@@ -8764,6 +8773,7 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         checkDeprecatedTypeUse(f.type, node);
         // P1-04 评审 I3: 字段类型不得来自 compile_time.if 死分支。
         checkCtDeadBranchUse(f.type, node);
+        checkRestrictPlacement(f.type, node);
         // CON-01: template `atomic T` fields must resolve to the same 1/2/4/8
         // byte integer scalar set as a direct `atomic T` declaration. The
         // instantiator clones unsupported resolved kinds with isAtomic set so
@@ -8785,9 +8795,11 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
     for (auto& m : node.methods) {
         m->returnType = resolveTypeInstance(m->returnType, node);
         ensureInstanceVisited(m->returnType, node);
+        checkRestrictPlacement(m->returnType, node);
         for (auto& p : m->params) {
             p->type = resolveTypeInstance(p->type, node);
             ensureInstanceVisited(p->type, node);
+            checkRestrictPlacement(p->type, node);
         }
         // P1-05 评审 I3: 方法弃用记录（方法不经 visit(FunctionDeclAST)）。
         for (const auto& ann : m->annotations) {
@@ -9199,6 +9211,7 @@ void SemanticAnalyzer::visit(UnionDeclAST& node) {
         validateAnnotations(member.annotations, node, "field");
         // PAR-24: a private class-scoped alias may not name a union member.
         checkNestedTypeAccess(member.type, node);
+        checkRestrictPlacement(member.type, node);
         // CON-01: same atomic restriction as a struct/class field; strip a
         // typedef so `using A = atomic int128;` cannot bypass the check.
         Type* mt = stripTypedef(member.type);
@@ -9402,6 +9415,8 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     // P1-03 / GEN-03: 返回类型与参数类型中的实例占位先解析。
     node.returnType = resolveTypeInstance(node.returnType, node);
     for (auto& p : node.params) p->type = resolveTypeInstance(p->type, node);
+    checkRestrictPlacement(node.returnType, node);
+    for (auto& p : node.params) checkRestrictPlacement(p->type, node);
 
     // PAR-03: out-of-class method definition `RetType Class::method(...) {...}`.
     // Bind it to the method declared in the class body: the class must exist,

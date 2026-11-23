@@ -36,6 +36,15 @@ Type* stripTypedefPreservingQualifiers(const Type* type);
 // parameter or return is ignored.  Pointee qualifiers are preserved.
 Type* adjustParameterTypeForSignature(const Type* type);
 
+// Restrict placement: true only when the top-level type (after typedef
+// stripping) is a restrict-qualified pointer to an object type.
+bool isRestrictQualifiedPointer(const Type* type);
+
+// Validate every restrict qualifier in a type tree.  restrict is valid only on
+// pointers to object types; it is invalid on non-pointers, references, and
+// function pointers.  Typedefs are stripped before each decision.
+bool restrictPlacementValid(const Type* type, std::string* reason = nullptr);
+
 // Structural type identity.  const/volatile at every level, reference-ness,
 // pointer targets, aggregate names, array lengths, and function signatures are
 // compared.  restrict is deliberately excluded: it is optimization-only.

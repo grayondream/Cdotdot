@@ -42,6 +42,7 @@ const DiagnosticInfo kRegistry[] = {
     {DiagnosticCode::SemAtomicBadRMWOp, "E2030", "operator not supported on atomic value (need CAS)"},
     {DiagnosticCode::SemUnknownType, "E2031", "unknown type"},
     {DiagnosticCode::SemReflectNonAggregate, "E2032", "fields_of requires an aggregate type"},
+    {DiagnosticCode::SemInvalidRestrictPlacement, "E2033", "invalid restrict placement"},
 
     {DiagnosticCode::WarnUninitializedVariable,  "W3001", "variable may be uninitialized"},
     {DiagnosticCode::WarnUnusedVariable,         "W3002", "unused variable"},

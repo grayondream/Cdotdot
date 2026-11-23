@@ -40,6 +40,26 @@ TEST_F(ParserTest, ParsesConstMemberFunction) {
     EXPECT_TRUE(parser.getErrors().empty());
 }
 
+TEST_F(ParserTest, ParsesRestrictBeforeAndAfterBaseType) {
+    Lexer leadingLexer("restrict.cdd", "restrict int32* p;");
+    Parser leadingParser(leadingLexer.tokenize());
+    auto leading = leadingParser.parse();
+    ASSERT_NE(leading, nullptr);
+    EXPECT_TRUE(leadingParser.getErrors().empty());
+    auto* lv = dynamic_cast<VarDeclAST*>(leading->declarations.front().get());
+    ASSERT_NE(lv, nullptr);
+    EXPECT_TRUE(lv->type->base->isRestrict);
+
+    Lexer trailingLexer("restrict.cdd", "int32 restrict* p;");
+    Parser trailingParser(trailingLexer.tokenize());
+    auto trailing = trailingParser.parse();
+    ASSERT_NE(trailing, nullptr);
+    EXPECT_TRUE(trailingParser.getErrors().empty());
+    auto* tv = dynamic_cast<VarDeclAST*>(trailing->declarations.front().get());
+    ASSERT_NE(tv, nullptr);
+    EXPECT_TRUE(tv->type->base->isRestrict);
+}
+
 static std::vector<Diagnostic> parseErrors(const std::string& source) {
     Lexer lexer("alias_err.c", source);
     Parser parser(lexer.tokenize());

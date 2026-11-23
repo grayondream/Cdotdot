@@ -3056,6 +3056,7 @@ Type* Parser::parseBaseType() {
 Type* Parser::parseType() {
     bool isConst = false;
     bool isVolatile = false;
+    bool isRestrict = false;
     bool isAtomic = false;
 
     // Handle qualifiers before base type
@@ -3066,6 +3067,9 @@ Type* Parser::parseType() {
         } else if (check(TokenType::TOKEN_VOLATILE)) {
             advance();
             isVolatile = true;
+        } else if (check(TokenType::TOKEN_RESTRICT)) {
+            advance();
+            isRestrict = true;
         } else if (check(TokenType::TOKEN_ATOMIC)) {
             advance();
             isAtomic = true;
@@ -3086,6 +3090,9 @@ Type* Parser::parseType() {
         } else if (check(TokenType::TOKEN_VOLATILE)) {
             advance();
             isVolatile = true;
+        } else if (check(TokenType::TOKEN_RESTRICT)) {
+            advance();
+            isRestrict = true;
         } else if (check(TokenType::TOKEN_ATOMIC)) {
             advance();
             isAtomic = true;
@@ -3097,7 +3104,9 @@ Type* Parser::parseType() {
     // Qualifiers apply to this declaration only.  Clone the complete type
     // shell/payload instead of mutating shared scalar singletons or aggregate
     // definitions (`const S*` must not poison the next plain `S`).
-    baseType = qualifyTopLevel(baseType, isConst, isVolatile);
+    if (isConst || isVolatile || isRestrict) {
+        baseType = qualifyType(baseType, TypeQualifiers{isConst, isVolatile, isRestrict});
+    }
 
     // CON-01: `atomic T` must also use a private clone.  It is valid only on
     // integer scalar types (or a template type variable resolved later).
@@ -4110,6 +4119,9 @@ Type* Parser::parseFunctionPointerDeclarator(Type* returnType, std::string& outN
         enum Kind { Pointer, Array, Function } kind;
         int size = 0;
         bool varArg = false;
+        bool isConst = false;
+        bool isVolatile = false;
+        bool isRestrict = false;
         std::vector<std::unique_ptr<ParamDeclAST>> params;
     };
 
@@ -4185,15 +4197,19 @@ Type* Parser::parseFunctionPointerDeclarator(Type* returnType, std::string& outN
 
     std::function<bool(std::vector<Op>&)> parseDecl =
         [&](std::vector<Op>& ops) -> bool {
-        int pointerCount = 0;
+        std::vector<Op> pointerOps;
         while (check(TokenType::TOKEN_STAR)) {
             advance();
-            ++pointerCount;
+            Op pointerOp; pointerOp.kind = Op::Pointer;
             while (check(TokenType::TOKEN_CONST) ||
                    check(TokenType::TOKEN_VOLATILE) ||
                    check(TokenType::TOKEN_RESTRICT)) {
+                if (check(TokenType::TOKEN_CONST)) pointerOp.isConst = true;
+                if (check(TokenType::TOKEN_VOLATILE)) pointerOp.isVolatile = true;
+                if (check(TokenType::TOKEN_RESTRICT)) pointerOp.isRestrict = true;
                 advance();
             }
+            pointerOps.push_back(std::move(pointerOp));
         }
 
         if (groupingStartsHere()) {
@@ -4214,9 +4230,8 @@ Type* Parser::parseFunctionPointerDeclarator(Type* returnType, std::string& outN
         // Prefix `*` applies after the declarator's own suffixes (e.g.
         // `*f()` = function returning pointer; `(*f)()` is handled by the
         // grouping branch above and therefore places the pointer first).
-        for (int i = 0; i < pointerCount; ++i) {
-            Op p; p.kind = Op::Pointer;
-            ops.push_back(std::move(p));
+        for (auto& pointerOp : pointerOps) {
+            ops.push_back(std::move(pointerOp));
         }
         return true;
     };
@@ -4244,6 +4259,9 @@ Type* Parser::parseFunctionPointerDeclarator(Type* returnType, std::string& outN
     for (auto it = ops.rbegin(); it != ops.rend(); ++it) {
         if (it->kind == Op::Pointer) {
             type = new Type(TypeKind::Pointer, type);
+            type->isConst = it->isConst;
+            type->isVolatile = it->isVolatile;
+            type->isRestrict = it->isRestrict;
         } else if (it->kind == Op::Array) {
             type = new ArrayType(type, it->size);
         } else {

@@ -53,6 +53,8 @@ enum class DiagnosticCode {
     SemUnknownType,
     // CT-07: reflection target must be an aggregate (fields_of).
     SemReflectNonAggregate,
+    // MEM-04: restrict is only valid on pointers to object types.
+    SemInvalidRestrictPlacement,
 
     WarnUninitializedVariable,
     WarnUnusedVariable,
