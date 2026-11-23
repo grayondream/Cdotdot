@@ -1714,8 +1714,15 @@
 - 迁移：
   - `libs/std/c.cdd`、`libs/std/mem.cdd` 的 `memcpy`/`memmove` 源参数改为 `const void*`，`memcmp` 两侧改为 `const void*`。
   - qsort 无捕获 lambda 比较器测试改为与 libc 绑定一致的 `void*` 参数（const/non-const 函数指针参数类型不兼容）。
+- 终审修复（commit `99d0c12`）：
+  - qualified class/struct/union 成员查找改为按名义名解析到注册类型，const class 字段读恢复、写入按 const 拒绝。
+  - typedef 外层 cv 合并进别名目标（`const CI` / `const P` 不再丢失）。
+  - `++`/`--` 纳入 modifiable-lvalue 检查；union 成员参与 const 传播。
+  - 空指针常量规则覆盖函数实参、返回值、聚合/数组初始化、静态数据成员；`p == 5` 拒绝。
+  - slice 元素 const 不可丢弃；指针比较与三元改为对称并取更限定类型。
+  - 函数指针类型比较/签名 mangle 对参数做顶层 cv 调整；模板实参与转换运算符 mangle 保留 cv；`const string.data` 属性返回 `const char*`。
 - 验证：
-  - 全量 **1991/1991** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。
-  - 复现探针：const 丢弃、const 成员写、const 指针成员写、const 对象取可变地址、const 别名写均报错；const 对象指针成员写 pointee、const 聚合复制初始化通过。
-  - 提交：`553479d`、`8cf4a76`、`fcf2773`、`0e58071`、`c25ceab`、`9f5cbe8`。
+  - 全量 **2006/2006** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - 复现探针：const 丢弃、const 成员写、const 指针成员写、const 对象取可变地址、const 别名写均报错；const 对象指针成员写 pointee、const 聚合复制初始化通过；终审发现的 const class 字段读、typedef 外层 cv、`++`、union、slice、比较、函数指针、模板实参和 `.data` 探针均按预期。
+  - 提交：`553479d`、`8cf4a76`、`fcf2773`、`0e58071`、`c25ceab`、`9f5cbe8`、`eda33b6`、`99d0c12`。
 - 下一步：按设计继续 `volatile`/`restrict` 计划与左值引用计划；PGO 仍为 opt-in 未实现项。
