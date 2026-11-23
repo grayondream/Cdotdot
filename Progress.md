@@ -1726,3 +1726,24 @@
   - 复现探针：const 丢弃、const 成员写、const 指针成员写、const 对象取可变地址、const 别名写均报错；const 对象指针成员写 pointee、const 聚合复制初始化通过；终审发现的 const class 字段读、typedef 外层 cv、`++`、union、slice、比较、函数指针、模板实参和 `.data` 探针均按预期。
   - 提交：`553479d`、`8cf4a76`、`fcf2773`、`0e58071`、`c25ceab`、`9f5cbe8`、`eda33b6`、`99d0c12`。
 - 下一步：按设计继续 `volatile`/`restrict` 计划与左值引用计划；PGO 仍为 opt-in 未实现项。
+
+## 2026-11-23 — C 限定符第二阶段：volatile/restrict
+
+- 背景：完成 `docs/superpowers/specs/2026-11-23-qualifiers-references-design.md` 的第二阶段；左值引用留待下一计划。
+- 设计/计划：
+  - `docs/superpowers/plans/2026-11-23-volatile-restrict.md`
+- 实现：
+  - volatile：`CodegenContext::loadValue`/新增 `storeValue` 集中按 lvalue 类型生成 `load volatile`/`store volatile`；位域 load/RMW/store 全部带 volatile；原子载体的 load/store/atomicrmw 同时保留 `volatile` 与 `atomic`；初始化（标量/数组/聚合）、字段、数组元素、参数、全局、聚合整体复制均复用同一路径。`hasVolatileAccess` 递归识别数组元素/聚合字段中的 volatile 子对象。
+  - restrict：`parseType` 接受前/后置 restrict，函数指针声明符保留每级指针限定符；`restrictPlacementValid` 递归校验且只在“指向对象类型的指针”上放行，typedef 先剥离（E2033）。
+  - `FunctionDeclAST::codegenPrototype` 为 restrict 指针参数/返回添加 LLVM `noalias`；不进入签名/重载/mangling。
+  - 块作用域 restrict：`beginFunctionRestrictScope`/`declareRestrictScope` 生成 `llvm.experimental.noalias.scope.decl`（scope list 形式）；`noteRestrictPointerLoad` 记录由 restrict 存储加载出的指针 value，`applyAliasScope` 沿 GEP/cast/select/phi 传播并附加 `!alias.scope`。文件作用域/成员 restrict 不注册逐访问 scope。
+- 测试：
+  - `tests/sema/test_restrict.cpp`（放置/签名）、`tests/e2e/test_restrict.cpp`（noalias、块作用域 scope、全局/成员/普通指针无元数据）。
+  - `tests/e2e/test_volatile.cpp`（标量/指针层级区分、bit-field、atomic volatile、字段/数组/聚合、O2 双 store 保留）。
+- 验证：
+  - 全量 **2033/2033** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部跑通，`checksum_ok` 无失败。
+  - 探针：O2 下两次 volatile 写保留 2 条 `store volatile`；`restrict int32 g` / `int32 restrict g` 均报 E2033；restrict 参数/返回为 `noalias`；块作用域 emit scope decl 且 deref 带 `!alias.scope`；全局/成员 restrict 无 `!alias.scope`。
+- 提交：`50a5299`、`dc7f86b`、`c06744e`、`0d00494`、`dd1499f`。
+- 下一步：左值引用计划（`T&` / `const T&` / `volatile T&`）；引用 ABI、绑定、参数/返回/字段、生命周期与 `operator[]` 迁移。

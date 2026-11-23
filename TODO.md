@@ -1,5 +1,7 @@
 # CDD 1.0 详细待办（工程 backlog）
 
+> **进度快照（2026-11-23，volatile/restrict 语义）**：完成 C 限定符第二阶段。`volatile` 现在在 `CodegenContext::loadValue`/`storeValue` 与位域 RMW 中集中生成真实 `load volatile`/`store volatile`，覆盖标量、指针、字段、参数、全局、数组、位域、聚合整体读写与初始化；`atomic volatile` 同时保留两种属性，O2 下连续两次 volatile 写均不被删除。`restrict` 只能用于指向对象类型的指针，typedef/函数指针/非指针位置均校验（E2033）；restrict 指针参数与返回值生成 LLVM `noalias`；块作用域 restrict 指针生成 `llvm.experimental.noalias.scope.decl`，并在可证明基于该指针的访问上附加 `!alias.scope`；文件作用域/成员 restrict 按设计接受但不生成逐访问元数据。全量 **2033/2033** 通过，`examples/all_features.cdd` 输出 `ALL FEATURES OK`，16 个 quick benchmark 校验和全部一致。提交线：`50a5299`、`dc7f86b`、`c06744e`、`0d00494`、`dd1499f`。左值引用仍按设计拆到后续计划。
+
 > **进度快照（2026-11-23，C 限定符与 const 语义）**：完成 `const` 的 C 语义第一阶段：新增 `TypeUtils` 克隆/限定符/身份/打印层，解析器不再改写共享类型；函数签名按 C 调整（按值顶层 cv/restrict 忽略，pointee cv/引用参与身份与 mangling）；指针赋值执行限定符加/减与多级安全检查，`0` 之外整数不再转指针；const 对象/成员/数组/别名写入拒绝，含 const 子对象的聚合整体赋值拒绝，但 const 聚合复制初始化仍允许；新增 const 成员函数与 const `this`，const 对象只能调用 const 方法；`const string` 拒绝 `append`/`push`/`destroy`，`data()` 返回 `const char*`。迁移 `memcpy`/`memmove`/`memcmp` 的 libc 绑定为 `const void*` 源。终审补齐 `const` class 字段访问、typedef 外层 cv、`++/--`、union 成员、所有值转换点的空指针规则、slice 元素 const 方向、对称指针比较、函数指针顶层 cv、模板参数 cv 与 `string.data` 属性。全量 **2006/2006** 通过，`examples/all_features.cdd` 输出 `ALL FEATURES OK`。提交线：`553479d`、`8cf4a76`、`fcf2773`、`0e58071`、`c25ceab`、`9f5cbe8`、`99d0c12`。`volatile`/`restrict` 与左值引用仍按设计拆到后续计划。
 
 > **进度快照（2026-11-22，有限递归内联）**：新增有界自递归内联，`-O2` 默认开启；只处理直接自调用，每阶段 depth 4、初始 ≤100 指令、inline-time 硬上限 1000 指令（O2 重跑后仍可能增长），每轮只内联一个调用点。`fib` 仅在 post 阶段处理，`nqueens` 走 pre+post，`sort` 的两调用快速排序被排除；实测 fib 函数 194 指令、nqueens solve 948 指令。同二进制、仅切换 `-fno-recursive-inlining` 的直接 A/B（5 warmup + 9 measured）：**fib 0.502x（302.35→151.83ms）**、**nqueens 0.878x（433.43→380.75ms）**、sort 1.001x；core geomean **0.9247x**、全部 16 负载 **0.9476x**，校验和全一致。corpus_1200 编译 0.9998x 且对象完全相同；递归负载编译 fib 4.12x / nqueens 4.02x（绝对 21.6→88.7ms、27.9→112.2ms，nqueens 对象 4.0→12.5KB），按用户“运行时优先”保留默认开启，保留 `-fno-recursive-inlining` 回退。全量 **1959/1959**，`all_features` 输出 `ALL FEATURES OK`。新增 `benchmarks/ab.py`（含编译器/产物哈希与正向对照）；记录见 `benchmarks/results/2026-11-22-recursive-inlining-ab.md`；代码 commit `75aa0ef`。
@@ -165,7 +167,7 @@
 - `[x]` **PAR-03** 方法定义语法 `Vector::length()`；嵌套/`static` 成员（AGG-11 / AGG-10，2026-10-05）。**类外定义完成**（2026-10-20）：`RetType Class::method(params) { ... }`——声明在类体内、定义在类外；sema 校验类/方法/签名、插入隐式 `this`，签名不符或类内未声明均诊断。
 - `[x]` **PAR-04** class 成员：`public/private/protected` 段、成员变量/函数、`static` 成员、嵌套类型。**完成**（2026-10-05）：访问段解析与访问级别记录（DEC-01）、static 成员（AGG-10）、嵌套类型（AGG-11）全部落地。
 - `[x]` **PAR-05** 类型语法：基础类型、指针 `T*`、数组 `T[N]`、Slice `T[]`、模板实例 `Box<i32>`。**顶层用户类型声明已修正**（2026-10-22）：`S g;` / `S* p;` / `V f()` / `struct V f()` / `class C f()` / `B<int32> g;` / `using W = S;` 不再被前一条聚合声明的 attached-declarator 前瞻吞掉；前向声明显式注册占位类型。**2026-11-09 record 文法统一**：`struct`/`class` 共用成员产生式，struct 支持访问段/方法/运算符/静态/嵌套；详见 `docs/superpowers/specs/2026-11-09-module-namespace-record-design.md`。
-- `[x]` **PAR-06** 指针限定符：`const/volatile/restrict/atomic`。**完成**（2026-10-20）：指针后缀 `restrict` 语法接受并记录 `Type::isRestrict`；别名/优化语义仍挂 MEM-04。
+- `[x]` **PAR-06** 指针限定符：`const/volatile/restrict/atomic`。**完成**（2026-10-20）：指针后缀 `restrict` 语法接受并记录 `Type::isRestrict`；**2026-11-23** 补齐类型/前/后置 restrict 解析、放置校验与函数指针声明符限定符保留，语义见 MEM-04。
 - `[x]` **PAR-07** `(新)` 注解挂载点：六处全落地（模块仅解析记录）（2026-10-07）。
 - `[x]` **PAR-08** 表达式：字面量/标识符/调用/成员访问/下标/一元/二元/三元/强转。**切片/复合字面量完成**（2026-10-20）：C99 复合字面量 `(T[N]){...}` / `(T[]){...}`（块内栈对象、文件级静态常量，直接转义拒绝）；slice 字面量初始化 `T[] s = {1,2,3}`（栈匿名数组 + 视图，返回即悬垂拒绝）。
 - `[x]` **PAR-09** `(改)` 语句：块、if/else、while、do-while、for、switch/case、return、break、continue、声明。（**不含 goto/label**，见 Non-goals；已移除 goto/标签解析）
@@ -225,7 +227,7 @@
 - `[x]` **TYP-13** `Optional<T>`：`{ bool valid; T value; }`；显式访问（**无 `?` 传播算子**）。**完成**（2026-10-06）：`T?` 与 `Optional<T>` 双形式同型；`{i1, T}` 布局（valid 在前）；伪字段 `.valid`/`.value` 自由读写；类型相等按元素严格（`int32?` ≠ `float64?`）；spec `docs/superpowers/specs/2026-10-06-optional-result-design.md`。
 - `[x]` **TYP-14** `Result<T,E>`：布局与 `.error`/`.value` 语义；显式访问。**完成**（2026-10-06）：`{ bool ok; T value; E error; }`（DEC-03 裁决加判别标志）；伪字段 `.ok`/`.value`/`.error`；实参严格相等；e2e 错误路径/传参/返回可用；spec 同上。
 - `[ ]` **TYP-15** 指针类型：`T*`、函数指针、多级指针。
-- `[ ]` **TYP-16** 限定符类型：`const/volatile/restrict/atomic`。
+- `[x]` **TYP-16** 限定符类型：`const/volatile/restrict/atomic`。**完成**：const 第一阶段（2026-11-23）；volatile 真实内存访问与 restrict 放置/noalias/块作用域 alias scope（2026-11-23）；atomic 见 CON-01。
 - `[ ]` **TYP-17** 函数类型：参数/返回/调用约定/可变参数。
 - `[x]` **TYP-18** `(新)` 模板实例类型（2026-10-06）。惰性实例化 + Registry 键去重（同实参同 decl/type）；裸模板名使用诊断。
 - `[~]` **TYP-19** 类型相等/兼容/隐式转换/显式转换规则（含常规算术转换）。TYP-20（enum 强类型、名义相等）与 TYP-22（整数提升 + 常规算术转换）已落地；隐式窄化策略与限定符参与见 TYP-23/TYP-16。
@@ -346,7 +348,7 @@
 - `[ ]` **MEM-01** `(已实现)` 完整 C 指针：解引用、取地址、指针运算、指针比较；补测试。
 - `[ ]` **MEM-02** 地址转换：整数↔指针、不同指针类型显式转换。
 - `[ ]` **MEM-03** `(已实现)` 函数指针；补回调与 ABI 测试。
-- `[ ]` **MEM-04** 限定符：`const/volatile/restrict/atomic` 语义。
+- `[x]` **MEM-04** 限定符：`const/volatile/restrict/atomic` 语义。**完成**（2026-11-23）：const 传播/指针转换/const 方法；volatile 集中 load/store（含位域/聚合/O2 保留）；restrict 放置校验、参数/返回 `noalias`、块作用域 `noalias.scope.decl` + `!alias.scope`；atomic 见 CON-01。设计/计划：`docs/superpowers/specs/2026-11-23-qualifiers-references-design.md`、`docs/superpowers/plans/2026-11-23-volatile-restrict.md`。
 - `[ ]` **MEM-05** `[[nonnull]]`：调用处检查、函数内假设。
 - `[~]` **MEM-06** `malloc/calloc/realloc/free` 声明与标准库包装。**声明在 `std.c`；包装在 `std.mem`**（2026-10-17：`alloc/alloc_zeroed/resize/dealloc/aligned_alloc/aligned_free`，STD-05；2026-11-01 后端切 mimalloc）。
 - `[x]` **MEM-07** allocator 接口、arena、pool、placement 分配。**完成**（2026-11-01 / 2026-11-15）：`std.mem::Allocator`/`Arena`/`Pool` 完成（mimalloc 后端）；新增 `placement_new<T>`、`placement_alloc`、`aligned_malloc`/`alignmalloc`。
