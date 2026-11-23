@@ -19,6 +19,9 @@ enum class AccessLevel {
 
 enum class TypeKind {
     Void,
+    // Distinct null-pointer literal type (`null`), not integer 0.  This
+    // type exists only on expressions and is never declarable.
+    Nullptr,
     Char,
     Bool,
     Pointer,
@@ -405,6 +408,7 @@ public:
 
     Type* getChar();
     Type* getVoid();
+    Type* getNullptr();
 
     void addTypedef(const std::string& name, Type* type);
     Type* getTypedef(const std::string& name) const;

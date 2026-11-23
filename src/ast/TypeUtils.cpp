@@ -34,6 +34,7 @@ std::string unqualifiedTypeName(const Type* type) {
     if (!type) return "<unknown>";
     switch (type->kind) {
         case TypeKind::Void: return "void";
+        case TypeKind::Nullptr: return "nullptr";
         case TypeKind::Char: return "char";
         case TypeKind::Bool: return "bool";
         case TypeKind::Int8: return "int8";

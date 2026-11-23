@@ -218,6 +218,7 @@ static std::string TypeToString(Type* type) {
     if (!type) return "null";
     switch (type->kind) {
         case TypeKind::Void:    return "void";
+        case TypeKind::Nullptr: return "nullptr";
         case TypeKind::Char:    return "char";
         case TypeKind::Bool:    return "bool";
         case TypeKind::Int8:    return "int8";
@@ -266,6 +267,10 @@ void ASTPrinter::printExpr(const ExprAST* expr) {
     if (auto* e = dynamic_cast<const NumberExprAST*>(expr)) {
         printIndent();
         oss << "NumberExpr(" << e->value << ")\n";
+    }
+    else if (dynamic_cast<const NullExprAST*>(expr)) {
+        printIndent();
+        oss << "NullExpr\n";
     }
     else if (auto* e = dynamic_cast<const FloatExprAST*>(expr)) {
         printIndent();

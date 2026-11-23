@@ -880,6 +880,7 @@ llvm::Value* CodegenContext::emitArrayToSliceDecay(ArrayType* arrayType,
 static std::string layoutKindName(TypeKind k) {
     switch (k) {
         case TypeKind::Void: return "void";
+        case TypeKind::Nullptr: return "nullptr";
         case TypeKind::Bool: return "bool";
         case TypeKind::Char: return "char";
         case TypeKind::Int8: return "i8";
@@ -954,6 +955,7 @@ llvm::Type* CodegenContext::getLLVMType(Type* type) {
     switch (type->kind) {
         case TypeKind::Char:   return llvm::Type::getInt8Ty(*context);
         case TypeKind::Void:   return llvm::Type::getVoidTy(*context);
+        case TypeKind::Nullptr:return llvm::PointerType::get(*context, 0);
         case TypeKind::Bool:   return llvm::Type::getInt1Ty(*context);
         // 新增整数类型
         case TypeKind::Int8:   return llvm::Type::getInt8Ty(*context);

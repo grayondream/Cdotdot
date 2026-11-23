@@ -301,6 +301,7 @@ private:
 
     void visit(NumberExprAST& node);
     void visit(BoolLiteralExprAST& node);
+    void visit(NullExprAST& node);
     void visit(FloatExprAST& node);
     void visit(CharExprAST& node);
     void visit(StringExprAST& node);

@@ -325,6 +325,11 @@ llvm::Value* BoolLiteralExprAST::codegen(CodegenContext& ctx) {
     return llvm::ConstantInt::get(ctx.getContext(), llvm::APInt(1, value ? 1 : 0));
 }
 
+llvm::Value* NullExprAST::codegen(CodegenContext& ctx) {
+    return llvm::ConstantPointerNull::get(
+        llvm::PointerType::get(ctx.getContext(), 0));
+}
+
 llvm::Value* FloatExprAST::codegen(CodegenContext& ctx) {
     // LEX-15: pick the APFloat semantics from the literal's fixed-width type.
     // Build at double precision, then convert to the target semantics.
@@ -581,7 +586,9 @@ llvm::Value* BinaryExprAST::codegen(CodegenContext& ctx) {
 
     // Pointer arithmetic (ptr +/- int, int + ptr) must use GEP, not add/sub.
     auto pointerLike = [](Type* t) {
-        return t && (t->kind == TypeKind::Pointer || t->kind == TypeKind::Array);
+        return t && (t->kind == TypeKind::Pointer ||
+                     t->kind == TypeKind::Array ||
+                     t->kind == TypeKind::Nullptr);
     };
     const bool leftPtr = pointerLike(left->type);
     const bool rightPtr = pointerLike(right->type);
@@ -1677,7 +1684,14 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
                 // constant with the parameter's LLVM type (ConstantInt for
                 // integer params, ConstantFP for float params, converting
                 // int/char defaults to a float value when the param is FP).
-                if (paramLLVM->isFloatingPointTy()) {
+                if (dv.isNull) {
+                    if (!paramLLVM->isPointerTy()) {
+                        LOGE("null default argument for non-pointer param {}", i);
+                        return nullptr;
+                    }
+                    defVal = llvm::ConstantPointerNull::get(
+                        llvm::cast<llvm::PointerType>(paramLLVM));
+                } else if (paramLLVM->isFloatingPointTy()) {
                     double v = dv.isInt ? static_cast<double>(dv.intVal)
                              : dv.isChar ? static_cast<double>(dv.charVal)
                              : dv.isDouble ? dv.doubleVal : 0.0;
@@ -1866,7 +1880,14 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
                 const auto& dv = defaultArgValues[defIdx];
                 // C4 review fix (mirror of CallExprAST): FP param with an int/
                 // char default must produce a float constant.
-                if (paramLLVM->isFloatingPointTy()) {
+                if (dv.isNull) {
+                    if (!paramLLVM->isPointerTy()) {
+                        LOGE("null default argument for non-pointer param {}", i);
+                        return nullptr;
+                    }
+                    defVal = llvm::ConstantPointerNull::get(
+                        llvm::cast<llvm::PointerType>(paramLLVM));
+                } else if (paramLLVM->isFloatingPointTy()) {
                     double v = dv.isInt ? static_cast<double>(dv.intVal)
                              : dv.isChar ? static_cast<double>(dv.charVal)
                              : dv.isDouble ? dv.doubleVal : 0.0;

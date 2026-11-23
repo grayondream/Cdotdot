@@ -22,6 +22,8 @@ struct DefaultArgValue {
     double doubleVal = 0;
     bool isChar = false;
     char charVal = 0;
+    // `null` default argument: materialize a null pointer for this parameter.
+    bool isNull = false;
 };
 
 #include "llvm/IR/Value.h"
@@ -137,6 +139,15 @@ class BoolLiteralExprAST : public ExprAST {
 public:
     bool value;
     explicit BoolLiteralExprAST(bool val) : value(val) {}
+    llvm::Value* codegen(CodegenContext& ctx) override;
+};
+
+// `null` is a distinct null-pointer literal of type `nullptr` (TypeKind::Nullptr),
+// not NumberExprAST(0).  It converts only to pointer types and participates in
+// pointer overload resolution like C++ nullptr; integer literal 0 remains the
+// separate C null-pointer constant.
+class NullExprAST : public ExprAST {
+public:
     llvm::Value* codegen(CodegenContext& ctx) override;
 };
 

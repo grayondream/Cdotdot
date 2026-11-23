@@ -275,6 +275,15 @@ int conversionRank(Type* from, Type* to) {
                        adjustParameterTypeForSignature(to)))
         return 0;
 
+    // A nullptr literal converts to any pointer type with one pointer-
+    // conversion rank.  It never converts to arithmetic/bool; all pointer
+    // targets tie (so void*/object-pointer overloads are ambiguous, matching
+    // C++ nullptr).  Reference parameters still require an lvalue later.
+    if (from->kind == TypeKind::Nullptr) {
+        if (to->kind == TypeKind::Pointer && !to->isReference) return 1;
+        return -1;
+    }
+
     // An lvalue-reference parameter ranks by its referent for overload
     // resolution; the expression-aware checks later enforce lvalue-ness and
     // cv binding.  This keeps `f(int&)` selectable for an int argument while

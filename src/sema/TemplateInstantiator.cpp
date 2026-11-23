@@ -272,6 +272,8 @@ std::unique_ptr<ExprAST> TemplateInstantiator::cloneExpr(const ExprAST* e) {
         out = std::make_unique<NumberExprAST>(n->value, n->literalKind);
     } else if (auto* b = dynamic_cast<const BoolLiteralExprAST*>(e)) {
         out = std::make_unique<BoolLiteralExprAST>(b->value);
+    } else if (dynamic_cast<const NullExprAST*>(e)) {
+        out = std::make_unique<NullExprAST>();
     } else if (auto* f = dynamic_cast<const FloatExprAST*>(e)) {
         out = std::make_unique<FloatExprAST>(f->value, f->literalKind);
     } else if (auto* c = dynamic_cast<const CharExprAST*>(e)) {

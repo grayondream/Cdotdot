@@ -41,9 +41,15 @@ static bool qualifiedElementCompatible(Type* target, Type* source) {
                           adjustParameterTypeForSignature(source));
 }
 
-// C null pointer constants are integer constant expressions with value zero.
-// The parser represents both `0` and `null` as NumberExprAST(0).
+// `null` is a distinct nullptr literal; integer literal 0 remains the C null
+// pointer constant. Both may initialize/compare with pointers, but only `null`
+// participates in overload resolution as a nullptr, never as int/bool.
+static bool isNullLiteralExpr(const ExprAST* expr) {
+    return dynamic_cast<const NullExprAST*>(expr) != nullptr;
+}
+
 static bool isNullPointerConstantExpr(const ExprAST* expr) {
+    if (isNullLiteralExpr(expr)) return true;
     auto* number = dynamic_cast<const NumberExprAST*>(expr);
     return number && number->value == 0 && number->valueHi == 0;
 }
@@ -479,7 +485,9 @@ bool SemanticAnalyzer::isPointerOrArray(Type* type) const {
 }
 
 bool SemanticAnalyzer::isScalarType(Type* type) const {
-    return isArithmeticType(type) || isPointerOrArray(type);
+    Type* t = stripTypedef(type);
+    return isArithmeticType(type) || isPointerOrArray(type) ||
+           (t && t->kind == TypeKind::Nullptr);
 }
 
 bool SemanticAnalyzer::isConditionType(Type* type) const {
@@ -497,6 +505,13 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     left = stripTypedef(left);
     right = stripTypedef(right);
     if (!left || !right) return false;
+    // A nullptr literal converts only to pointers (any pointee/qualification),
+    // never to integers, bool, optional/result, or aggregates.
+    if (left->kind == TypeKind::Nullptr || right->kind == TypeKind::Nullptr) {
+        if (left->kind == right->kind) return true;
+        const Type* other = left->kind == TypeKind::Nullptr ? right : left;
+        return other->kind == TypeKind::Pointer && !other->isReference;
+    }
     // Enum types are strong (TYP-09 / TYP-20): only the exact same enum type is
     // implicitly compatible; enum <-> integer/float requires an explicit cast.
     if (left->kind == TypeKind::Enum || right->kind == TypeKind::Enum) {
@@ -571,6 +586,12 @@ Type* SemanticAnalyzer::getCommonType(Type* left, Type* right) const {
     right = stripTypedef(right);
     if (!left) return right;
     if (!right) return left;
+    if (left->kind == TypeKind::Nullptr && right->kind == TypeKind::Nullptr)
+        return left;
+    if (left->kind == TypeKind::Nullptr)
+        return right->kind == TypeKind::Pointer ? right : left;
+    if (right->kind == TypeKind::Nullptr)
+        return left->kind == TypeKind::Pointer ? left : right;
     // TYP-22: integer promotion + usual arithmetic conversions.
     if (isArithmeticType(left) && isArithmeticType(right)) {
         return usualArithmeticType(left, right);
@@ -589,6 +610,7 @@ std::string SemanticAnalyzer::typeToString(Type* type) const {
     }
     switch (type->kind) {
         case TypeKind::Void: return "void";
+        case TypeKind::Nullptr: return "nullptr";
         case TypeKind::Char: return "char";
         case TypeKind::Bool: return "bool";
         case TypeKind::Int8: return "int8";
@@ -767,6 +789,26 @@ Type* SemanticAnalyzer::checkBinaryTypes(BinaryOp op, Type* left, Type* right, E
                 const ExprAST* rhsExpr = binary ? binary->right.get() : nullptr;
                 Type* ls = stripTypedef(left);
                 Type* rs = stripTypedef(right);
+                // nullptr_literal vs integer is valid only for the integer
+                // null constant 0 (C++: nullptr == 0, not nullptr == 1).
+                if (ls && rs && ls->kind == TypeKind::Nullptr &&
+                    isIntegerType(rs)) {
+                    if (!isNullPointerConstantExpr(rhsExpr)) {
+                        emitError("comparison between nullptr and non-zero integer is invalid",
+                                  node);
+                        return nullptr;
+                    }
+                    return typeCtx->getInt32();
+                }
+                if (ls && rs && rs->kind == TypeKind::Nullptr &&
+                    isIntegerType(ls)) {
+                    if (!isNullPointerConstantExpr(lhsExpr)) {
+                        emitError("comparison between non-zero integer and nullptr is invalid",
+                                  node);
+                        return nullptr;
+                    }
+                    return typeCtx->getInt32();
+                }
                 if (ls && rs && ls->kind == TypeKind::Pointer &&
                     isIntegerType(rs) && !isNullPointerConstantExpr(rhsExpr)) {
                     emitError("comparison between pointer and non-zero integer is invalid",
@@ -960,6 +1002,8 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
                    static_cast<SliceType*>(lhsS)->elementType,
                    static_cast<ArrayType*>(rhsS)->elementType)
                    ? lhsRaw : nullptr;
+    if (lhsS->kind == TypeKind::Pointer && rhsS->kind == TypeKind::Nullptr)
+        return lhsRaw;
     if (lhsS->kind == TypeKind::Pointer &&
         (rhsS->kind == TypeKind::Pointer || rhsS->kind == TypeKind::Array)) {
         if (pointerConversionAllowed(lhsS, rhsS)) return lhsRaw;
@@ -1181,13 +1225,17 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
                 for (size_t i = args.size(); i < funcType->paramTypes.size(); ++i) {
                     DefaultArgValue dv;
                     if (auto* def = resolved->decl->params[i]->defaultValue.get()) {
-                        auto v = evaluateConstexpr(def);
-                        if (v) {
-                            switch (v->type) {
-                                case ConstValue::INT:   dv.isInt = true; dv.intVal = v->intVal; break;
-                                case ConstValue::DOUBLE: dv.isDouble = true; dv.doubleVal = v->doubleVal; break;
-                                case ConstValue::CHAR:   dv.isChar = true; dv.charVal = v->charVal; break;
-                                default: break;
+                        if (isNullLiteralExpr(def)) {
+                            dv.isNull = true;
+                        } else {
+                            auto v = evaluateConstexpr(def);
+                            if (v) {
+                                switch (v->type) {
+                                    case ConstValue::INT:   dv.isInt = true; dv.intVal = v->intVal; break;
+                                    case ConstValue::DOUBLE: dv.isDouble = true; dv.doubleVal = v->doubleVal; break;
+                                    case ConstValue::CHAR:   dv.isChar = true; dv.charVal = v->charVal; break;
+                                    default: break;
+                                }
                             }
                         }
                     }
@@ -3347,6 +3395,11 @@ void SemanticAnalyzer::visit(BoolLiteralExprAST& node) {
     node.isLValue = false;
 }
 
+void SemanticAnalyzer::visit(NullExprAST& node) {
+    node.type = typeCtx->getNullptr();
+    node.isLValue = false;
+}
+
 void SemanticAnalyzer::visit(FloatExprAST& node) {
     // LEX-15: unsuffixed floats default to float64.
     node.type = typeForLiteralKind(node.literalKind);
@@ -5348,12 +5401,10 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
     if (npIt != m_nonnullParams.end()) {
         for (auto& [pidx, pname] : npIt->second) {
             if (pidx < node.args.size()) {
-                if (auto* num = dynamic_cast<NumberExprAST*>(node.args[pidx].get())) {
-                    if (num->value == 0) {
-                        emitWarning(DiagnosticCode::WarnNullNonnull,
-                                    "null passed to nonnull parameter '" + pname
-                                        + "' of '" + node.callee + "'", node);
-                    }
+                if (isNullPointerConstantExpr(node.args[pidx].get())) {
+                    emitWarning(DiagnosticCode::WarnNullNonnull,
+                                "null passed to nonnull parameter '" + pname
+                                    + "' of '" + node.callee + "'", node);
                 }
             }
         }
@@ -6745,13 +6796,18 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
             for (size_t i = node.args.size() + 1; i < funcType->paramTypes.size(); ++i) {
                 DefaultArgValue dv;
                 if (i < decl->params.size() && decl->params[i]->defaultValue) {
-                    auto v = evaluateConstexpr(decl->params[i]->defaultValue.get());
-                    if (v) {
-                        switch (v->type) {
-                            case ConstValue::INT:   dv.isInt = true; dv.intVal = v->intVal; break;
-                            case ConstValue::DOUBLE: dv.isDouble = true; dv.doubleVal = v->doubleVal; break;
-                            case ConstValue::CHAR:   dv.isChar = true; dv.charVal = v->charVal; break;
-                            default: break;
+                    auto* def = decl->params[i]->defaultValue.get();
+                    if (isNullLiteralExpr(def)) {
+                        dv.isNull = true;
+                    } else {
+                        auto v = evaluateConstexpr(def);
+                        if (v) {
+                            switch (v->type) {
+                                case ConstValue::INT:   dv.isInt = true; dv.intVal = v->intVal; break;
+                                case ConstValue::DOUBLE: dv.isDouble = true; dv.doubleVal = v->doubleVal; break;
+                                case ConstValue::CHAR:   dv.isChar = true; dv.charVal = v->charVal; break;
+                                default: break;
+                            }
                         }
                     }
                 }
@@ -10108,9 +10164,17 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
         for (auto& param : node.params) {
             if (param->hasDefault) {
                 seenDefault = true;
-                auto v = evaluateConstexpr(param->defaultValue.get());
-                if (!v) {
-                    emitError("default argument must be a compile-time constant", *param);
+                if (isNullLiteralExpr(param->defaultValue.get())) {
+                    Type* pt = stripTypedef(param->type);
+                    if (!pt || pt->kind != TypeKind::Pointer) {
+                        emitError("null default argument requires a pointer parameter",
+                                  *param);
+                    }
+                } else {
+                    auto v = evaluateConstexpr(param->defaultValue.get());
+                    if (!v) {
+                        emitError("default argument must be a compile-time constant", *param);
+                    }
                 }
             } else if (seenDefault) {
                 emitError("default arguments must be trailing (a parameter without a default cannot follow one with a default)", *param);
@@ -10968,6 +11032,7 @@ void SemanticAnalyzer::visit(AsmExprAST& node) {
 void SemanticAnalyzer::visit(ExprAST& expr) {
     if (auto* e = dynamic_cast<NumberExprAST*>(&expr)) { visit(*e); return; }
     if (auto* e = dynamic_cast<BoolLiteralExprAST*>(&expr)) { visit(*e); return; }
+    if (auto* e = dynamic_cast<NullExprAST*>(&expr)) { visit(*e); return; }
     if (auto* e = dynamic_cast<FloatExprAST*>(&expr)) { visit(*e); return; }
     if (auto* e = dynamic_cast<CharExprAST*>(&expr)) { visit(*e); return; }
     if (auto* e = dynamic_cast<StringExprAST*>(&expr)) { visit(*e); return; }

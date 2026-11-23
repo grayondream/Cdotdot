@@ -83,6 +83,7 @@ std::string signatureTypeToMangled(const Type* type) {
             return qualifierPrefix(type) + (e->name.empty() ? "int32" : e->name);
         }
         case TypeKind::Void: return qualifierPrefix(type) + "void";
+        case TypeKind::Nullptr: return qualifierPrefix(type) + "nullptr";
         case TypeKind::Char: return qualifierPrefix(type) + "char";
         case TypeKind::Bool: return qualifierPrefix(type) + "bool";
         case TypeKind::Int8: return qualifierPrefix(type) + "int8";

@@ -1111,6 +1111,7 @@ CompileTimeEvaluator::evalTypeQuery(MethodCallExprAST& node, ASTNode& at) {
         cv.type = ConstValue::STR;
         switch (raw ? raw->kind : TypeKind::Void) {
             case TypeKind::Void: cv.strVal = "void"; break;
+            case TypeKind::Nullptr: cv.strVal = "nullptr"; break;
             case TypeKind::Bool: cv.strVal = "bool"; break;
             case TypeKind::Char: cv.strVal = "char"; break;
             case TypeKind::Int8:

@@ -19,6 +19,13 @@ Type* TypeContext::getVoid() {
     return m_types[TypeKind::Void];
 }
 
+Type* TypeContext::getNullptr() {
+    if (m_types.find(TypeKind::Nullptr) == m_types.end()) {
+        m_types[TypeKind::Nullptr] = new Type(TypeKind::Nullptr);
+    }
+    return m_types[TypeKind::Nullptr];
+}
+
 TypeContext::~TypeContext() {
     for (auto& it : m_types) {
         delete it.second;
