@@ -183,6 +183,9 @@ public:
     // desugars it to `this->name`, keeps the member-access node here for
     // codegen, and copies its type/lvalue-ness onto this node.
     std::unique_ptr<ExprAST> implicitThisAccess;
+    // Set by sema when the symbol is an lvalue reference: the expression type
+    // is the referent and codegen yields the referent address.
+    bool isReferenceBinding = false;
     explicit VariableExprAST(const std::string& n) : name(n) {}
     llvm::Value* codegen(CodegenContext& ctx) override;
 };
@@ -443,6 +446,9 @@ public:
     // 供 loadBitFieldValue/storeBitFieldValue 构造加载/掩码类型（packed
     // 区域单元可为非基类型位宽，如 i40）。
     uint32_t unitBits = 0;
+    // Sema sets this when the resolved field is an lvalue reference: the
+    // expression type is the referent, and codegen loads the stored pointer.
+    bool isReferenceMember = false;
     bool isBitFieldAccess() const override { return isBitField; }
 
 

@@ -351,6 +351,103 @@ bool restrictPlacementValid(const Type* type, std::string* reason) {
     }
 }
 
+bool isReferenceType(const Type* type) {
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    return stripped && stripped->kind == TypeKind::Pointer &&
+           stripped->isReference;
+}
+
+Type* referenceReferent(const Type* type) {
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    if (!stripped || stripped->kind != TypeKind::Pointer ||
+        !stripped->isReference) {
+        return nullptr;
+    }
+    return const_cast<Type*>(stripped->base);
+}
+
+bool typeContainsReference(const Type* type) {
+    if (!type) return false;
+    type = stripTypedefPreservingQualifiers(type);
+    if (!type) return false;
+    if (type->kind == TypeKind::Pointer) {
+        return type->isReference;
+    }
+    switch (type->kind) {
+        case TypeKind::Array:
+            return typeContainsReference(
+                static_cast<const ArrayType*>(type)->elementType);
+        case TypeKind::Struct: {
+            const auto* record = static_cast<const StructType*>(type);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (typeContainsReference(field.type)) return true;
+            }
+            return record->base && typeContainsReference(record->base);
+        }
+        case TypeKind::Class: {
+            const auto* record = static_cast<const ClassType*>(type);
+            const auto& fields = !record->semanticFields.empty()
+                                     ? record->semanticFields : record->fields;
+            for (const auto& field : fields) {
+                if (typeContainsReference(field.type)) return true;
+            }
+            return type->base && typeContainsReference(type->base);
+        }
+        case TypeKind::Union: {
+            for (const auto& member : static_cast<const UnionType*>(type)->members) {
+                if (typeContainsReference(member.type)) return true;
+            }
+            return false;
+        }
+        case TypeKind::Optional:
+            return typeContainsReference(
+                static_cast<const OptionalType*>(type)->elementType);
+        case TypeKind::Result: {
+            const auto* result = static_cast<const ResultType*>(type);
+            return typeContainsReference(result->successType) ||
+                   typeContainsReference(result->errorType);
+        }
+        default:
+            return false;
+    }
+}
+
+bool referencePlacementValid(const Type* type, std::string* reason) {
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    if (!stripped || stripped->kind != TypeKind::Pointer ||
+        !stripped->isReference) {
+        return true;
+    }
+    if (stripped->isRestrict) {
+        if (reason) *reason = "restrict is not valid on a reference";
+        return false;
+    }
+    const Type* referent = stripTypedefPreservingQualifiers(stripped->base);
+    if (!referent) {
+        if (reason) *reason = "reference has no referent type";
+        return false;
+    }
+    if (referent->kind == TypeKind::Pointer && referent->isReference) {
+        if (reason) *reason = "reference to a reference is not supported";
+        return false;
+    }
+    if (referent->kind == TypeKind::Array) {
+        if (reason) *reason = "reference to an array is not supported";
+        return false;
+    }
+    if (referent->kind == TypeKind::Function) {
+        if (reason) *reason = "reference to a function is not supported";
+        return false;
+    }
+    if (referent->kind == TypeKind::Auto) {
+        if (reason) *reason = "auto& deduction is not supported";
+        return false;
+    }
+    return true;
+}
+
 Type* canonicalRecordType(const Type* type) {
     const Type* stripped = stripTypedefPreservingQualifiers(type);
     if (!stripped) return nullptr;
@@ -489,6 +586,60 @@ bool pointerConversionAllowed(const Type* target, const Type* source) {
     // Single-inheritance derived-to-base pointer conversion is safe only at
     // this immediate level; pointer-to-pointer covariance remains rejected.
     return isDerivedRecord(sourceBase, targetBase);
+}
+
+bool referenceBindingAllowed(const Type* referenceType, const Type* sourceType,
+                             bool sourceIsLValue, bool sourceIsBitField,
+                             bool& needsTemporary, std::string* reason) {
+    needsTemporary = false;
+    const Type* ref = stripTypedefsForQualifiers(referenceType);
+    if (!ref || ref->kind != TypeKind::Pointer || !ref->isReference) {
+        if (reason) *reason = "not a reference type";
+        return false;
+    }
+    if (!referencePlacementValid(ref, reason)) return false;
+    const Type* referent = stripTypedefsForQualifiers(ref->base);
+    const Type* source = stripTypedefsForQualifiers(sourceType);
+    if (!referent || !source) {
+        if (reason) *reason = "missing referent type";
+        return false;
+    }
+    if (sourceIsBitField) {
+        if (reason) *reason = "cannot bind a reference to a bit-field";
+        return false;
+    }
+    if (source->kind == TypeKind::Array || source->kind == TypeKind::Function) {
+        if (reason) *reason = "cannot bind a reference to this type";
+        return false;
+    }
+
+    if (!sourceIsLValue) {
+        if (!referent->isConst) {
+            if (reason) *reason = "cannot bind a non-const reference to an rvalue";
+            return false;
+        }
+        needsTemporary = true;
+        return true;
+    }
+
+    const Type* referentUnqual = stripTopLevelQualifiers(referent);
+    const Type* sourceUnqual = stripTopLevelQualifiers(source);
+    const bool compatible = typesIdentical(referentUnqual, sourceUnqual) ||
+                            isDerivedRecord(sourceUnqual, referentUnqual);
+    if (!compatible) {
+        if (reason) {
+            *reason = "reference referent type '" +
+                      qualifiedTypeToString(referent) +
+                      "' is incompatible with '" +
+                      qualifiedTypeToString(source) + "'";
+        }
+        return false;
+    }
+    if (!qualifiersMayBeAdded(referent, source)) {
+        if (reason) *reason = "binding would discard const or volatile";
+        return false;
+    }
+    return true;
 }
 
 Type* qualifyMemberLValue(const Type* memberType, bool objectIsConst,

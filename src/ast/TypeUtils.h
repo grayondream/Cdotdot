@@ -36,6 +36,17 @@ Type* stripTypedefPreservingQualifiers(const Type* type);
 // parameter or return is ignored.  Pointee qualifiers are preserved.
 Type* adjustParameterTypeForSignature(const Type* type);
 
+// Reference helpers.  A reference is a Pointer with isReference; the
+// referent is its base type.  These helpers strip typedefs while preserving
+// alias-level qualifiers.
+bool isReferenceType(const Type* type);
+Type* referenceReferent(const Type* type);
+bool typeContainsReference(const Type* type);
+bool referencePlacementValid(const Type* type, std::string* reason = nullptr);
+bool referenceBindingAllowed(const Type* referenceType, const Type* sourceType,
+                             bool sourceIsLValue, bool sourceIsBitField,
+                             bool& needsTemporary, std::string* reason = nullptr);
+
 // Restrict placement: true only when the top-level type (after typedef
 // stripping) is a restrict-qualified pointer to an object type.
 bool isRestrictQualifiedPointer(const Type* type);

@@ -52,6 +52,9 @@ public:
     Type* type;
     std::unique_ptr<ExprAST> initExpr;
     bool isCompileTime = false;
+    // Sema decision for an lvalue-reference local: bind an lvalue address or
+    // materialize an rvalue temporary before storing the referent address.
+    bool referenceNeedsTemporary = false;
     std::optional<FoldedValue> foldedValue;
     // Constexpr container value; codegen materializes it as immutable
     // constant arrays + a constant container struct.

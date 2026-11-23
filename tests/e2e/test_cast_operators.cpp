@@ -248,10 +248,10 @@ TEST_F(CastOperatorsE2E, IntegerConversionIsUsableAsCondition) {
     )"), 0);
 }
 
-TEST_F(CastOperatorsE2E, GeneralReferenceTypesAreRejected) {
+TEST_F(CastOperatorsE2E, GeneralLocalReferencesAreAcceptedBySema) {
     AnalyzeResult r = analyzeSource(
-        "int32 main() { int32 x = 7; int32& r = x; return r; }");
-    EXPECT_GT(r.errors, 0);
+        "int32 main() { int32 x = 7; int32& r = x; r = 8; return x; }");
+    EXPECT_EQ(r.errors, 0);
 }
 
 TEST_F(CastOperatorsE2E, ReferenceParametersAreRejected) {

@@ -40,6 +40,20 @@ TEST_F(ParserTest, ParsesConstMemberFunction) {
     EXPECT_TRUE(parser.getErrors().empty());
 }
 
+TEST_F(ParserTest, ParsesReferenceLevelWithoutCoveringPointer) {
+    Lexer lexer("ref.cdd", "int32*& r = p;");
+    Parser parser(lexer.tokenize());
+    auto tu = parser.parse();
+    ASSERT_NE(tu, nullptr);
+    EXPECT_TRUE(parser.getErrors().empty());
+    auto* v = dynamic_cast<VarDeclAST*>(tu->declarations.front().get());
+    ASSERT_NE(v, nullptr);
+    ASSERT_TRUE(v->type && v->type->kind == TypeKind::Pointer);
+    EXPECT_TRUE(v->type->isReference);
+    ASSERT_TRUE(v->type->base && v->type->base->kind == TypeKind::Pointer);
+    EXPECT_FALSE(v->type->base->isReference);
+}
+
 TEST_F(ParserTest, ParsesRestrictBeforeAndAfterBaseType) {
     Lexer leadingLexer("restrict.cdd", "restrict int32* p;");
     Parser leadingParser(leadingLexer.tokenize());

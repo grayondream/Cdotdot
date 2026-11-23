@@ -490,8 +490,7 @@ bool SemanticAnalyzer::isConditionType(Type* type) const {
 }
 
 bool SemanticAnalyzer::isReferenceType(Type* type) const {
-    Type* t = stripTypedef(type);
-    return t && t->kind == TypeKind::Pointer && t->isReference;
+    return ::isReferenceType(type);
 }
 
 bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
@@ -3398,6 +3397,12 @@ void SemanticAnalyzer::visit(VariableExprAST& node) {
         return;
     } else {
         node.name = key;
+        if (isReferenceType(sym->type)) {
+            node.type = referenceReferent(sym->type);
+            node.isReferenceBinding = true;
+            node.isLValue = true;
+            return;
+        }
         node.type = sym->type;
     }
     node.isLValue = true;
@@ -8008,10 +8013,35 @@ void SemanticAnalyzer::visit(ContinueStmtAST& node) {}
 void SemanticAnalyzer::visit(NullStmtAST& node) {}
 
 void SemanticAnalyzer::visit(VarDeclAST& node) {
-    if (isReferenceType(node.type)) {
-        emitError("reference types are only supported as the return type of operator[]", node);
-        node.type = nullptr;
-        return;
+    const bool referenceVar = isReferenceType(node.type);
+    if (referenceVar) {
+        std::string reason;
+        if (!referencePlacementValid(node.type, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
+            node.type = nullptr;
+            return;
+        }
+        if (!currentFunction) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "global reference variables are not supported", node);
+            node.type = nullptr;
+            return;
+        }
+        if (node.isStaticLocal || node.isThreadLocal) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "static/thread_local reference variables are not supported",
+                      node);
+            node.type = nullptr;
+            return;
+        }
+        if (!node.initExpr) {
+            emitError(DiagnosticCode::SemUninitializedReference,
+                      "reference variable '" + node.name +
+                          "' must be initialized",
+                      node);
+            node.type = nullptr;
+            return;
+        }
     }
     const bool savedCtInit = m_inCompileTimeInitializer;
     if (node.isCompileTime) m_inCompileTimeInitializer = true;
@@ -8352,7 +8382,27 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
         }
     }
 
-    if (node.initExpr) {
+    if (referenceVar) {
+        Type* initType = getExprType(*node.initExpr);
+        bool needsTemporary = false;
+        std::string reason;
+        bool isBitField = false;
+        if (auto* member = dynamic_cast<MemberAccessExprAST*>(node.initExpr.get()))
+            isBitField = member->isBitField;
+        if (!initType ||
+            !referenceBindingAllowed(node.type, initType,
+                                     node.initExpr->isLValue, isBitField,
+                                     needsTemporary, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      reason.empty()
+                          ? "cannot bind reference variable '" + node.name + "'"
+                          : "cannot bind reference variable '" + node.name +
+                                "': " + reason,
+                      node);
+        } else {
+            node.referenceNeedsTemporary = needsTemporary;
+        }
+    } else if (node.initExpr) {
         if (auto* initList = dynamic_cast<InitializerListExprAST*>(node.initExpr.get())) {
             initList->type = node.type;
             initList->isLValue = false;
@@ -8509,7 +8559,8 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
 
 void SemanticAnalyzer::visit(ArrayDeclAST& node) {
     if (isReferenceType(node.elementType)) {
-        emitError("reference types are only supported as the return type of operator[]", node);
+        emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                  "arrays of references are not supported", node);
         node.elementType = nullptr;
         return;
     }
@@ -8828,9 +8879,9 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
     // 不符（spec：仅 struct/union）。
     validateAnnotations(node.annotations, node, node.isClassDecl ? "class" : "struct");
     for (const auto& field : node.fields) {
-        if (isReferenceType(field.type)) {
-            emitError("reference types are only supported as the return type of operator[]", node);
-            break;
+        std::string reason;
+        if (!referencePlacementValid(field.type, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
         }
     }
 
@@ -9212,6 +9263,15 @@ void SemanticAnalyzer::visit(UnionDeclAST& node) {
         // PAR-24: a private class-scoped alias may not name a union member.
         checkNestedTypeAccess(member.type, node);
         checkRestrictPlacement(member.type, node);
+        if (isReferenceType(member.type)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "union reference members are not supported", node);
+        } else {
+            std::string reason;
+            if (!referencePlacementValid(member.type, &reason)) {
+                emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
+            }
+        }
         // CON-01: same atomic restriction as a struct/class field; strip a
         // typedef so `using A = atomic int128;` cannot bypass the check.
         Type* mt = stripTypedef(member.type);
@@ -10721,9 +10781,12 @@ bool SemanticAnalyzer::isMethodCall(ExprAST& expr) {
 
 // 新增AST节点的visit方法实现
 void SemanticAnalyzer::visit(UsingDeclAST& node) {
-    if (isReferenceType(node.aliasedType)) {
-        emitError("reference types are only supported as the return type of operator[]", node);
-        return;
+    {
+        std::string reason;
+        if (!referencePlacementValid(node.aliasedType, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
+            return;
+        }
     }
     // PAR-24: using 是唯一别名形式——注解目标校验、弃用折叠与内联 enum
     // 枚举量注册都与原 typedef 语义对齐。

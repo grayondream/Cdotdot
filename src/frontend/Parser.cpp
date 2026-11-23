@@ -3151,7 +3151,12 @@ Type* Parser::parseType() {
     // Reference-return suffix (`T&`).  The language has no general reference
     // variables; this is currently consumed by writable `operator[]` methods,
     // where the pointer representation doubles as the returned lvalue.
-    while (check(TokenType::TOKEN_BIT_AND)) {
+    while (check(TokenType::TOKEN_BIT_AND) || check(TokenType::TOKEN_AND)) {
+        if (check(TokenType::TOKEN_AND)) {
+            error("rvalue references ('T&&') are not supported", *peek());
+            advance();
+            return baseType;
+        }
         advance();
         auto* refType = new Type(TypeKind::Pointer, baseType);
         refType->isReference = true;

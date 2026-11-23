@@ -55,6 +55,9 @@ enum class DiagnosticCode {
     SemReflectNonAggregate,
     // MEM-04: restrict is only valid on pointers to object types.
     SemInvalidRestrictPlacement,
+    // MEM-04: lvalue-reference binding/placement.
+    SemInvalidReferenceBinding,
+    SemUninitializedReference,
 
     WarnUninitializedVariable,
     WarnUnusedVariable,

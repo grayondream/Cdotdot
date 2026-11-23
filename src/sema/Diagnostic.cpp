@@ -43,6 +43,8 @@ const DiagnosticInfo kRegistry[] = {
     {DiagnosticCode::SemUnknownType, "E2031", "unknown type"},
     {DiagnosticCode::SemReflectNonAggregate, "E2032", "fields_of requires an aggregate type"},
     {DiagnosticCode::SemInvalidRestrictPlacement, "E2033", "invalid restrict placement"},
+    {DiagnosticCode::SemInvalidReferenceBinding, "E2034", "invalid reference binding"},
+    {DiagnosticCode::SemUninitializedReference, "E2035", "uninitialized reference"},
 
     {DiagnosticCode::WarnUninitializedVariable,  "W3001", "variable may be uninitialized"},
     {DiagnosticCode::WarnUnusedVariable,         "W3002", "unused variable"},
