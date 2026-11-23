@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include "ast/Decl.h"
 #include "ast/Mangle.h"
+#include "ast/TypeUtils.h"
 #include "frontend/OperatorPrecedence.h"
 #include "frontend/Token.h"
 
@@ -3093,45 +3094,13 @@ Type* Parser::parseType() {
         }
     }
 
-    // Qualifiers must not mutate shared scalar singletons (`const char*` was
-    // poisoning the global char type, making every later char* const).
-    if (isConst || isVolatile) {
-        switch (baseType->kind) {
-            case TypeKind::Void:
-            case TypeKind::Char:
-            case TypeKind::Bool:
-            case TypeKind::Int8: case TypeKind::Int16:
-            case TypeKind::Int32: case TypeKind::Int64:
-            case TypeKind::Int128:
-            case TypeKind::UInt8: case TypeKind::UInt16:
-            case TypeKind::UInt32: case TypeKind::UInt64:
-            case TypeKind::UInt128:
-            case TypeKind::ISize: case TypeKind::USize:
-            case TypeKind::Float16: case TypeKind::Float32:
-            case TypeKind::Float64: case TypeKind::Float128: {
-                auto* copy = new Type(baseType->kind, baseType->base);
-                copy->isConst = baseType->isConst;
-                copy->isVolatile = baseType->isVolatile;
-                copy->isAtomic = baseType->isAtomic;
-                copy->isRestrict = baseType->isRestrict;
-                copy->ctDeadBranch = baseType->ctDeadBranch;
-                copy->deprecated = baseType->deprecated;
-                copy->deprecatedMsg = baseType->deprecatedMsg;
-                baseType = copy;
-                break;
-            }
-            default:
-                break;
-        }
-    }
-    baseType->isConst = isConst;
-    baseType->isVolatile = isVolatile;
-    // CON-01: `atomic T` must NOT mutate the shared scalar singletons
-    // (getInt32() etc. are process-wide) — clone the type instead. A plain
-    // `new Type(kind, base)` clone only preserves scalar kinds; aggregating
-    // subclasses (Struct/Class/Union fields, Enum values) would be corrupted
-    // and later crash LayoutBuilder. So: strip typedefs to the innermost type;
-    // clone only scalar kinds; reject atomic-on-aggregate here (C1/C2 fix).
+    // Qualifiers apply to this declaration only.  Clone the complete type
+    // shell/payload instead of mutating shared scalar singletons or aggregate
+    // definitions (`const S*` must not poison the next plain `S`).
+    baseType = qualifyTopLevel(baseType, isConst, isVolatile);
+
+    // CON-01: `atomic T` must also use a private clone.  It is valid only on
+    // integer scalar types (or a template type variable resolved later).
     if (isAtomic) {
         Type* inner = baseType;
         while (inner && inner->kind == TypeKind::Typedef)
@@ -3141,30 +3110,9 @@ Type* Parser::parseType() {
             error("atomic requires an integer scalar type", *peek());
             return nullptr;
         }
-        if (inner->kind == TypeKind::TypeVar) {
-            // `atomic T` inside a template body: a plain Type(kind, base)
-            // clone would lose TypeVarType::name and later crash template
-            // instantiation. Preserve the placeholder identity and let the
-            // instantiator apply the atomic qualifier to the resolved type.
-            auto* tv = static_cast<TypeVarType*>(inner);
-            auto* copy = new TypeVarType(tv->name);
-            copy->isConst = isConst;
-            copy->isVolatile = isVolatile;
-            copy->isAtomic = true;
-            copy->ctDeadBranch = inner->ctDeadBranch;
-            copy->deprecated = inner->deprecated;
-            copy->deprecatedMsg = inner->deprecatedMsg;
-            baseType = copy;
-        } else {
-            auto* copy = new Type(inner->kind, inner->base);
-            copy->isConst = isConst;
-            copy->isVolatile = isVolatile;
-            copy->isAtomic = true;
-            copy->ctDeadBranch = inner->ctDeadBranch;
-            copy->deprecated = inner->deprecated;
-            copy->deprecatedMsg = inner->deprecatedMsg;
-            baseType = copy;
-        }
+        Type* copy = cloneType(baseType);
+        copy->isAtomic = true;
+        baseType = copy;
     }
 
     // Check for pointer types with qualifiers
