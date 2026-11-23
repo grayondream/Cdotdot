@@ -20,10 +20,10 @@ extern usize  strlen(const char* s);
 extern int32    strcmp(const char* a, const char* b);
 extern int32    strncmp(const char* a, const char* b, usize n);
 extern char*  strcpy(char* dst, const char* src);
-extern void*  memcpy(void* dst, void* src, usize n);
+extern void*  memcpy(void* dst, const void* src, usize n);
 extern void*  memset(void* dst, int32 value, usize n);
-extern void*  memmove(void* dst, void* src, usize n);
-extern int32    memcmp(void* a, void* b, usize n);
+extern void*  memmove(void* dst, const void* src, usize n);
+extern int32    memcmp(const void* a, const void* b, usize n);
 
 extern int32    abs(int32 x);
 extern void   exit(int32 status);

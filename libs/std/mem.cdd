@@ -11,10 +11,10 @@ extern void* mi_calloc(usize count, usize size);
 extern void* mi_realloc(void* ptr, usize size);
 extern void  mi_free(void* ptr);
 extern void* mi_malloc_aligned(usize size, usize alignment);
-extern void* memcpy(void* dst, void* src, usize n);
-extern void* memmove(void* dst, void* src, usize n);
+extern void* memcpy(void* dst, const void* src, usize n);
+extern void* memmove(void* dst, const void* src, usize n);
 extern void* memset(void* dst, int32 value, usize n);
-extern int32 memcmp(void* a, void* b, usize n);
+extern int32 memcmp(const void* a, const void* b, usize n);
 
 export namespace std {
 

@@ -1695,3 +1695,27 @@
   - 新增可复用 `benchmarks/ab.py`（二进制/参数 A/B、校验和、同核交替计时、JSON 报告、编译器/产物哈希、正向对照 `--expect-different`）。
 - 记录：`benchmarks/results/2026-11-22-recursive-inlining-ab.md`；代码 commits `7918ddf`、`9e71fed`、`75aa0ef`。
 - 下一步：PGO 离线训练/使用与函数排序计划 `docs/superpowers/plans/2026-11-22-pgo-workflow.md`；PGO 保持 opt-in。
+
+## 2026-11-23 — C 限定符与 const 语义（第一阶段）
+
+- 背景：修复 const 过度传播/传播不足、多级指针限定符、聚合 const 子对象赋值、const 成员函数与内建 `const string` 行为；`volatile`/`restrict`/左值引用按设计拆分到后续计划。
+- 设计/计划：
+  - `docs/superpowers/specs/2026-11-23-qualifiers-references-design.md`
+  - `docs/superpowers/plans/2026-11-23-qualifier-const.md`
+- 类型层：
+  - 新增 `src/ast/TypeUtils.{h,cpp}`：`cloneType`/`qualifyType`/`qualifyTopLevel`/`typesIdentical`/`qualifyMemberLValue`/`isModifiableLValueType`/`qualifiedTypeToString`。
+  - 解析器 `const`/`volatile` 不再写入共享 `Type`；聚合/typedef/函数指针等子类完整克隆。
+  - 签名身份按 C 调整：按值顶层 cv/restrict 忽略；pointee cv 和引用参与身份与 mangling；`restrict` 不参与。
+- 语义：
+  - 指针转换执行限定符加/减、多级安全规则、`void*` 对象指针转换与 derived-to-base；`0`/`null` 之外整数不再隐式转指针。
+  - const 对象/成员/数组/别名写入拒绝；含 const 字段/数组元素/基类的聚合整体赋值拒绝，复制初始化保持允许。
+  - const 成员函数与 const `this`；const 对象只能调用 const 方法；const 方法内字段写入/非 const 方法调用拒绝。
+  - `const string` 的 `append`/`push`/`destroy` 拒绝，`data()` 返回 `const char*`；`const slice` 元素仍可变。
+- 迁移：
+  - `libs/std/c.cdd`、`libs/std/mem.cdd` 的 `memcpy`/`memmove` 源参数改为 `const void*`，`memcmp` 两侧改为 `const void*`。
+  - qsort 无捕获 lambda 比较器测试改为与 libc 绑定一致的 `void*` 参数（const/non-const 函数指针参数类型不兼容）。
+- 验证：
+  - 全量 **1991/1991** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - 复现探针：const 丢弃、const 成员写、const 指针成员写、const 对象取可变地址、const 别名写均报错；const 对象指针成员写 pointee、const 聚合复制初始化通过。
+  - 提交：`553479d`、`8cf4a76`、`fcf2773`、`0e58071`、`c25ceab`、`9f5cbe8`。
+- 下一步：按设计继续 `volatile`/`restrict` 计划与左值引用计划；PGO 仍为 opt-in 未实现项。
