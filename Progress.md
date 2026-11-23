@@ -1754,3 +1754,34 @@
   - 探针：O2 下两次 volatile 写保留 2 条 `store volatile`；`restrict int32 g` / `int32 restrict g` 均报 E2033；restrict 参数/返回为 `noalias`；块作用域 emit scope decl 且 deref 带 `!alias.scope`；全局/成员 restrict 无 `!alias.scope`。
 - 提交：`50a5299`、`dc7f86b`、`c06744e`、`0d00494`、`dd1499f`、`ac13991`。
 - 下一步：左值引用计划（`T&` / `const T&` / `volatile T&`）；引用 ABI、绑定、参数/返回/字段、生命周期与 `operator[]` 迁移。
+
+## 2026-11-23 — 左值引用（第三阶段）
+
+- 背景：完成 `docs/superpowers/specs/2026-11-23-qualifiers-references-design.md` §7 左值引用；volatile/restrict 已在上一阶段完成。
+- 设计/计划：
+  - `docs/superpowers/plans/2026-11-23-lvalue-references.md`
+- 类型与绑定：
+  - `isReferenceType` / `referenceReferent` / `typeContainsReference` / `referencePlacementValid` / `referenceBindingAllowed`。
+  - 引用 = `Pointer + isReference`；拒绝 `T&&`、引用数组、引用到引用、指向引用的指针、数组/函数引用、union 引用成员、`auto&`、全局/静态引用。
+  - 绑定矩阵：`T&` 仅非 const/non-volatile lvalue；`const T&` 接受 lvalue/rvalue；`volatile T&` 可加不可减；`const volatile T&` 接受全部；`T*&` 保留指针对象 cv；支持单继承 derived-to-base。
+  - 局部/参数 `const T&` 的 rvalue 在函数入口 alloca 物化；引用返回必须 lvalue，引用成员禁止临时对象。
+- 表达式与 codegen：
+  - 引用表达式的类型是 referent、`isLValue=true`；`VariableExpr`/引用成员/引用返回调用都解码为 referent 地址。
+  - `bindReference` 统一处理 lvalue 地址与 rvalue 临时；调用实参、局部声明、返回、成员初始化复用。
+  - `sizeof/alignof` 对引用取 referent；引用存储为指针大小的 ABI。
+- 聚合：
+  - 引用字段按指针大小布局；brace/designated 初始化必须绑定每个引用成员；整聚合拷贝初始化复制绑定；整聚合赋值拒绝；`s.r = v` 写 referent。
+- 签名与模板：
+  - `typesEqual` 区分 `T*`/`T&`；mangling 保留 `ref` 与 referent cv；`T` 与 `T&` 视为重复重载，`T&` 与 `const T&` 仍可区分。
+  - 模板推导支持 `T&`（仅 lvalue，保留源 cv）和 `const T&`（吸收 cv、允许 rvalue）；TemplateInstantiator 保留 `isReference` 与 TypeVar cv。
+  - `operator[]` 成员/自由函数统一走引用返回；自由函数按声明参数类型 mangle，修复引用参数调用点符号名不一致。
+- 测试：
+  - `tests/sema/test_references.cpp`（放置/绑定/成员/签名/模板）。
+  - `tests/e2e/test_references.cpp`（局部/参数/返回/临时/`T*&`/引用成员/聚合拷贝/模板/`operator[]`/ABI）。
+  - 旧 CastOperators 引用拒绝测试迁移为正向运行时测试。
+- 验证：
+  - 全量 **2082/2082** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部跑通，`checksum_ok` 无失败。
+  - 探针：非 const rvalue、返回临时、引用成员临时、聚合含引用赋值分别报 E2034/E2003；`const int32&` rvalue 正常；引用 ABI 为指针大小。
+- 提交：`8d2081f`、`c585c89`、`2e39b69`、`cfff274`、`a623bc6`、`3ca7930`。
