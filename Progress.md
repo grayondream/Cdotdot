@@ -1796,3 +1796,25 @@
   - const 引用排序不再普遍加罚，改为逐参数缩放评分。
   - `typeContainsReference` 增加环深度上限。
 - 提交：`8d2081f`、`c585c89`、`2e39b69`、`cfff274`、`a623bc6`、`3ca7930`、`b7d5144`、`3fa9702`。
+
+
+## 2026-11-23 — `null` 作为真正的空指针字面量
+
+- 背景：`null` 在 parser 中直接变成 `NumberExprAST(0)`，sema 把它当 `int32 0`，导致 `int32 x = null`、`bool b = null`、`return null`（非指针返回）被接受，`f(int32)`/`f(int32*)` 重载选整数。
+- 修复：
+  - 新增 `NullExprAST` 与 `TypeKind::Nullptr`，parser 生成独立节点；sema 类型为 nullptr。
+  - `null` 只隐式转换为对象/`void`/函数指针；整数 `0` 继续作为 C 空指针常量。
+  - `conversionRank`：`null` 到任意指针统一 rank 1，`void*`/`T*` 重载产生歧义；不再与整数/bool 竞争。
+  - 初始化、赋值、返回、参数、指针比较、条件/`!`/逻辑、`?:`、全局/`auto` 均按 nullptr 规则处理；`null == 0` 合法，`null == 非零整数` 拒绝。
+  - 指针默认实参支持 `= null`（函数与方法），`DefaultArgValue` 增加 `isNull`；非指针默认参数报错。
+  - `nonnull` 诊断识别新的 null 字面量。
+  - `Mangle`/type printing/layout kind/AST printer/template clone/codegen `getLLVMType` 同步 `Nullptr`。
+  - `docs/spec/conversions.md` §6/§8 更新；`nullptr` 仍不是关键字。
+- 测试：
+  - `tests/sema/test_nullptr.cpp`：整数/bool/浮点/返回拒绝、指针转换、0 语义、重载、歧义、比较、三元、默认实参。
+  - `tests/e2e/test_nullptr.cpp`：重载运行时、赋值/比较、条件/`!`/逻辑、默认实参、三元、`void*` 返回与函数指针。
+- 验证：
+  - 全量 **2116/2116** 通过。
+  - `examples/all_features.cdd` → `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
+- 提交：`0c18876`。
