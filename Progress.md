@@ -1738,12 +1738,19 @@
   - `FunctionDeclAST::codegenPrototype` 为 restrict 指针参数/返回添加 LLVM `noalias`；不进入签名/重载/mangling。
   - 块作用域 restrict：`beginFunctionRestrictScope`/`declareRestrictScope` 生成 `llvm.experimental.noalias.scope.decl`（scope list 形式）；`noteRestrictPointerLoad` 记录由 restrict 存储加载出的指针 value，`applyAliasScope` 沿 GEP/cast/select/phi 传播并附加 `!alias.scope`。文件作用域/成员 restrict 不注册逐访问 scope。
 - 测试：
-  - `tests/sema/test_restrict.cpp`（放置/签名）、`tests/e2e/test_restrict.cpp`（noalias、块作用域 scope、全局/成员/普通指针无元数据）。
-  - `tests/e2e/test_volatile.cpp`（标量/指针层级区分、bit-field、atomic volatile、字段/数组/聚合、O2 双 store 保留）。
+  - `tests/sema/test_restrict.cpp`（放置/签名/typedef 定义）、`tests/e2e/test_restrict.cpp`（noalias、声明/定义契约、块作用域 scope、全局/成员/普通指针无元数据）。
+  - `tests/e2e/test_volatile.cpp`（标量/指针层级区分、bit-field 全读取路径、atomic volatile、字段/数组/聚合、O2 双 store 保留、限定聚合布局、volatile 聚合初始化）。
+- 终审修复（commit `ac13991`）：
+  - volatile 位域读取统一到 `CodegenContext::readLValueValue`，`return` / `if` / 初始化三条路径不再绕过 volatile。
+  - 新增 `canonicalRecordType`：限定聚合克隆只控制访问语义，字段/位域/继承布局一律走注册的规范类型；修复 `volatile/const struct` 位域生成 `i0` 和继承字段错位。
+  - volatile 聚合初始化逐字段/位域传递 object volatile，O2 下初始化存储不再被删除。
+  - typedef 外层 volatile 指针的 `->` 访问保留指针对象 volatile。
+  - `using` 定义处校验 restrict；函数定义按自身限定符决定 `noalias`，不再继承 restrict 声明契约。
+  - 新增 IR 测试模块 `verifyModule` 门禁；restrict scope 传播加环检测。
 - 验证：
-  - 全量 **2033/2033** 通过。
+  - 全量 **2043/2043** 通过。
   - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
   - `python3 benchmarks/run.py --quick`：16 个负载全部跑通，`checksum_ok` 无失败。
   - 探针：O2 下两次 volatile 写保留 2 条 `store volatile`；`restrict int32 g` / `int32 restrict g` 均报 E2033；restrict 参数/返回为 `noalias`；块作用域 emit scope decl 且 deref 带 `!alias.scope`；全局/成员 restrict 无 `!alias.scope`。
-- 提交：`50a5299`、`dc7f86b`、`c06744e`、`0d00494`、`dd1499f`。
+- 提交：`50a5299`、`dc7f86b`、`c06744e`、`0d00494`、`dd1499f`、`ac13991`。
 - 下一步：左值引用计划（`T&` / `const T&` / `volatile T&`）；引用 ABI、绑定、参数/返回/字段、生命周期与 `operator[]` 迁移。
