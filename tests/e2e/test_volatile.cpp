@@ -11,6 +11,7 @@
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -37,6 +38,10 @@ static std::string compileQualifierIRImpl(const std::string& source,
     ctx.setSourceFile("volatile.cdd");
     ast->codegen(ctx);
     ctx.finalizeDebugInfo();
+
+    std::string verifyErrors;
+    llvm::raw_string_ostream verifyStream(verifyErrors);
+    if (llvm::verifyModule(ctx.getModule(), &verifyStream)) return "";
 
     if (optimizeO2) {
         llvm::LoopAnalysisManager LAM;
@@ -159,6 +164,62 @@ TEST_F(QualifiersIR, OptimizationKeepsBothVolatileStores) {
     )");
     ASSERT_FALSE(ir.empty());
     EXPECT_EQ(countSubstring(ir, "store volatile"), 3u);
+}
+
+TEST_F(QualifiersIR, VolatileBitFieldReadsUseVolatileInAllPaths) {
+    auto ir = compileQualifierIR(R"(
+        struct VBReadS { volatile int32 x : 3; };
+        int32 main() {
+            struct VBReadS b;
+            b.x = 2;
+            int32 y = b.x;
+            if (b.x) y += 1;
+            return y - 3;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_GE(countSubstring(ir, "load volatile i32"), 3u);
+}
+
+TEST_F(QualifiersIR, QualifiedAggregateBitFieldLayoutIsValid) {
+    auto ir = compileQualifierIR(R"(
+        struct VQualBitsS { int32 x : 3; };
+        int32 main() {
+            volatile struct VQualBitsS b;
+            b.x = 2;
+            return b.x - 2;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_GE(countSubstring(ir, "load volatile i32"), 1u);
+    EXPECT_EQ(ir.find("i0"), std::string::npos);
+}
+
+TEST_F(QualifiersIR, VolatileAggregateInitializerStoresSurviveO2) {
+    auto ir = compileQualifierIRAtO2(R"(
+        struct VInitS { int32 a; int32 b; };
+        int32 main() {
+            volatile struct VInitS s = {1, 2};
+            return s.a + s.b;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_EQ(countSubstring(ir, "store volatile i32"), 2u);
+}
+
+TEST_F(QualifiersIR, TypedefVolatilePointerArrowLoadIsVolatile) {
+    auto ir = compileQualifierIR(R"(
+        struct VTypedefPtrS { int32 x; };
+        using VTypedefPtr = VTypedefPtrS*;
+        int32 main() {
+            VTypedefPtrS s;
+            volatile VTypedefPtr p = &s;
+            p->x = 1;
+            return p->x - 1;
+        }
+    )");
+    ASSERT_FALSE(ir.empty());
+    EXPECT_GE(countSubstring(ir, "load volatile ptr"), 1u);
 }
 
 TEST_F(QualifiersIR, PointeeVolatileDoesNotQualifyPointerVariable) {

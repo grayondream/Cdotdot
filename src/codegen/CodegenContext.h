@@ -62,6 +62,11 @@ public:
                                  llvm::Value* loadedPointer);
     void applyAliasScope(llvm::Instruction* inst, llvm::Value* addr);
 
+    // Single source-level lvalue read point. Bit-field lvalues use their
+    // storage-unit address and volatility; all other lvalues go through
+    // loadValue. Non-lvalues pass through unchanged.
+    llvm::Value* readLValueValue(ExprAST& expr, llvm::Value* value);
+
     // P1-07 / CG-09: bit-field storage-unit read/write (read-modify-write).
     // unitAddr points at the integer storage unit (materialized LLVM field);
     // the field spans [bitOffset, bitOffset+bitWidth) of that unit, counted

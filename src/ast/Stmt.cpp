@@ -9,13 +9,7 @@ namespace {
 // bit-field lvalues are read via loadBitFieldValue, everything else via
 // loadValue. Non-lvalues pass through unchanged.
 llvm::Value* readLValue(CodegenContext& ctx, ExprAST& e, llvm::Value* v) {
-    if (!v) return nullptr;
-    if (!e.isLValue) return v;
-    if (e.isBitFieldAccess()) {
-        auto& ma = static_cast<MemberAccessExprAST&>(e);
-        return ctx.loadBitFieldValue(v, ma.bitOffset, ma.bitWidth, e.type, ma.unitBits);
-    }
-    return ctx.loadValue(v, e.type);
+    return ctx.readLValueValue(e, v);
 }
 
 // Evaluate a controlling expression. Variable references codegen to their

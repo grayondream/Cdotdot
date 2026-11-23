@@ -10732,6 +10732,7 @@ void SemanticAnalyzer::visit(UsingDeclAST& node) {
     // Resolve type-only queries before the alias enters the type table so
     // fields/arrays declared through the alias see the concrete closure type.
     node.aliasedType = resolveTypeInstance(node.aliasedType, node);
+    checkRestrictPlacement(node.aliasedType, node);
 
     // `[[deprecated]] using T = ...;` —— 折叠到别名类型，使用点告警。
     auto markDeprecated = [&](Type* td) {

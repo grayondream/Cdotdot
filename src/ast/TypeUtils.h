@@ -45,6 +45,14 @@ bool isRestrictQualifiedPointer(const Type* type);
 // function pointers.  Typedefs are stripped before each decision.
 bool restrictPlacementValid(const Type* type, std::string* reason = nullptr);
 
+// Resolve a (possibly qualified/cloned) nominal record type to the canonical
+// registered StructType/ClassType/UnionType used for layout and member lookup.
+// Qualifiers are intentionally dropped: callers keep the qualified type for
+// access volatility/constness and use this type only for field/bit-field
+// indices and LLVM layout. Non-record types are returned after typedef and
+// top-level qualifier stripping.
+Type* canonicalRecordType(const Type* type);
+
 // Structural type identity.  const/volatile at every level, reference-ness,
 // pointer targets, aggregate names, array lengths, and function signatures are
 // compared.  restrict is deliberately excluded: it is optimization-only.

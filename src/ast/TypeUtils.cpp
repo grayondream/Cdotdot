@@ -351,6 +351,23 @@ bool restrictPlacementValid(const Type* type, std::string* reason) {
     }
 }
 
+Type* canonicalRecordType(const Type* type) {
+    const Type* stripped = stripTypedefPreservingQualifiers(type);
+    if (!stripped) return nullptr;
+    TypeContext& ctx = TypeContext::instance();
+    if (stripped->kind == TypeKind::Struct) {
+        const auto* record = static_cast<const StructType*>(stripped);
+        if (auto* canonical = ctx.getStruct(record->name)) return canonical;
+    } else if (stripped->kind == TypeKind::Class) {
+        const auto* record = static_cast<const ClassType*>(stripped);
+        if (auto* canonical = ctx.getClass(record->name)) return canonical;
+    } else if (stripped->kind == TypeKind::Union) {
+        const auto* record = static_cast<const UnionType*>(stripped);
+        if (auto* canonical = ctx.getUnion(record->name)) return canonical;
+    }
+    return const_cast<Type*>(stripped);
+}
+
 namespace {
 
 const Type* stripTypedefsForQualifiers(const Type* type) {

@@ -84,6 +84,20 @@ TEST_F(RestrictIR, TypedefRestrictParameterGetsNoAlias) {
     EXPECT_NE(ir.find("ptr noalias"), std::string::npos);
 }
 
+TEST_F(RestrictIR, DefinitionWithoutRestrictDoesNotInheritNoAlias) {
+    auto ir = compileQualifierIR(R"(
+        int32 sum(int32* restrict p);
+        int32 sum(int32* p) { return *p; }
+        int32 main() { int32 x = 1; return sum(&x) - 1; }
+    )");
+    ASSERT_FALSE(ir.empty());
+    size_t def = ir.find("define i32 @sum");
+    ASSERT_NE(def, std::string::npos);
+    size_t eol = ir.find('\n', def);
+    auto line = ir.substr(def, eol - def);
+    EXPECT_EQ(line.find("noalias"), std::string::npos);
+}
+
 TEST_F(RestrictIR, BlockScopeRestrictEmitsScopeDeclAndAliasScope) {
     auto ir = compileQualifierIR(R"(
         int32 main() {

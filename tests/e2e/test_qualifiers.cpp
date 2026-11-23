@@ -107,6 +107,40 @@ TEST_F(QualifiersE2E, ConstClassFieldRead) {
     )"), 0);
 }
 
+TEST_F(QualifiersE2E, VolatileQualifiedAggregateBitFieldLayout) {
+    EXPECT_EQ(runQualifierSource(R"(
+        struct QualVolBits { int32 x : 3; };
+        int32 main() {
+            volatile struct QualVolBits b;
+            b.x = 2;
+            return b.x - 2;
+        }
+    )"), 0);
+}
+
+TEST_F(QualifiersE2E, VolatileQualifiedDerivedFieldLayout) {
+    EXPECT_EQ(runQualifierSource(R"(
+        struct QualVolBase { int32 a; };
+        struct QualVolDerived : QualVolBase { int32 b; };
+        int32 main() {
+            volatile struct QualVolDerived d;
+            d.a = 1;
+            d.b = 2;
+            return d.a * 10 + d.b - 12;
+        }
+    )"), 0);
+}
+
+TEST_F(QualifiersE2E, ConstQualifiedAggregateBitFieldLayout) {
+    EXPECT_EQ(runQualifierSource(R"(
+        struct QualConstBits { int32 x : 3; };
+        int32 main() {
+            const struct QualConstBits b = {2};
+            return b.x - 2;
+        }
+    )"), 0);
+}
+
 TEST_F(QualifiersE2E, ConstStringDataIsReadOnlyAtRuntime) {
     EXPECT_EQ(runQualifierSource(R"(
         int32 main() {

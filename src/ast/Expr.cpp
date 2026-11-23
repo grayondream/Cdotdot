@@ -88,15 +88,7 @@ static llvm::Value* ctConstantOrNull(CodegenContext& ctx, ExprAST& node) {
 // read via loadBitFieldValue (RMW-aware) instead of loading the whole unit.
 // Non-lvalues are returned unchanged.
 static llvm::Value* readLValue(CodegenContext& ctx, ExprAST& e, llvm::Value* v) {
-    if (!v) return nullptr;
-    if (!e.isLValue) return v;
-    if (e.isBitFieldAccess()) {
-        auto& ma = static_cast<MemberAccessExprAST&>(e);
-        Type* t = stripTypedefPreservingQualifiers(e.type);
-        return ctx.loadBitFieldValue(v, ma.bitOffset, ma.bitWidth, e.type,
-                                     ma.unitBits, t && t->isVolatile);
-    }
-    return ctx.loadValue(v, e.type);
+    return ctx.readLValueValue(e, v);
 }
 
 // Evaluate an expression node as a value: lvalues are dereferenced, rvalues are
@@ -1728,7 +1720,7 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
         while (objT && objT->kind == TypeKind::Typedef)
             objT = static_cast<TypedefType*>(objT)->aliasedType;
         if (objT && objT->kind == TypeKind::Pointer && object->isLValue) {
-            objVal = ctx.loadValue(objVal, objT);
+            objVal = ctx.loadValue(objVal, object->type);
         }
     }
 
@@ -2543,7 +2535,7 @@ static llvm::Value* emitClassFieldGEP(CodegenContext& ctx, Type* aggType,
     // the base sub-object occupies field slot 0 of every derived layout.
     // Depth-capped: a redefinition-shaped cycle must never hang the compiler
     // (评审 C1).
-    Type* cur = aggType;
+    Type* cur = canonicalRecordType(aggType);
     llvm::Value* curPtr = objPtr;
     int walkDepth = 0;
 
@@ -2604,7 +2596,7 @@ static llvm::Value* emitClassFieldGEP(CodegenContext& ctx, Type* aggType,
 static llvm::Value* emitBitFieldGEP(CodegenContext& ctx, Type* aggType,
                                     llvm::Value* objPtr, MemberAccessExprAST& node) {
     auto& builder = ctx.getBuilder();
-    Type* cur = aggType;
+    Type* cur = canonicalRecordType(aggType);
     llvm::Value* curPtr = objPtr;
     int walkDepth = 0;
     while (cur) {
@@ -2744,9 +2736,11 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         }
         return t;
     };
-    Type* valType = stripTypedefsOf(object->type);
+    Type* valType = canonicalRecordType(stripTypedefsOf(object->type));
     Type* valBase =
-        (valType && valType->kind == TypeKind::Pointer) ? stripTypedefsOf(valType->base) : nullptr;
+        (valType && valType->kind == TypeKind::Pointer)
+            ? canonicalRecordType(stripTypedefsOf(valType->base))
+            : nullptr;
 
     // CG-05: a member of an rvalue aggregate (`make().x`) has no address in
     // the source program. Spill the aggregate to a temporary so the existing
@@ -2789,7 +2783,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
     if (valType && valType->kind == TypeKind::Pointer &&
         valBase && valBase->kind == TypeKind::Union) {
         if (object->isLValue) {
-            objVal = ctx.loadValue(objVal, valType);
+            objVal = ctx.loadValue(objVal, object->type);
         }
         llvm::Type* unionLLVM = ctx.getLLVMType(valBase);
         if (!unionLLVM) return nullptr;
@@ -2846,7 +2840,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         // (a cast, a call result, `&x`, ...); only lvalue objects are addresses
         // of a variable that stores the pointer (MEM-10).
         if (object->isLValue) {
-            objVal = ctx.loadValue(objVal, valType);
+            objVal = ctx.loadValue(objVal, object->type);
         }
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {
@@ -2869,7 +2863,7 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         auto* classType = static_cast<ClassType*>(valBase);
         // Load the pointer unless the object already produced a pointer value.
         if (object->isLValue) {
-            objVal = ctx.loadValue(objVal, valType);
+            objVal = ctx.loadValue(objVal, object->type);
         }
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {

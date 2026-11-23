@@ -15,13 +15,7 @@
 // bit-field lvalues are read via loadBitFieldValue, everything else via
 // loadValue. Non-lvalues pass through unchanged.
 static llvm::Value* readLValue(CodegenContext& ctx, ExprAST& e, llvm::Value* v) {
-    if (!v) return nullptr;
-    if (!e.isLValue) return v;
-    if (e.isBitFieldAccess()) {
-        auto& ma = static_cast<MemberAccessExprAST&>(e);
-        return ctx.loadBitFieldValue(v, ma.bitOffset, ma.bitWidth, e.type, ma.unitBits);
-    }
-    return ctx.loadValue(v, e.type);
+    return ctx.readLValueValue(e, v);
 }
 
 // P1-07 / AGG-06: 把 unitBits 宽整数常量拆成 [N x i8] 字节常量（小端）——
@@ -123,7 +117,15 @@ static void emitFieldItemImpl(CodegenContext& ctx, ExprAST& item, Type* ftype,
 
 void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
                               Type* type, InitializerListExprAST* init) {
-    type = stripTypedefs(type);
+    Type* declaredType = stripTypedefPreservingQualifiers(type);
+    const bool objectVolatile = declaredType && declaredType->isVolatile;
+    auto qualifyMember = [&](Type* memberType) -> Type* {
+        return objectVolatile ? qualifyMemberLValue(memberType, false, true)
+                              : memberType;
+    };
+    // Field indices / bit-field layouts come from the canonical registered
+    // record; the qualified spelling only controls access semantics.
+    type = canonicalRecordType(type);
     if (!type || !init) return;
 
     auto& builder = ctx.getBuilder();
@@ -137,7 +139,8 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
         if (!t.empty()) { hasResolved = true; break; }
     }
     if (hasResolved) {
-        emitDesignatedInitializer(ctx, dest, type, init);
+        emitDesignatedInitializer(ctx, dest,
+                                  declaredType ? declaredType : type, init);
         return;
     }
 
@@ -152,11 +155,12 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
                     destLLVM, dest,
                     {llvm::ConstantInt::get(i64, 0), llvm::ConstantInt::get(i32, (int)i)},
                     "elemp");
+                Type* elemType = qualifyMember(at->elementType);
                 if (auto* nested = dynamic_cast<InitializerListExprAST*>(&item)) {
-                    emitAggregateInitializer(ctx, elemPtr, at->elementType, nested);
+                    emitAggregateInitializer(ctx, elemPtr, elemType, nested);
                 } else {
-                    storeScalarInitializer(ctx, elemPtr, ctx.getLLVMType(at->elementType),
-                                           item, at->elementType);
+                    storeScalarInitializer(ctx, elemPtr, ctx.getLLVMType(elemType),
+                                           item, elemType);
                 }
             }
             break;
@@ -165,7 +169,7 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
             auto* ut = static_cast<UnionType*>(type);
             if (ut->members.empty() || init->initializers.empty()) return;
             llvm::Value* memberPtr = builder.CreateStructGEP(destLLVM, dest, 0, "unioninit");
-            Type* mtype = ut->members[0].type;
+            Type* mtype = qualifyMember(ut->members[0].type);
             auto& item = *init->initializers[0];
             // P1-07 / AGG-06: 位域成员 → 初始值 RMW 进存储单元。
             if (ut->members[0].bitWidth != 0 || ut->members[0].name.empty()) {
@@ -177,9 +181,13 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
                         if (llvm::Type* dt = ctx.getLLVMType(mtype)) {
                             v = ctx.castValue(v, item.type, dt);
                         }
-                        ctx.storeBitFieldValue(memberPtr, it->second.bitOffset,
-                                               it->second.bitWidth, mtype, v,
-                                               it->second.unitBits);
+                        Type* qualifiedMember = stripTypedefPreservingQualifiers(mtype);
+                        ctx.storeBitFieldValue(
+                            memberPtr, it->second.bitOffset,
+                            it->second.bitWidth, mtype, v,
+                            it->second.unitBits,
+                            objectVolatile ||
+                                (qualifiedMember && qualifiedMember->isVolatile));
                     }
                 }
                 break;
@@ -208,6 +216,7 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
                     ftype = i == 1 ? static_cast<ResultType*>(type)->successType
                                    : static_cast<ResultType*>(type)->errorType;
                 }
+                ftype = qualifyMember(ftype);
                 llvm::Value* fptr = builder.CreateStructGEP(destLLVM, dest, i, "optresinit");
                 if (auto* nested = dynamic_cast<InitializerListExprAST*>(&item)) {
                     emitAggregateInitializer(ctx, fptr, ftype, nested);
@@ -241,7 +250,7 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
             }
             // P1-07 / AGG-06: 单个初始值项写入一个字段（嵌套/string 深拷贝/标量）。
             auto emitFieldItem = [&](ExprAST& item, Type* ftype, llvm::Value* fptr) {
-                emitFieldItemImpl(ctx, item, ftype, fptr);
+                emitFieldItemImpl(ctx, item, qualifyMember(ftype), fptr);
             };
             if (semFields) {
                 // P1-07 / AGG-06: 位域感知初始化——按语义字段序消费初始值；
@@ -270,9 +279,13 @@ void emitAggregateInitializer(CodegenContext& ctx, llvm::Value* dest,
                         if (llvm::Type* dt = ctx.getLLVMType(sf.type)) {
                             v = ctx.castValue(v, item.type, dt);
                         }
-                        ctx.storeBitFieldValue(fptr, it->second.bitOffset,
-                                               it->second.bitWidth, sf.type, v,
-                                               it->second.unitBits);
+                        Type* qualifiedMember =
+                            stripTypedefPreservingQualifiers(sf.type);
+                        ctx.storeBitFieldValue(
+                            fptr, it->second.bitOffset, it->second.bitWidth,
+                            sf.type, v, it->second.unitBits,
+                            objectVolatile ||
+                                (qualifiedMember && qualifiedMember->isVolatile));
                     } else {
                         auto nit = nameIdx.find(sf.name);
                         if (nit == nameIdx.end()) continue;
@@ -307,7 +320,7 @@ static llvm::Value* resolveFieldGEP(CodegenContext& ctx, llvm::Value* aggPtr,
                                     Type* aggTy, const std::string& name,
                                     Type*& outType, bool& outBF,
                                     unsigned& outO, unsigned& outW, unsigned& outU) {
-    Type* ct = stripTypedefs(aggTy);
+    Type* ct = canonicalRecordType(aggTy);
     if (!ct || (ct->kind != TypeKind::Struct && ct->kind != TypeKind::Class)) {
         return nullptr;
     }
@@ -387,6 +400,13 @@ static llvm::Value* resolveFieldGEP(CodegenContext& ctx, llvm::Value* aggPtr,
 //          / union 槽 0；Index → 数组下标。链末嵌套列表递归 / 位域 RMW / 标量。
 static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
                                       Type* type, InitializerListExprAST* init) {
+    Type* declaredType = stripTypedefPreservingQualifiers(type);
+    const bool objectVolatile = declaredType && declaredType->isVolatile;
+    auto qualifyMember = [&](Type* memberType) -> Type* {
+        return objectVolatile ? qualifyMemberLValue(memberType, false, true)
+                              : memberType;
+    };
+    type = canonicalRecordType(type);
     auto& builder = ctx.getBuilder();
     llvm::Type* destLLVM = ctx.getLLVMType(type);
     if (!destLLVM) return;
@@ -407,14 +427,17 @@ static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
 
         for (size_t c = 0; c < chain.size(); ++c) {
             const Designator& des = chain[c];
-            Type* ct = stripTypedefs(curType);
+            Type* ct = canonicalRecordType(curType);
             if (!ct) break;
             if (des.kind == Designator::Kind::Field) {
                 if (ct->kind == TypeKind::Union) {
                     curPtr = builder.CreateStructGEP(ctx.getLLVMType(ct), curPtr, 0, "dsg.union");
                     auto* ut = static_cast<UnionType*>(ct);
                     for (auto& m : ut->members) {
-                        if (m.name == des.field) { curType = m.type; break; }
+                        if (m.name == des.field) {
+                            curType = qualifyMember(m.type);
+                            break;
+                        }
                     }
                 } else if (ct->kind == TypeKind::Struct || ct->kind == TypeKind::Class) {
                     Type* fty = nullptr;
@@ -431,7 +454,7 @@ static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
                             bfUnitBits = bu;
                             bfDeclType = fty;
                         } else {
-                            curType = fty;
+                            curType = qualifyMember(fty);
                         }
                     }
                 }
@@ -443,7 +466,7 @@ static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
                         ctx.getLLVMType(ct), curPtr,
                         {llvm::ConstantInt::get(i64, 0),
                          llvm::ConstantInt::get(i64, des.index)}, "dsg.idx");
-                    curType = at->elementType;
+                    curType = qualifyMember(at->elementType);
                 }
             }
         }
@@ -456,8 +479,12 @@ static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
                 if (llvm::Type* dt = ctx.getLLVMType(bfDeclType)) {
                     v = ctx.castValue(v, item.type, dt);
                 }
-                ctx.storeBitFieldValue(curPtr, bfOffset, bfWidth, bfDeclType,
-                                       v, bfUnitBits);
+                Type* qualifiedMember =
+                    stripTypedefPreservingQualifiers(bfDeclType);
+                ctx.storeBitFieldValue(
+                    curPtr, bfOffset, bfWidth, bfDeclType, v, bfUnitBits,
+                    objectVolatile ||
+                        (qualifiedMember && qualifiedMember->isVolatile));
             }
             continue;
         }
@@ -1415,12 +1442,20 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
     // MEM-04: restrict pointer parameters/returns carry the LLVM noalias
     // contract. The attribute is attached to declarations and definitions; add
     // is idempotent for the same attribute.
+    const bool isDefinition = body != nullptr;
     if (isRestrictQualifiedPointer(returnType)) {
         function->addRetAttr(llvm::Attribute::NoAlias);
+    } else if (isDefinition) {
+        // A definition's own qualifiers govern the contract; a restrict
+        // declaration must not silently attach noalias to a non-restrict body.
+        function->removeRetAttr(llvm::Attribute::NoAlias);
     }
     for (size_t i = 0; i < params.size(); ++i) {
         if (isRestrictQualifiedPointer(params[i]->type)) {
             function->addParamAttr(static_cast<unsigned>(i), llvm::Attribute::NoAlias);
+        } else if (isDefinition) {
+            function->removeParamAttr(static_cast<unsigned>(i),
+                                      llvm::Attribute::NoAlias);
         }
     }
     // P1-05 / ANN-04/05: 函数属性（inline→alwaysinline、cold→cold、

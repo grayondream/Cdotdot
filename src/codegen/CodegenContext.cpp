@@ -12,6 +12,9 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Metadata.h"
 
+#include <functional>
+#include <unordered_set>
+
 // P1-07 / CG-09: 位域读取符号扩展判定——无符号整型族 zext，其余（含 isize）
 // sext。
 static bool bitFieldIsUnsigned(Type* t) {
@@ -332,32 +335,37 @@ void CodegenContext::noteRestrictPointerLoad(llvm::Value* storage,
 
 llvm::MDNode* CodegenContext::restrictScopeForAddress(
     llvm::Value* addr) const {
-    if (!addr) return nullptr;
-    auto direct = restrictPointerScopes.find(addr);
-    if (direct != restrictPointerScopes.end()) return direct->second;
+    std::unordered_set<llvm::Value*> visited;
+    std::function<llvm::MDNode*(llvm::Value*)> find =
+        [&](llvm::Value* value) -> llvm::MDNode* {
+        if (!value || !visited.insert(value).second) return nullptr;
+        auto direct = restrictPointerScopes.find(value);
+        if (direct != restrictPointerScopes.end()) return direct->second;
 
-    if (auto* gep = llvm::dyn_cast<llvm::GetElementPtrInst>(addr)) {
-        return restrictScopeForAddress(gep->getPointerOperand());
-    }
-    if (auto* cast = llvm::dyn_cast<llvm::CastInst>(addr)) {
-        return restrictScopeForAddress(cast->getOperand(0));
-    }
-    if (auto* select = llvm::dyn_cast<llvm::SelectInst>(addr)) {
-        llvm::MDNode* a = restrictScopeForAddress(select->getTrueValue());
-        llvm::MDNode* b = restrictScopeForAddress(select->getFalseValue());
-        return a == b ? a : nullptr;
-    }
-    if (auto* phi = llvm::dyn_cast<llvm::PHINode>(addr)) {
-        llvm::MDNode* scope = nullptr;
-        for (llvm::Value* incoming : phi->incoming_values()) {
-            llvm::MDNode* candidate = restrictScopeForAddress(incoming);
-            if (!candidate) return nullptr;
-            if (!scope) scope = candidate;
-            else if (scope != candidate) return nullptr;
+        if (auto* gep = llvm::dyn_cast<llvm::GetElementPtrInst>(value)) {
+            return find(gep->getPointerOperand());
         }
-        return scope;
-    }
-    return nullptr;
+        if (auto* cast = llvm::dyn_cast<llvm::CastInst>(value)) {
+            return find(cast->getOperand(0));
+        }
+        if (auto* select = llvm::dyn_cast<llvm::SelectInst>(value)) {
+            llvm::MDNode* a = find(select->getTrueValue());
+            llvm::MDNode* b = find(select->getFalseValue());
+            return a == b ? a : nullptr;
+        }
+        if (auto* phi = llvm::dyn_cast<llvm::PHINode>(value)) {
+            llvm::MDNode* scope = nullptr;
+            for (llvm::Value* incoming : phi->incoming_values()) {
+                llvm::MDNode* candidate = find(incoming);
+                if (!candidate) return nullptr;
+                if (!scope) scope = candidate;
+                else if (scope != candidate) return nullptr;
+            }
+            return scope;
+        }
+        return nullptr;
+    };
+    return find(addr);
 }
 
 void CodegenContext::applyAliasScope(llvm::Instruction* inst,
@@ -370,6 +378,20 @@ void CodegenContext::applyAliasScope(llvm::Instruction* inst,
                       llvm::MDNode::get(
                           *context,
                           llvm::ArrayRef<llvm::Metadata*>(&scopeMd, 1)));
+}
+
+llvm::Value* CodegenContext::readLValueValue(ExprAST& expr,
+                                             llvm::Value* value) {
+    if (!value) return nullptr;
+    if (!expr.isLValue) return value;
+    if (expr.isBitFieldAccess()) {
+        auto& member = static_cast<MemberAccessExprAST&>(expr);
+        Type* t = stripTypedefPreservingQualifiers(expr.type);
+        return loadBitFieldValue(value, member.bitOffset, member.bitWidth,
+                                 expr.type, member.unitBits,
+                                 hasVolatileAccess(t));
+    }
+    return loadValue(value, expr.type);
 }
 
 llvm::Value* CodegenContext::loadBitFieldValue(llvm::Value* unitAddr,
@@ -931,6 +953,7 @@ llvm::Type* CodegenContext::getLLVMType(Type* type) {
             // re-enter the aggregate layout and overflow the stack.
             return llvm::PointerType::get(*context, 0);
         case TypeKind::Struct: {
+            type = canonicalRecordType(type);
             auto* st = static_cast<StructType*>(type);
             // Reuse existing struct type if one with this name already exists
             if (auto* existing = llvm::StructType::getTypeByName(*context, st->name)) {
@@ -952,6 +975,7 @@ llvm::Type* CodegenContext::getLLVMType(Type* type) {
         }
         case TypeKind::Union: {
             // P1-05 / ANN: 布局单源化（LayoutBuilder；最大成员块 + 填充）。
+            type = canonicalRecordType(type);
             auto* ut = static_cast<UnionType*>(type);
             if (auto* existing = llvm::StructType::getTypeByName(*context, ut->name)) {
                 return existing;
@@ -963,6 +987,7 @@ llvm::Type* CodegenContext::getLLVMType(Type* type) {
             return llvm::StructType::create(*context, fields, ut->name);
         }
         case TypeKind::Class: {
+            type = canonicalRecordType(type);
             auto* ct = static_cast<ClassType*>(type);
             // Reuse existing struct type if one with this name already exists
             if (auto* existing = llvm::StructType::getTypeByName(*context, ct->name)) {

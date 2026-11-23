@@ -80,6 +80,20 @@ TEST(RestrictPlacement, GlobalAndMemberPointersAccepted) {
     EXPECT_TRUE(result.errors.empty());
 }
 
+TEST(RestrictPlacement, TypedefDefinitionOfNonPointerRestrictRejected) {
+    auto result = analyzeSource(
+        "using RI = int32 restrict; int32 main() { return 0; }");
+    EXPECT_FALSE(result.parseFailed);
+    EXPECT_TRUE(hasError(result, "restrict"));
+}
+
+TEST(RestrictPlacement, TypedefDefinitionOfFunctionPointerRestrictRejected) {
+    auto result = analyzeSource(
+        "using RF = int32 (*restrict)(int32); int32 main() { return 0; }");
+    EXPECT_FALSE(result.parseFailed);
+    EXPECT_TRUE(hasError(result, "restrict"));
+}
+
 TEST(RestrictSignature, RestrictIsNotAnOverload) {
     auto result = analyzeSource(R"(
         void f(int32* restrict p) {}
