@@ -79,3 +79,14 @@ TEST(RestrictPlacement, GlobalAndMemberPointersAccepted) {
     )");
     EXPECT_TRUE(result.errors.empty());
 }
+
+TEST(RestrictSignature, RestrictIsNotAnOverload) {
+    auto result = analyzeSource(R"(
+        void f(int32* restrict p) {}
+        void f(int32* q) {}
+        int32 main() { return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "redefinition") ||
+                hasError(result, "already defined") ||
+                hasError(result, "duplicate"));
+}

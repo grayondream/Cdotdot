@@ -1,4 +1,5 @@
 #include "Decl.h"
+#include "TypeUtils.h"
 #include "LayoutBuilder.h"
 #include "codegen/CodegenContext.h"
 #include "llvm/IR/Function.h"
@@ -1407,6 +1408,17 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
         llvm::FunctionType* funcType = llvm::FunctionType::get(retType, paramTypes, isVarArg);
         function = llvm::Function::Create(
             funcType, llvm::Function::ExternalLinkage, mangledName, ctx.getModule());
+    }
+    // MEM-04: restrict pointer parameters/returns carry the LLVM noalias
+    // contract. The attribute is attached to declarations and definitions; add
+    // is idempotent for the same attribute.
+    if (isRestrictQualifiedPointer(returnType)) {
+        function->addRetAttr(llvm::Attribute::NoAlias);
+    }
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (isRestrictQualifiedPointer(params[i]->type)) {
+            function->addParamAttr(static_cast<unsigned>(i), llvm::Attribute::NoAlias);
+        }
     }
     // P1-05 / ANN-04/05: 函数属性（inline→alwaysinline、cold→cold、
     // 参数 nonnull→NonNull）。幂等：重复 add 去重。
