@@ -248,24 +248,24 @@ TEST_F(CastOperatorsE2E, IntegerConversionIsUsableAsCondition) {
     )"), 0);
 }
 
-TEST_F(CastOperatorsE2E, GeneralLocalReferencesAreAcceptedBySema) {
-    AnalyzeResult r = analyzeSource(
-        "int32 main() { int32 x = 7; int32& r = x; r = 8; return x; }");
-    EXPECT_EQ(r.errors, 0);
+TEST_F(CastOperatorsE2E, GeneralLocalReferencesWorkAtRuntime) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() { int32 x = 7; int32& r = x; r = 8; return x - 8; }
+    )"), 0);
 }
 
-TEST_F(CastOperatorsE2E, ReferenceParametersAreRejected) {
-    AnalyzeResult r = analyzeSource(
-        "void setref(int32& r) { r = 9; }"
-        "int32 main() { int32 x = 7; setref(x); return x; }");
-    EXPECT_GT(r.errors, 0);
+TEST_F(CastOperatorsE2E, ReferenceParametersWriteCaller) {
+    EXPECT_EQ(runSource(R"(
+        void setref(int32& r) { r = 9; }
+        int32 main() { int32 x = 7; setref(x); return x - 9; }
+    )"), 0);
 }
 
-TEST_F(CastOperatorsE2E, ReferenceReturnOutsideSubscriptIsRejected) {
-    AnalyzeResult r = analyzeSource(
-        "int32& getref() { static int32 x = 7; return x; }"
-        "int32 main() { return getref(); }");
-    EXPECT_GT(r.errors, 0);
+TEST_F(CastOperatorsE2E, ReferenceReturnsAliasCallerObject) {
+    EXPECT_EQ(runSource(R"(
+        int32& getref(int32& r) { return r; }
+        int32 main() { int32 x = 7; getref(x) = 8; return x - 8; }
+    )"), 0);
 }
 
 TEST_F(CastOperatorsE2E, StaticCastToFunctionPointerTypeId) {

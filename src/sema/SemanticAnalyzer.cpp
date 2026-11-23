@@ -1119,6 +1119,23 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
     // so enforce the expression-aware null-pointer rule here.
     const size_t checkedArgs = std::min(args.size(), funcType->paramTypes.size());
     for (size_t i = 0; i < checkedArgs; ++i) {
+        if (isReferenceType(funcType->paramTypes[i])) {
+            bool needsTemporary = false;
+            std::string reason;
+            bool isBitField = false;
+            if (auto* member = dynamic_cast<MemberAccessExprAST*>(args[i].get()))
+                isBitField = member->isBitField;
+            if (!referenceBindingAllowed(funcType->paramTypes[i], argTypes[i],
+                                         args[i]->isLValue, isBitField,
+                                         needsTemporary, &reason)) {
+                emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                          "cannot bind argument " + std::to_string(i + 1) +
+                              " of '" + name + "': " + reason,
+                          node);
+                return nullptr;
+            }
+            continue;
+        }
         if (!checkNullPointerConversion(funcType->paramTypes[i], argTypes[i],
                                         args[i].get(), node))
             return nullptr;
@@ -4922,6 +4939,7 @@ bool SemanticAnalyzer::analyzeClosureCall(CallExprAST& node,
 
 void SemanticAnalyzer::visit(CallExprAST& node) {
     const std::string calleeRef = node.callee;
+    bool referenceResult = false;
 
     // AGG-10/DS5: qualified static-method call — access check against the
     // declaring class (uses the pre-resolution callee spelling).
@@ -5147,6 +5165,11 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
 
     FunctionType* funcType = nullptr;
     node.type = checkFunctionCall(node.callee, node.args, node, &funcType);
+    if (node.type && isReferenceType(node.type)) {
+        node.type = referenceReferent(node.type);
+        node.isLValue = true;
+        referenceResult = true;
+    }
     if (funcType) {
         node.resolvedParamTypes = funcType->paramTypes;
         FunctionDeclAST* calleeDecl =
@@ -5236,7 +5259,7 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
             }
         }
     }
-    node.isLValue = false;
+    node.isLValue = referenceResult;
 }
 
 // P1-03 / GEN-03/06: 函数模板调用。
@@ -6517,6 +6540,26 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
         }
     }
     for (size_t i = 0; i < argTypes.size() && i + 1 < funcType->paramTypes.size(); ++i) {
+        if (isReferenceType(funcType->paramTypes[i + 1])) {
+            bool needsTemporary = false;
+            std::string reason;
+            bool isBitField = false;
+            if (auto* member = dynamic_cast<MemberAccessExprAST*>(node.args[i].get()))
+                isBitField = member->isBitField;
+            if (!referenceBindingAllowed(funcType->paramTypes[i + 1], argTypes[i],
+                                         node.args[i]->isLValue, isBitField,
+                                         needsTemporary, &reason)) {
+                emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                          "cannot bind argument " + std::to_string(i + 1) +
+                              " of method '" + node.methodName + "': " + reason,
+                          node);
+                node.type = nullptr;
+                node.isLValue = false;
+                delete method;
+                return;
+            }
+            continue;
+        }
         Type* at = stripTypedef(argTypes[i]);
         Type* pt = stripTypedef(funcType->paramTypes[i + 1]);
         if (!at || !pt || at->kind != TypeKind::Class || typesEqual(at, pt)) continue;
@@ -6565,8 +6608,13 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
             }
         }
     }
-    node.type = funcType->returnType;
-    node.isLValue = false;
+    if (isReferenceType(funcType->returnType)) {
+        node.type = referenceReferent(funcType->returnType);
+        node.isLValue = true;
+    } else {
+        node.type = funcType->returnType;
+        node.isLValue = false;
+    }
     // P1-05 评审 I3: 弃用方法使用（W3004；键 = 裸成员名，跨类同名误报已挂账）。
     if (m_deprecatedFuncs.count(node.methodName)) {
         std::string msg = m_deprecatedMsgs.count(node.methodName)
@@ -7835,6 +7883,35 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
         if (checkDanglingReturnValue(*node.value, retValType, expected, node))
             return;
         checkClosureReturnEscape(retValType, node);
+    }
+
+    if (node.value && currentFunction &&
+        isReferenceType(currentFunction->returnType)) {
+        bool isBitField = false;
+        if (auto* member = dynamic_cast<MemberAccessExprAST*>(node.value.get()))
+            isBitField = member->isBitField;
+        if (!node.value->isLValue || isBitField) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "reference return must return an lvalue; returning a "
+                      "reference to a temporary is not supported",
+                      node);
+            return;
+        }
+        bool needsTemporary = false;
+        std::string reason;
+        if (!retValType ||
+            !referenceBindingAllowed(currentFunction->returnType, retValType,
+                                     true, false, needsTemporary, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "invalid reference return: " +
+                          (reason.empty() ? std::string("incompatible referent")
+                                          : reason),
+                      node);
+            return;
+        }
+        node.returnsReference = true;
+        node.referenceReturnType = currentFunction->returnType;
+        return;
     }
 
     bool voidLikeHandled = false;
@@ -9494,9 +9571,11 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     if (node.isConstMethod && node.isStatic) {
         emitError("const qualifier is not valid on a static method", node);
     }
-    if (isReferenceType(node.returnType) &&
-        !(isMethodDecl && methodLookupName == "operator[]")) {
-        emitError("reference types are only supported as the return type of operator[]", node);
+    {
+        std::string reason;
+        if (!referencePlacementValid(node.returnType, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
+        }
     }
     if (!isMethodDecl && oocOriginalName == "main") {
         Type* mainRet = stripTypedef(node.returnType);
@@ -9525,9 +9604,9 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
         }
     }
     for (const auto& p : node.params) {
-        if (isReferenceType(p->type)) {
-            emitError("reference types are only supported as the return type of operator[]", node);
-            break;
+        std::string reason;
+        if (!referencePlacementValid(p->type, &reason)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
         }
     }
     if (!node.className.empty()) {

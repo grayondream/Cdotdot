@@ -91,6 +91,19 @@ static llvm::Value* readLValue(CodegenContext& ctx, ExprAST& e, llvm::Value* v) 
     return ctx.readLValueValue(e, v);
 }
 
+// Convert an already-emitted argument to the callee's parameter type.  A
+// reference parameter consumes the lvalue address (or a materialized temporary
+// for permitted rvalues); a value parameter keeps the existing load/cast path.
+static llvm::Value* emitCallArgument(CodegenContext& ctx, ExprAST& arg,
+                                     llvm::Value* value, Type* paramType) {
+    if (!value) return nullptr;
+    if (paramType && isReferenceType(paramType)) {
+        return ctx.bindReference(arg, value, paramType);
+    }
+    if (arg.isLValue) value = readLValue(ctx, arg, value);
+    return value;
+}
+
 // Evaluate an expression node as a value: lvalues are dereferenced, rvalues are
 // used as-is. A pointer-typed rvalue (string literal, call result, function
 // designator) is already a value and must not be loaded from.
@@ -414,7 +427,14 @@ llvm::Value* VariableExprAST::codegen(CodegenContext& ctx) {
         LOGE("unknown variable: {}", name);
         return nullptr;
     }
-    return ctx.lookupVariableAddr(name);
+    llvm::Value* addr = ctx.lookupVariableAddr(name);
+    if (!addr) return nullptr;
+    if (isReferenceType(sym->type)) {
+        // The reference slot stores the referent address; an expression of
+        // reference type denotes the referent as an lvalue.
+        return ctx.loadValue(addr, sym->type);
+    }
+    return addr;
 }
 
 llvm::Value* BinaryExprAST::codegen(CodegenContext& ctx) {
@@ -1592,18 +1612,22 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
     for (size_t i = 0; i < args.size(); ++i) {
         llvm::Value* argVal = args[i]->codegen(ctx);
         if (!argVal) return nullptr;
-        if (args[i]->isLValue) {
-            argVal = readLValue(ctx, *args[i], argVal);
+        Type* paramType = i < resolvedParamTypes.size()
+                              ? resolvedParamTypes[i] : nullptr;
+        argVal = emitCallArgument(ctx, *args[i], argVal, paramType);
+        if (paramType && isReferenceType(paramType)) {
+            argsV.push_back(argVal);
+            continue;
         }
-        if (i < resolvedParamTypes.size()) {
-            if (isArrayToSliceArg(args[i]->type, resolvedParamTypes[i])) {
+        if (paramType) {
+            if (isArrayToSliceArg(args[i]->type, paramType)) {
                 // TYP-12: array -> slice view; no element copy.
                 argVal = ctx.emitArrayToSliceDecay(
                     static_cast<ArrayType*>(stripTypedefsT12(args[i]->type)),
                     argVal);
             } else {
                 argVal = ctx.castValue(argVal, args[i]->type,
-                                       ctx.getLLVMType(resolvedParamTypes[i]));
+                                       ctx.getLLVMType(paramType));
             }
         } else if (calleeFn->isVarArg()) {
             // C default argument promotions for the variadic tail.
@@ -1611,10 +1635,9 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         }
         // I4 (D6): string 按值形参——活值实参深拷贝（形参独立缓冲，callee
         // destroy 不影响调用方）；新鲜实参直接传（移动）。
-        if (i < resolvedParamTypes.size() &&
-            isStringType(resolvedParamTypes[i]) &&
+        if (paramType && isStringType(paramType) &&
             !ctx.isFreshStringValue(*args[i])) {
-            argVal = emitStringArgCopy(ctx, argVal, resolvedParamTypes[i]);
+            argVal = emitStringArgCopy(ctx, argVal, paramType);
         }
         argsV.push_back(argVal);
     }
@@ -1783,26 +1806,28 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
     for (size_t i = 0; i < args.size(); ++i) {
         llvm::Value* argVal = args[i]->codegen(ctx);
         if (!argVal) return nullptr;
-        if (args[i]->isLValue) {
-            argVal = readLValue(ctx, *args[i], argVal);
+        Type* paramType = i + 1 < resolvedParamTypes.size()
+                              ? resolvedParamTypes[i + 1] : nullptr;
+        argVal = emitCallArgument(ctx, *args[i], argVal, paramType);
+        if (paramType && isReferenceType(paramType)) {
+            argsV.push_back(argVal);
+            continue;
         }
-        // resolvedParamTypes[0] is this — explicit argument i maps to [i+1].
-        if (i + 1 < resolvedParamTypes.size()) {
-            if (isArrayToSliceArg(args[i]->type, resolvedParamTypes[i + 1])) {
+        if (paramType) {
+            if (isArrayToSliceArg(args[i]->type, paramType)) {
                 // TYP-12: array -> slice view; no element copy.
                 argVal = ctx.emitArrayToSliceDecay(
                     static_cast<ArrayType*>(stripTypedefsT12(args[i]->type)),
                     argVal);
             } else {
                 argVal = ctx.castValue(argVal, args[i]->type,
-                                       ctx.getLLVMType(resolvedParamTypes[i + 1]));
+                                       ctx.getLLVMType(paramType));
             }
         }
         // I4 (D6): string 按值形参（方法调用路径）——活值实参深拷贝。
-        if (i + 1 < resolvedParamTypes.size() &&
-            isStringType(resolvedParamTypes[i + 1]) &&
+        if (paramType && isStringType(paramType) &&
             !ctx.isFreshStringValue(*args[i])) {
-            argVal = emitStringArgCopy(ctx, argVal, resolvedParamTypes[i + 1]);
+            argVal = emitStringArgCopy(ctx, argVal, paramType);
         }
         argsV.push_back(argVal);
     }
@@ -2890,6 +2915,9 @@ llvm::Value* SizeofExprAST::codegen(CodegenContext& ctx) {
     Type* operandType = sizeofType;
     if (!operandType && expr) operandType = expr->type;
     if (!operandType) return nullptr;
+    // sizeof/alignof on a reference report the referent, not the pointer-sized
+    // reference slot.
+    if (isReferenceType(operandType)) operandType = referenceReferent(operandType);
 
     llvm::Type* llvmType = ctx.getLLVMType(operandType);
     if (!llvmType) return nullptr;

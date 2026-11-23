@@ -67,6 +67,12 @@ public:
     // loadValue. Non-lvalues pass through unchanged.
     llvm::Value* readLValueValue(ExprAST& expr, llvm::Value* value);
 
+    // Bind a reference initializer/argument/return.  Lvalues yield their
+    // address; permitted rvalues are materialized in an entry alloca whose
+    // lifetime covers the function.
+    llvm::Value* bindReference(ExprAST& expr, llvm::Value* value,
+                               Type* referenceType);
+
     // P1-07 / CG-09: bit-field storage-unit read/write (read-modify-write).
     // unitAddr points at the integer storage unit (materialized LLVM field);
     // the field spans [bitOffset, bitOffset+bitWidth) of that unit, counted

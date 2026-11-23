@@ -77,3 +77,42 @@ TEST(ReferencePlacement, RejectsAutoReference) {
     auto result = analyzeSource("int32 main() { int32 x = 1; auto& r = x; return 0; }");
     EXPECT_TRUE(hasError(result, "auto"));
 }
+
+TEST(ReferenceBinding, NonConstRefRejectsConstLvalue) {
+    auto result = analyzeSource("int32 main() { const int32 x = 1; int32& r = x; return r; }");
+    EXPECT_TRUE(hasError(result, "const"));
+}
+
+TEST(ReferenceBinding, NonConstRefRejectsRvalue) {
+    auto result = analyzeSource("int32 main() { int32& r = 1; return r; }");
+    EXPECT_TRUE(hasError(result, "rvalue"));
+}
+
+TEST(ReferenceBinding, ConstRefAcceptsRvalue) {
+    auto result = analyzeSource("int32 main() { const int32& r = 1; return r; }");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceBinding, VolatileRefCanAddButNotDropVolatile) {
+    auto ok = analyzeSource("int32 main() { int32 x = 1; volatile int32& r = x; return r; }");
+    EXPECT_TRUE(ok.errors.empty());
+    auto bad = analyzeSource("int32 main() { volatile int32 x = 1; int32& r = x; return r; }");
+    EXPECT_TRUE(hasError(bad, "volatile"));
+}
+
+TEST(ReferenceBinding, ReferenceToPointerKeepsPointerObjectQualifiers) {
+    auto ok = analyzeSource("int32 main() { int32 x = 1; int32* p = &x; int32*& r = p; *r = 2; return x; }");
+    EXPECT_TRUE(ok.errors.empty());
+    auto bad = analyzeSource("int32 main() { int32 x = 1; int32* const p = &x; int32*& r = p; return 0; }");
+    EXPECT_TRUE(hasError(bad, "const"));
+}
+
+TEST(ReferenceBinding, ReferenceParameterRejectsTemporary) {
+    auto result = analyzeSource("void f(int32& r) { r = 1; } int32 main() { f(1); return 0; }");
+    EXPECT_TRUE(hasError(result, "rvalue"));
+}
+
+TEST(ReferenceBinding, ConstReferenceParameterAcceptsTemporary) {
+    auto result = analyzeSource("int32 f(const int32& r) { return r; } int32 main() { return f(1) - 1; }");
+    EXPECT_TRUE(result.errors.empty());
+}

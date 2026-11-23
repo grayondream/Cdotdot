@@ -262,6 +262,14 @@ int conversionRank(Type* from, Type* to) {
                        adjustParameterTypeForSignature(to)))
         return 0;
 
+    // An lvalue-reference parameter ranks by its referent for overload
+    // resolution; the expression-aware checks later enforce lvalue-ness and
+    // cv binding.  This keeps `f(int&)` selectable for an int argument while
+    // `f(int*)` remains a pointer conversion.
+    if (to->kind == TypeKind::Pointer && to->isReference) {
+        return conversionRank(from, to->base);
+    }
+
     // Arrays decay to a pointer to their first element, preserving element
     // qualifiers.  A void target ranks below a qualified object pointer.
     if (from->kind == TypeKind::Array && to->kind == TypeKind::Pointer) {

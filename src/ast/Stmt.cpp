@@ -68,6 +68,15 @@ llvm::Value* ReturnStmtAST::codegen(CodegenContext& ctx) {
     }
     llvm::Value* v = value->codegen(ctx);
     if (!v) return nullptr;
+    if (returnsReference) {
+        llvm::Value* addr = ctx.bindReference(*value, v, referenceReturnType);
+        if (!addr) return nullptr;
+        ctx.emitAllDefers();
+        llvm::Function* func = ctx.getBuilder().GetInsertBlock()->getParent();
+        addr = ctx.castValue(addr, referenceReturnType, func->getReturnType());
+        ctx.getBuilder().CreateRet(addr);
+        return nullptr;
+    }
     // An lvalue return operand denotes a location; load its value (a pointer
     // rvalue such as `"str"` or a call result is already the value).
     Type* valType = value->type;

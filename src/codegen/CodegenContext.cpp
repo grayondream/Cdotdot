@@ -394,6 +394,30 @@ llvm::Value* CodegenContext::readLValueValue(ExprAST& expr,
     return loadValue(value, expr.type);
 }
 
+llvm::Value* CodegenContext::bindReference(ExprAST& expr, llvm::Value* value,
+                                           Type* referenceType) {
+    if (!value) return nullptr;
+    Type* ref = stripTypedefPreservingQualifiers(referenceType);
+    if (!ref || ref->kind != TypeKind::Pointer || !ref->isReference)
+        return nullptr;
+    Type* referent = stripTypedefPreservingQualifiers(ref->base);
+    if (!referent) return nullptr;
+
+    if (expr.isLValue) {
+        // Every supported lvalue already evaluates to its storage address.
+        // LLVM's opaque pointers make same-type binding a no-op; derived-to-
+        // base adjustment is handled by the caller when it forms the address.
+        return value;
+    }
+
+    llvm::Type* tempType = getLLVMType(referent);
+    if (!tempType) return nullptr;
+    llvm::Value* temp = createEntryAlloca(tempType, "ref.tmp");
+    llvm::Value* converted = castValue(value, expr.type, tempType);
+    storeValue(temp, converted, referent);
+    return temp;
+}
+
 llvm::Value* CodegenContext::loadBitFieldValue(llvm::Value* unitAddr,
                                                uint64_t bitOffset,
                                                uint32_t bitWidth,

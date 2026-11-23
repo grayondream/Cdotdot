@@ -1290,6 +1290,16 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
     if (isRestrictQualifiedPointer(type)) {
         ctx.declareRestrictScope(alloca, name);
     }
+    if (isReferenceType(type)) {
+        if (!initExpr) return alloca;
+        llvm::Value* initValue = initExpr->codegen(ctx);
+        if (!initValue) return nullptr;
+        llvm::Value* referent = ctx.bindReference(*initExpr, initValue, type);
+        if (!referent) return nullptr;
+        ctx.getBuilder().CreateStore(referent, alloca);
+        ctx.declareVariable(name, alloca, type);
+        return alloca;
+    }
 
     // TYP-12 D3 + I4 found issue: 未初始化聚合零初始化——
     //   * slice → 空 slice {null, 0}（TYP-12 D3）；

@@ -29,6 +29,10 @@ public:
 class ReturnStmtAST : public StmtAST {
 public:
     std::unique_ptr<ExprAST> value;
+    // Sema marks a reference-returning function's return; codegen returns the
+    // operand address instead of loading the referent.
+    bool returnsReference = false;
+    Type* referenceReturnType = nullptr;
 
     explicit ReturnStmtAST(std::unique_ptr<ExprAST> val) : value(std::move(val)) {}
     llvm::Value* codegen(CodegenContext& ctx) override;
