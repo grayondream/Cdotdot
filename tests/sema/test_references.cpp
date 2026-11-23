@@ -116,3 +116,38 @@ TEST(ReferenceBinding, ConstReferenceParameterAcceptsTemporary) {
     auto result = analyzeSource("int32 f(const int32& r) { return r; } int32 main() { return f(1) - 1; }");
     EXPECT_TRUE(result.errors.empty());
 }
+
+TEST(ReferenceMembers, MemberWithoutInitializerRejected) {
+    auto result = analyzeSource("struct SNoInitRef { int32& r; }; int32 main() { SNoInitRef s; return 0; }");
+    EXPECT_TRUE(hasError(result, "reference"));
+}
+
+TEST(ReferenceMembers, EveryReferenceMemberMustBeBound) {
+    auto result = analyzeSource(R"(
+        struct SBindRef { int32 x; int32& r; };
+        int32 main() { int32 a = 1; SBindRef s = {a}; return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "reference"));
+}
+
+TEST(ReferenceMembers, AggregateAssignmentWithReferenceRejected) {
+    auto result = analyzeSource(R"(
+        struct SAggAssign { int32& r; };
+        int32 main() { int32 a = 1, b = 2; SAggAssign x = {a}; SAggAssign y = {b}; x = y; return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "reference"));
+}
+
+TEST(ReferenceMembers, MemberAssignmentWritesReferent) {
+    auto result = analyzeSource(R"(
+        struct SMemberAssign { int32& r; };
+        int32 main() { int32 a = 1; SMemberAssign s = {a}; s.r = 2; return a; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceMembers, ReferenceMemberFromTemporaryRejected) {
+    auto result = analyzeSource(
+        "struct STempRef { int32& r; }; int32 main() { STempRef s = {1}; return 0; }");
+    EXPECT_TRUE(hasError(result, "temporary") || hasError(result, "rvalue"));
+}

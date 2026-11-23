@@ -91,6 +91,13 @@ static void emitDesignatedInitializer(CodegenContext& ctx, llvm::Value* dest,
 // P1-07 / AGG-06 / PAR-13: 单个初始值项写入一个字段（嵌套/string 深拷贝/标量）。
 static void emitFieldItemImpl(CodegenContext& ctx, ExprAST& item, Type* ftype,
                               llvm::Value* fptr) {
+    if (isReferenceType(ftype)) {
+        llvm::Value* value = item.codegen(ctx);
+        if (!value) return;
+        llvm::Value* referent = ctx.bindReference(item, value, ftype);
+        if (referent) ctx.getBuilder().CreateStore(referent, fptr);
+        return;
+    }
     if (auto* nested = dynamic_cast<InitializerListExprAST*>(&item)) {
         emitAggregateInitializer(ctx, fptr, ftype, nested);
         return;

@@ -2781,6 +2781,10 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         spilledRvalue = true;
     }
     auto finishMember = [&](llvm::Value* addr) -> llvm::Value* {
+        if (isReferenceMember) {
+            return builder.CreateLoad(
+                llvm::PointerType::get(ctx.getContext(), 0), addr, "refmember");
+        }
         if (!spilledRvalue) return addr;
         if (isBitField) {
             Type* qualified = stripTypedefPreservingQualifiers(type);

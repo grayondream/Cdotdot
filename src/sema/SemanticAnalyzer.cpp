@@ -940,6 +940,13 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
                   node);
         return nullptr;
     }
+    if (typeContainsReference(lhsS)) {
+        emitError(DiagnosticCode::SemIncompatibleAssignment,
+                  "cannot assign an aggregate containing a reference member; "
+                  "assign through the reference instead",
+                  node);
+        return nullptr;
+    }
     // TYP-12: slice targets must match by element type; arrays decay to
     // slice views (zero-copy). Tightens the generic same-kind rule that
     // silently accepted int32[] = float64[].
@@ -5902,6 +5909,18 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
     Type* objectQualType = pointerAccess ? strippedBase : strippedObj;
     const bool objectIsConst = objectQualType && objectQualType->isConst;
     const bool objectIsVolatile = objectQualType && objectQualType->isVolatile;
+    auto setMemberType = [&](Type* memberType) {
+        Type* qualified = qualifyMemberLValue(memberType, objectIsConst,
+                                              objectIsVolatile);
+        if (isReferenceType(qualified)) {
+            node.type = referenceReferent(qualified);
+            node.isLValue = true;
+            node.isReferenceMember = true;
+        } else {
+            node.type = qualified;
+            node.isLValue = memberLValue;
+        }
+    };
     // Qualified record types are parse-time clones and can predate sema's
     // field/base population.  Resolve the nominal record for member lookup,
     // while retaining the qualifier captured above for lvalue typing.
@@ -6090,9 +6109,7 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                                            ? cur->semanticFields : cur->fields;
             for (auto& field : lookupFields) {
                 if (field.name == node.memberName) {
-                    node.type = qualifyMemberLValue(field.type, objectIsConst,
-                                                    objectIsVolatile);
-                    node.isLValue = memberLValue;
+                    setMemberType(field.type);
                     // P1-07 / SEM-12: bit-field access marker (isLValue stays
                     // true — the sema assignment gate depends on it; codegen
                     // returns the storage-unit address).
@@ -6132,9 +6149,7 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                             node.isLValue = false;
                             return;
                         }
-                        node.type = qualifyMemberLValue(field.type, objectIsConst,
-                                                        objectIsVolatile);
-                        node.isLValue = memberLValue;
+                        setMemberType(field.type);
                         node.isBitField = field.bitWidth > 0;
                         node.bitWidth = static_cast<uint32_t>(
                             field.bitWidth > 0 ? field.bitWidth : 0);
@@ -6163,9 +6178,7 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                                            ? classType->semanticFields : classType->fields;
             for (auto& field : lookupFields) {
                 if (field.name == node.memberName) {
-                    node.type = qualifyMemberLValue(field.type, objectIsConst,
-                                                    objectIsVolatile);
-                    node.isLValue = memberLValue;
+                    setMemberType(field.type);
                     // P1-07 / SEM-12: bit-field access marker (see struct path).
                     node.isBitField = field.bitWidth > 0;
                     node.bitWidth = static_cast<uint32_t>(field.bitWidth > 0 ? field.bitWidth : 0);
@@ -6202,9 +6215,7 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
             while (baseStruct) {
                 for (auto& field : baseStruct->fields) {
                     if (field.name == node.memberName) {
-                        node.type = qualifyMemberLValue(field.type, objectIsConst,
-                                                        objectIsVolatile);
-                        node.isLValue = memberLValue;
+                        setMemberType(field.type);
                         node.isBitField = field.bitWidth > 0;
                         node.bitWidth = static_cast<uint32_t>(
                             field.bitWidth > 0 ? field.bitWidth : 0);
@@ -6223,9 +6234,7 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
         auto* unionType = static_cast<UnionType*>(memberBaseType);
         for (auto& member : unionType->members) {
             if (member.name == node.memberName) {
-                node.type = qualifyMemberLValue(member.type, objectIsConst,
-                                                objectIsVolatile);
-                node.isLValue = memberLValue;
+                setMemberType(member.type);
                 // P1-07 / SEM-12: bit-field access marker (see struct path).
                 node.isBitField = member.bitWidth > 0;
                 node.bitWidth = static_cast<uint32_t>(member.bitWidth > 0 ? member.bitWidth : 0);
@@ -8608,6 +8617,58 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                 !hasUserConversion(initType, node.type)) {
                 emitError("type mismatch in initialization of '" + node.name + "': expected '" 
                     + typeToString(node.type) + "', got '" + typeToString(initType) + "'", node);
+            }
+        }
+    }
+    if (!referenceVar && typeContainsReference(node.type)) {
+        if (!node.initExpr) {
+            emitError(DiagnosticCode::SemUninitializedReference,
+                      "aggregate '" + node.name +
+                          "' contains a reference member and must be initialized",
+                      node);
+        } else if (auto* initList =
+                       dynamic_cast<InitializerListExprAST*>(node.initExpr.get())) {
+            Type* agg = canonicalRecordType(node.type);
+            const std::vector<FieldInfo>* fields = nullptr;
+            if (agg && agg->kind == TypeKind::Struct) {
+                auto* record = static_cast<StructType*>(agg);
+                fields = &(!record->semanticFields.empty()
+                               ? record->semanticFields : record->fields);
+            } else if (agg && agg->kind == TypeKind::Class) {
+                auto* record = static_cast<ClassType*>(agg);
+                fields = &(!record->semanticFields.empty()
+                               ? record->semanticFields : record->fields);
+            }
+            if (fields) {
+                for (size_t i = 0; i < fields->size(); ++i) {
+                    if (!isReferenceType((*fields)[i].type)) continue;
+                    if (i >= initList->initializers.size()) {
+                        emitError(DiagnosticCode::SemUninitializedReference,
+                                  "reference member '" + (*fields)[i].name +
+                                      "' must be initialized",
+                                  node);
+                        continue;
+                    }
+                    ExprAST* init = initList->initializers[i].get();
+                    bool needsTemporary = false;
+                    std::string reason;
+                    bool isBitField = false;
+                    if (auto* member = dynamic_cast<MemberAccessExprAST*>(init))
+                        isBitField = member->isBitField;
+                    if (!init->isLValue || isBitField) {
+                        emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                                  "reference member '" + (*fields)[i].name +
+                                      "' cannot bind to a temporary",
+                                  node);
+                    } else if (!referenceBindingAllowed(
+                                   (*fields)[i].type, getExprType(*init), true,
+                                   false, needsTemporary, &reason)) {
+                        emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                                  "invalid binding for reference member '" +
+                                      (*fields)[i].name + "': " + reason,
+                                  node);
+                    }
+                }
             }
         }
     }

@@ -151,3 +151,28 @@ TEST_F(ReferencesE2E, ReferenceLocalUsesPointerSizedSlot) {
     EXPECT_NE(ir.find("alloca ptr"), std::string::npos);
     EXPECT_NE(ir.find("store ptr"), std::string::npos);
 }
+
+TEST_F(ReferencesE2E, ReferenceMemberAliasesExternalObject) {
+    EXPECT_EQ(runSource(R"(
+        struct HolderAlias { int32& r; };
+        int32 main() {
+            int32 x = 1;
+            HolderAlias h = {x};
+            h.r = 5;
+            return x - 5;
+        }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, AggregateCopyCopiesReferenceBinding) {
+    EXPECT_EQ(runSource(R"(
+        struct HolderCopy { int32& r; };
+        int32 main() {
+            int32 x = 1;
+            HolderCopy a = {x};
+            HolderCopy b = a;
+            b.r = 7;
+            return x - 7;
+        }
+    )"), 0);
+}
