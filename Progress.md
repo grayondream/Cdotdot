@@ -1858,3 +1858,24 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败。
   - 探针：`int32 y = p`、`return p`、`c ? p : 5`、`f(5)`、捕获闭包 `g(5)`、`auto` 返回 `5` 均报错；`int32* p = 0`、`c ? 0 : p`、`f(0)`、`g(0)` 仍通过。
 - 提交：`848d7ec`。
+
+
+## 2026-11-23 — 类型同一收敛：删除 typesEqual，统一到 typesIdentical
+
+- 背景：`typesEqual`（`src/ast/Symbol.cpp`）与 `typesIdentical`（`src/ast/TypeUtils.cpp`）长期并存，但两者对同一种类型给出不同答案：旧 helper 忽略 `const`/`volatile`、数组 `sizeParam`、函数 `isVarArg`，并把任意两个 `TypeVar`/`TypeInstance`/`decltype` 视为相等。实证 `compile_time.is_same(compile_time.const_of(int32), int32)` 返回 1，而 `int32*`/`const int32*` 也被错误视为同一类型。
+- 修复：
+  - 删除 `typesEqual` 的声明与实现，所有调用点改用 `typesIdentical`；`typesIdentical` 成为唯一结构化类型同一入口。
+  - 对需要“值兼容”而非“类型同一”的调用点（聚合复制、optional/result 赋值、用户转换、方法签名、原子 compare-exchange 等）显式使用 `adjustParameterTypeForSignature` 只放宽顶层 cv，保留 pointee/aggregate 内部限定符。
+  - 将 slice/array 元素兼容 helper `qualifiedElementCompatible` 从 `SemanticAnalyzer.cpp` 移入 `TypeUtils`，`conversionRank` 的数组→slice 与 sema 共用同一规则：目标可加 cv、不可丢 cv。
+  - `CompileTimeEvaluator::typesSame` 简化为“剥 typedef 后调用 `typesIdentical`”，删除重复的 `TypeInstance` 比较逻辑。
+  - `docs/spec/conversions.md` §1 更新为 `typesIdentical` 的唯一规则，并记录顶层 cv 的显式放宽约定。
+- 测试：
+  - 新增 `CompileTimeErgonomics.IsSameDistinguishesQualifiers`：`const int32` ≠ `int32`、指针 pointee const 参与身份、`const int32` 仍可转换为 `int32`；先 RED（期望 0 实际 1）后 GREEN。
+  - 既有 `SyntaxGapsE2E.C99ArrayParameterQualifiers` 在首次替换后暴露 array→slice 的 cv 添加路径，`qualifiedElementCompatible` 复用后恢复 GREEN。
+  - `tests/frontend/test_parser.cpp` 的匿名类型断言改用 `typesIdentical`。
+- 验证：
+  - 全量 **2130/2130** 通过。
+  - `examples/all_features.cdd` 编译运行输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 提交：`38585ce`。
