@@ -317,3 +317,221 @@ TEST(QualifierBuiltins, SliceOfConstElementsRejectsWrite) {
         }
     )"), "const"));
 }
+
+// Review-found gaps: qualified class records, outer cv on typedefs, all
+// mutating operators, unions, null-pointer conversion sites, slice const
+// direction, symmetric pointer comparisons, function-pointer adjustment,
+// template argument cv, and the string.data property.
+
+TEST(QualifierConstRecords, ConstClassFieldReadAndWrite) {
+    auto read = analyzeSource(R"(
+        class QCR1 { public: int32 v; };
+        int32 main() { QCR1 c; c.v = 5; const QCR1* p = &c; return p->v - 5; }
+    )");
+    EXPECT_TRUE(read.errors.empty());
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        class QCR2 { public: int32 v; };
+        int32 main() { QCR2 c; c.v = 5; const QCR2* p = &c; p->v = 2; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierConstRecords, ConstClassFieldReadByValueParamAndNested) {
+    EXPECT_TRUE(analyzeSource(R"(
+        class QCR3 { public: int32 v; };
+        class QCR4 { public: QCR3 inner; };
+        int32 read(const QCR3 c) { return c.v; }
+        int32 main() { QCR4 o; o.inner.v = 7; const QCR4* p = &o; return p->inner.v; }
+    )").errors.empty());
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        class QCR5 { public: int32 v; };
+        int32 main() { const QCR5 d = {1}; d.v = 2; return d.v; }
+    )"), "const"));
+    EXPECT_TRUE(analyzeSource(R"(
+        class QCR6 { public: int32 v; };
+        int32 main() { QCR6 a[1]; a[0].v = 3; const QCR6* p = a; return p[0].v; }
+    )").errors.empty());
+}
+
+TEST(QualifierTypedefQualifiers, OuterConstOnAliasIsPreserved) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using QCI = int32;
+        int32 main() { const QCI x = 1; x = 2; return x; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using QCP = int32*;
+        int32 main() { int32 x = 1; const QCP p = &x; p = &x; return 0; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using QCI2 = int32;
+        int32 main() { int32 x = 1; const QCI2* p = &x; QCI2* q = p; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierTypedefQualifiers, OuterConstOnClassAliasIsPreserved) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        class QCC1 { public: int32 v; };
+        using QCC = QCC1;
+        int32 main() { QCC1 c; const QCC y = c; y.v = 2; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierTypedefQualifiers, OuterConstOnAliasInFieldAndParameter) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using QCFI = int32;
+        struct QCF { const QCFI x; };
+        int32 main() { QCF a = {1}; QCF b = {2}; a = b; return 0; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        using QCPI = int32;
+        void f(const QCPI x) { x = 2; }
+        int32 main() { return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierMutation, IncDecRejectsConstLvalues) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() { const int32 x = 1; x++; return x; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() { const int32 x = 1; ++x; return x; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QMI { int32 x; };
+        int32 main() { const QMI s = {1}; s.x++; return 0; }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() { int32 x = 1; int32* const p = &x; p++; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierMutation, UnionMemberOfConstObjectIsConst) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        union QMU { int32 a; };
+        int32 main() { QMU u; u.a = 1; const QMU* p = &u; p->a = 2; return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierNullPointer, RejectsNonZeroIntegerAtAllValueSites) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        void take(int32* p) {}
+        int32 main() { take(5); return 0; }
+    )"), "pointer"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32* make() { return 5; }
+        int32 main() { return 0; }
+    )"), "pointer"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QNP1 { int32* p; };
+        int32 main() { QNP1 s = {5}; return 0; }
+    )"), "pointer"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() { int32* a[1] = {5}; return 0; }
+    )"), "pointer"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QNS { static int32* p; };
+        int32* QNS::p = 5;
+        int32 main() { return 0; }
+    )"), "pointer"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        struct QNS2 { static int32* p = 5; };
+        int32 main() { return 0; }
+    )"), "pointer"));
+}
+
+TEST(QualifierNullPointer, AcceptsNullAtThoseSites) {
+    EXPECT_TRUE(analyzeSource(R"(
+        void take(int32* p) {}
+        int32* make() { return null; }
+        struct QNP2 { int32* p; };
+        int32 main() { take(0); QNP2 s = {0}; int32* a[1] = {0}; return 0; }
+    )").errors.empty());
+}
+
+TEST(QualifierSlice, CannotDropConstFromElementView) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 a[2] = {1, 2};
+            const int32[] cs = a;
+            int32[] m = cs;
+            m[0] = 3;
+            return 0;
+        }
+    )"), "const"));
+    EXPECT_TRUE(analyzeSource(R"(
+        int32 main() {
+            int32 a[2] = {1, 2};
+            const int32[] cs = a;
+            const int32[] ds = cs;
+            return ds[0];
+        }
+    )").errors.empty());
+}
+
+TEST(QualifierCompare, PointerComparisonAndTernaryAreSymmetric) {
+    EXPECT_TRUE(analyzeSource(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* p = &x;
+            const int32* cp = p;
+            if (p == cp) return 1;
+            if (cp == p) return 2;
+            const int32* r = true ? p : cp;
+            return r == p ? 0 : 3;
+        }
+    )").errors.empty());
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            int32 x = 1;
+            int32* p = &x;
+            const int32* cp = p;
+            int32* r = true ? p : cp;
+            return 0;
+        }
+    )"), "const"));
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() { int32 x = 1; int32* p = &x; return p == 5 ? 0 : 1; }
+    )"), "pointer"));
+}
+
+TEST(QualifierFunctionPointer, AdjustsTopLevelParameterQualifiers) {
+    EXPECT_TRUE(analyzeSource(R"(
+        int32 f(const int32 x) { return x; }
+        void g(int32* const p) {}
+        int32 main() {
+            int32 (*fp)(int32) = f;
+            void (*gp)(int32*) = g;
+            return 0;
+        }
+    )").errors.empty());
+}
+
+TEST(QualifierTemplate, ConstInTemplateArgumentsIsDistinct) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        template<typename T> struct QTBox { T value; };
+        int32 main() {
+            QTBox<int32*> a;
+            QTBox<const int32*> b;
+            a = b;
+            return 0;
+        }
+    )"), "distinct"));
+}
+
+TEST(QualifierBuiltins, ConstStringDataPropertyIsConst) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        int32 main() {
+            string s = string.new("a");
+            const string cs = s;
+            char* p = cs.data;
+            return 0;
+        }
+    )"), "const"));
+    EXPECT_TRUE(analyzeSource(R"(
+        int32 main() {
+            string s = string.new("a");
+            const string cs = s;
+            const char* p = cs.data;
+            return p[0] == 'a' ? 0 : 1;
+        }
+    )").errors.empty());
+}

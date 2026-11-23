@@ -36,6 +36,9 @@ public:
 
     Type* checkBinaryTypes(BinaryOp op, Type* left, Type* right, ExprAST& node);
     Type* checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node);
+    // Reject non-zero integer expressions flowing into pointer destinations.
+    bool checkNullPointerConversion(Type* target, Type* source,
+                                    const ExprAST* expr, ASTNode& node);
     // SG-11: find an accessible `operator T()` whose result can be converted
     // to `to` (exact match or one user conversion + standard conversion).
     FunctionType* findUserConversion(Type* from, Type* to,

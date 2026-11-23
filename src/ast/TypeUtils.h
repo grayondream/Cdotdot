@@ -27,6 +27,11 @@ Type* qualifyType(const Type* type, TypeQualifiers qualifiers);
 // type.  Returns the original pointer when neither qualifier is present.
 Type* qualifyTopLevel(const Type* type, bool isConst, bool isVolatile);
 
+// Strip typedef aliases while accumulating qualifiers written on the alias
+// (`const CI` where `using CI = int32` must become `const int32`).  Returns the
+// aliased type when no alias-level qualifiers were present.
+Type* stripTypedefPreservingQualifiers(const Type* type);
+
 // C signature adjustment: top-level const/volatile/restrict on a by-value
 // parameter or return is ignored.  Pointee qualifiers are preserved.
 Type* adjustParameterTypeForSignature(const Type* type);

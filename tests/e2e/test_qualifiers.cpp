@@ -92,6 +92,21 @@ TEST_F(QualifiersE2E, ConstMethodReadsState) {
     )"), 0);
 }
 
+TEST_F(QualifiersE2E, ConstClassFieldRead) {
+    EXPECT_EQ(runQualifierSource(R"(
+        class QualifierE2ECFR {
+        public:
+            int32 v;
+        };
+        int32 main() {
+            QualifierE2ECFR c;
+            c.v = 7;
+            const QualifierE2ECFR* p = &c;
+            return p->v - 7;
+        }
+    )"), 0);
+}
+
 TEST_F(QualifiersE2E, ConstStringDataIsReadOnlyAtRuntime) {
     EXPECT_EQ(runQualifierSource(R"(
         int32 main() {

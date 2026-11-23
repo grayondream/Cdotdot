@@ -271,6 +271,22 @@ Type* qualifyTopLevel(const Type* type, bool isConst, bool isVolatile) {
     return qualifyType(type, TypeQualifiers{isConst, isVolatile, false});
 }
 
+Type* stripTypedefPreservingQualifiers(const Type* type) {
+    bool isConst = false;
+    bool isVolatile = false;
+    bool isRestrict = false;
+    while (type && type->kind == TypeKind::Typedef) {
+        isConst = isConst || type->isConst;
+        isVolatile = isVolatile || type->isVolatile;
+        isRestrict = isRestrict || type->isRestrict;
+        type = static_cast<const TypedefType*>(type)->aliasedType;
+    }
+    if (!type) return nullptr;
+    if (!isConst && !isVolatile && !isRestrict)
+        return const_cast<Type*>(type);
+    return qualifyType(type, TypeQualifiers{isConst, isVolatile, isRestrict});
+}
+
 Type* adjustParameterTypeForSignature(const Type* type) {
     if (!type) return nullptr;
     if (!type->isConst && !type->isVolatile && !type->isRestrict)
@@ -285,9 +301,7 @@ Type* adjustParameterTypeForSignature(const Type* type) {
 namespace {
 
 const Type* stripTypedefsForQualifiers(const Type* type) {
-    while (type && type->kind == TypeKind::Typedef)
-        type = static_cast<const TypedefType*>(type)->aliasedType;
-    return type;
+    return stripTypedefPreservingQualifiers(type);
 }
 
 bool qualifiersMayBeAdded(const Type* target, const Type* source) {
@@ -559,10 +573,14 @@ bool typesIdentical(const Type* a, const Type* b) {
             const auto* fa = static_cast<const FunctionType*>(a);
             const auto* fb = static_cast<const FunctionType*>(b);
             if (fa->isVarArg != fb->isVarArg) return false;
-            if (!typesIdentical(fa->returnType, fb->returnType)) return false;
+            if (!typesIdentical(adjustParameterTypeForSignature(fa->returnType),
+                                adjustParameterTypeForSignature(fb->returnType)))
+                return false;
             if (fa->paramTypes.size() != fb->paramTypes.size()) return false;
             for (size_t i = 0; i < fa->paramTypes.size(); ++i) {
-                if (!typesIdentical(fa->paramTypes[i], fb->paramTypes[i]))
+                if (!typesIdentical(
+                        adjustParameterTypeForSignature(fa->paramTypes[i]),
+                        adjustParameterTypeForSignature(fb->paramTypes[i])))
                     return false;
             }
             return true;

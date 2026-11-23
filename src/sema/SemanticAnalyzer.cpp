@@ -22,10 +22,23 @@ static bool scopeDeclaresSymbol(Scope* scope, Symbol* sym);
 
 // Strip any number of typedef/alias layers, returning the underlying type.
 static Type* stripTypedef(Type* type) {
-    while (type && type->kind == TypeKind::Typedef) {
-        type = static_cast<TypedefType*>(type)->aliasedType;
-    }
-    return type;
+    return stripTypedefPreservingQualifiers(type);
+}
+
+// Slice/array view element compatibility: the destination may add top-level
+// cv, but may not drop it.  Pointer elements use the ordinary C pointer rule
+// (including pointee qualifiers).
+static bool qualifiedElementCompatible(Type* target, Type* source) {
+    target = stripTypedef(target);
+    source = stripTypedef(source);
+    if (!target || !source) return false;
+    if (typesIdentical(target, source)) return true;
+    if (target->kind == TypeKind::Pointer && source->kind == TypeKind::Pointer)
+        return pointerConversionAllowed(target, source);
+    if (source->isConst && !target->isConst) return false;
+    if (source->isVolatile && !target->isVolatile) return false;
+    return typesIdentical(adjustParameterTypeForSignature(target),
+                          adjustParameterTypeForSignature(source));
 }
 
 // C null pointer constants are integer constant expressions with value zero.
@@ -494,11 +507,13 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     // TYP-12: slices match by element type only (int32[] != float64[]);
     // arrays decay to slice views. Checked before the generic same-kind rule.
     if (left->kind == TypeKind::Slice && right->kind == TypeKind::Slice)
-        return typesEqual(static_cast<SliceType*>(left)->elementType,
-                          static_cast<SliceType*>(right)->elementType);
+        return qualifiedElementCompatible(
+            static_cast<SliceType*>(left)->elementType,
+            static_cast<SliceType*>(right)->elementType);
     if (left->kind == TypeKind::Slice && right->kind == TypeKind::Array)
-        return typesEqual(static_cast<SliceType*>(left)->elementType,
-                          static_cast<ArrayType*>(right)->elementType);
+        return qualifiedElementCompatible(
+            static_cast<SliceType*>(left)->elementType,
+            static_cast<ArrayType*>(right)->elementType);
     // P1-02 (TYP-13/14): Optional/Result match strictly by their type
     // arguments (int32? != float64?) — before the generic same-kind rule.
     if (left->kind == TypeKind::Optional && right->kind == TypeKind::Optional)
@@ -593,9 +608,10 @@ std::string SemanticAnalyzer::typeToString(Type* type) const {
         case TypeKind::Float64: return "float64";
         case TypeKind::Float16: return "float16";
         case TypeKind::Float128: return "float128";
-        case TypeKind::Slice: return "slice";
-        case TypeKind::Optional: return "optional";
-        case TypeKind::Result: return "result";
+        case TypeKind::Slice:
+        case TypeKind::Optional:
+        case TypeKind::Result:
+            return qualifiedTypeToString(type);
         case TypeKind::Str: return "string_view";
         case TypeKind::String: return "string";
         case TypeKind::Auto: return "auto";
@@ -746,7 +762,32 @@ Type* SemanticAnalyzer::checkBinaryTypes(BinaryOp op, Type* left, Type* right, E
                     return nullptr;
                 }
             }
-            if (!typesCompatible(left, right)) {
+            {
+                auto* binary = dynamic_cast<const BinaryExprAST*>(&node);
+                const ExprAST* lhsExpr = binary ? binary->left.get() : nullptr;
+                const ExprAST* rhsExpr = binary ? binary->right.get() : nullptr;
+                Type* ls = stripTypedef(left);
+                Type* rs = stripTypedef(right);
+                if (ls && rs && ls->kind == TypeKind::Pointer &&
+                    isIntegerType(rs) && !isNullPointerConstantExpr(rhsExpr)) {
+                    emitError("comparison between pointer and non-zero integer is invalid",
+                              node);
+                    return nullptr;
+                }
+                if (ls && rs && rs->kind == TypeKind::Pointer &&
+                    isIntegerType(ls) && !isNullPointerConstantExpr(lhsExpr)) {
+                    emitError("comparison between pointer and non-zero integer is invalid",
+                              node);
+                    return nullptr;
+                }
+            }
+            // Pointer comparisons are symmetric: either direction may add
+            // qualifiers (C's composite type is the more-qualified pointer).
+            if (!typesCompatible(left, right) &&
+                !(stripTypedef(left) && stripTypedef(right) &&
+                  stripTypedef(left)->kind == TypeKind::Pointer &&
+                  stripTypedef(right)->kind == TypeKind::Pointer &&
+                  typesCompatible(right, left))) {
                 emitError("comparison of incompatible types: '" + typeToString(left) + "' and '" 
                     + typeToString(right) + "' with '" + binaryOpToString(op) + "'", node);
                 return nullptr;
@@ -841,6 +882,25 @@ bool SemanticAnalyzer::coerceUserCondition(std::unique_ptr<ExprAST>& cond,
     return true;
 }
 
+bool SemanticAnalyzer::checkNullPointerConversion(Type* target, Type* source,
+                                                   const ExprAST* expr,
+                                                   ASTNode& node) {
+    Type* targetStripped = stripTypedef(target);
+    Type* sourceStripped = stripTypedef(source);
+    if (!targetStripped || !sourceStripped ||
+        targetStripped->kind != TypeKind::Pointer ||
+        targetStripped->isReference ||
+        !isIntegerType(sourceStripped)) {
+        return true;
+    }
+    if (isNullPointerConstantExpr(expr)) return true;
+    emitError("cannot convert non-zero integer '" + typeToString(sourceStripped) +
+                  "' to pointer '" + typeToString(targetStripped) +
+                  "'; only the null pointer constant is allowed",
+              node);
+    return false;
+}
+
 Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node) {
     if (!lhs || !rhs) return nullptr;
 
@@ -885,11 +945,15 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
     // slice views (zero-copy). Tightens the generic same-kind rule that
     // silently accepted int32[] = float64[].
     if (lhsS->kind == TypeKind::Slice && rhsS->kind == TypeKind::Slice)
-        return typesEqual(static_cast<SliceType*>(lhsS)->elementType,
-                          static_cast<SliceType*>(rhsS)->elementType) ? lhsRaw : nullptr;
+        return qualifiedElementCompatible(
+                   static_cast<SliceType*>(lhsS)->elementType,
+                   static_cast<SliceType*>(rhsS)->elementType)
+                   ? lhsRaw : nullptr;
     if (lhsS->kind == TypeKind::Slice && rhsS->kind == TypeKind::Array)
-        return typesEqual(static_cast<SliceType*>(lhsS)->elementType,
-                          static_cast<ArrayType*>(rhsS)->elementType) ? lhsRaw : nullptr;
+        return qualifiedElementCompatible(
+                   static_cast<SliceType*>(lhsS)->elementType,
+                   static_cast<ArrayType*>(rhsS)->elementType)
+                   ? lhsRaw : nullptr;
     if (lhsS->kind == TypeKind::Pointer &&
         (rhsS->kind == TypeKind::Pointer || rhsS->kind == TypeKind::Array)) {
         if (pointerConversionAllowed(lhsS, rhsS)) return lhsRaw;
@@ -1053,10 +1117,16 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
     }
 
     // `conversionRank` is intentionally context-free (it lives in Symbol.cpp),
-    // so enforce member access for user-defined conversions here.  Without
-    // this a private `operator int32()` could leak through a function call,
-    // even though explicit casts already reject it.
+    // so enforce the expression-aware null-pointer rule here.
     const size_t checkedArgs = std::min(args.size(), funcType->paramTypes.size());
+    for (size_t i = 0; i < checkedArgs; ++i) {
+        if (!checkNullPointerConversion(funcType->paramTypes[i], argTypes[i],
+                                        args[i].get(), node))
+            return nullptr;
+    }
+    // Enforce member access for user-defined conversions here.  Without this a
+    // private `operator int32()` could leak through a function call, even
+    // though explicit casts already reject it.
     for (size_t i = 0; i < checkedArgs; ++i) {
         Type* at = stripTypedef(argTypes[i]);
         Type* pt = stripTypedef(funcType->paramTypes[i]);
@@ -3617,6 +3687,27 @@ void SemanticAnalyzer::visit(UnaryExprAST& node) {
         return;
     }
 
+    if (node.op == UnaryOp::PreInc || node.op == UnaryOp::PreDec) {
+        if (operandType) {
+            std::string reason;
+            if (!node.operand->isLValue) {
+                emitError("cannot apply prefix increment/decrement to an rvalue",
+                          node);
+                node.type = nullptr;
+                node.isLValue = false;
+                return;
+            }
+            if (!isModifiableLValueType(operandType, &reason)) {
+                emitError("cannot apply prefix increment/decrement to " + reason +
+                              " lvalue",
+                          node);
+                node.type = nullptr;
+                node.isLValue = false;
+                return;
+            }
+        }
+    }
+
     // Review 2.4: `!opt` / `!res` mean "invalid" / "error" before any
     // user-defined operator overload lookup.
     if (node.op == UnaryOp::Not) {
@@ -5423,8 +5514,13 @@ void SemanticAnalyzer::visit(TernaryExprAST& node) {
     };
     Type* bl = strippedBranch(thenType);
     Type* br = strippedBranch(elseType);
+    const bool pointerPair = bl && br && bl->kind == TypeKind::Pointer &&
+                             br->kind == TypeKind::Pointer;
+    const bool compatible = pointerPair
+        ? (typesCompatible(bl, br) || typesCompatible(br, bl))
+        : typesCompatible(bl, br);
     if (bl && br && !(isArithmeticType(bl) && isArithmeticType(br)) &&
-        !typesCompatible(bl, br)) {
+        !compatible) {
         emitError("ternary branches have incompatible types: '" +
                       typeToString(thenType) + "' and '" + typeToString(elseType) + "'",
                   node);
@@ -5434,6 +5530,14 @@ void SemanticAnalyzer::visit(TernaryExprAST& node) {
     }
 
     node.type = getCommonType(thenType, elseType);
+    if (pointerPair) {
+        // Pick the more-qualified branch as the composite type, so `p : cp`
+        // does not silently drop const in the result.
+        if (typesCompatible(bl, br))
+            node.type = thenType;
+        else if (typesCompatible(br, bl))
+            node.type = elseType;
+    }
     node.isLValue = false;
 }
 
@@ -5523,6 +5627,25 @@ void SemanticAnalyzer::visit(PostfixIncDecExprAST& node) {
         node.type = nullptr;
         node.isLValue = false;
         return;
+    }
+    if (operandType) {
+        std::string reason;
+        if (!node.operand->isLValue) {
+            emitError("cannot apply '" + std::string(node.isIncrement ? "++" : "--") +
+                          "' to an rvalue",
+                      node);
+            node.type = nullptr;
+            node.isLValue = false;
+            return;
+        }
+        if (!isModifiableLValueType(operandType, &reason)) {
+            emitError("cannot apply '" + std::string(node.isIncrement ? "++" : "--") +
+                          "' to " + reason + " lvalue",
+                      node);
+            node.type = nullptr;
+            node.isLValue = false;
+            return;
+        }
     }
     // SEM-17: postfix `x++`/`x--` on an aggregate → `operator++(V, int32)` /
     // `operator--(V, int32)` free function (C++ dummy-int convention).
@@ -5735,22 +5858,10 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
 
     Type* memberBaseType = nullptr;
     // Typedefs to aggregates resolve to the underlying type (AGG-17).
-    Type* strippedObj = nullptr;
+    Type* strippedObj = stripTypedef(objType);
     Type* strippedBase = nullptr;
-    {
-        Type* t = objType;
-        while (t && t->kind == TypeKind::Typedef) {
-            t = static_cast<TypedefType*>(t)->aliasedType;
-        }
-        strippedObj = t;
-        if (t && t->kind == TypeKind::Pointer) {
-            Type* b = t->base;
-            while (b && b->kind == TypeKind::Typedef) {
-                b = static_cast<TypedefType*>(b)->aliasedType;
-            }
-            strippedBase = b;
-        }
-    }
+    if (strippedObj && strippedObj->kind == TypeKind::Pointer)
+        strippedBase = stripTypedef(strippedObj->base);
     // A field of an rvalue aggregate is an xvalue: readable, not assignable.
     // Arrow access (and dot auto-deref through a pointer) always names the
     // pointed-to object, so the field remains an lvalue.
@@ -5763,6 +5874,29 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
     Type* objectQualType = pointerAccess ? strippedBase : strippedObj;
     const bool objectIsConst = objectQualType && objectQualType->isConst;
     const bool objectIsVolatile = objectQualType && objectQualType->isVolatile;
+    // Qualified record types are parse-time clones and can predate sema's
+    // field/base population.  Resolve the nominal record for member lookup,
+    // while retaining the qualifier captured above for lvalue typing.
+    auto canonicalRecord = [&](Type* type) -> Type* {
+        type = stripTypedef(type);
+        if (!type) return type;
+        if (type->kind == TypeKind::Struct) {
+            auto* record = static_cast<StructType*>(type);
+            if (auto* registered = typeCtx->getStruct(record->name))
+                return registered;
+        } else if (type->kind == TypeKind::Class) {
+            auto* record = static_cast<ClassType*>(type);
+            if (auto* registered = typeCtx->getClass(record->name))
+                return registered;
+        } else if (type->kind == TypeKind::Union) {
+            auto* record = static_cast<UnionType*>(type);
+            if (auto* registered = typeCtx->getUnion(record->name))
+                return registered;
+        }
+        return type;
+    };
+    strippedObj = canonicalRecord(strippedObj);
+    if (strippedBase) strippedBase = canonicalRecord(strippedBase);
     if (!strippedObj || (strippedObj->kind == TypeKind::Pointer && !strippedBase)) {
         node.type = nullptr;
         node.isLValue = false;
@@ -5824,8 +5958,10 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
                 return;
             }
             if (node.memberName == "data") {
-                node.type = new Type(TypeKind::Pointer,
-                                     TypeContext::instance().getChar());
+                Type* charType = qualifyMemberLValue(
+                    TypeContext::instance().getChar(), objectIsConst,
+                    objectIsVolatile);
+                node.type = new Type(TypeKind::Pointer, charType);
                 node.isLValue = false;
                 return;
             }
@@ -6059,7 +6195,8 @@ void SemanticAnalyzer::visit(MemberAccessExprAST& node) {
         auto* unionType = static_cast<UnionType*>(memberBaseType);
         for (auto& member : unionType->members) {
             if (member.name == node.memberName) {
-                node.type = member.type;
+                node.type = qualifyMemberLValue(member.type, objectIsConst,
+                                                objectIsVolatile);
                 node.isLValue = memberLValue;
                 // P1-07 / SEM-12: bit-field access marker (see struct path).
                 node.isBitField = member.bitWidth > 0;
@@ -7336,6 +7473,10 @@ void SemanticAnalyzer::resolveDesignators(InitializerListExprAST& node, Type* ag
                           node);
             }
             Type* it = getExprType(*node.initializers[i]);
+            if (it && !checkNullPointerConversion(
+                          elemType, it, node.initializers[i].get(), node)) {
+                continue;
+            }
             if (it && !typesCompatible(elemType, it)) {
                 emitError("slice element type mismatch: expected '" + typeToString(elemType) +
                           "', got '" + typeToString(it) + "'", node);
@@ -7534,6 +7675,12 @@ void SemanticAnalyzer::resolveDesignators(InitializerListExprAST& node, Type* ag
 
         if (chain.empty()) continue;
         node.resolvedTargets[i] = std::move(chain);
+
+        if (elemType && !dynamic_cast<InitializerListExprAST*>(&item)) {
+            Type* itemType = getExprType(item);
+            if (itemType)
+                checkNullPointerConversion(elemType, itemType, &item, node);
+        }
 
         // 嵌套列表递归：目标类型 = 链末元素类型。
         if (auto* nested = dynamic_cast<InitializerListExprAST*>(&item)) {
@@ -7778,6 +7925,11 @@ void SemanticAnalyzer::visit(ReturnStmtAST& node) {
 
     if (node.value) {
         if (currentFunction && retValType &&
+            !checkNullPointerConversion(currentFunction->returnType, retValType,
+                                        node.value.get(), node)) {
+            return;
+        }
+        if (currentFunction && retValType &&
             !typesCompatible(currentFunction->returnType, retValType) &&
             !hasUserConversion(retValType, currentFunction->returnType)) {
             emitError("return type mismatch in function '" +
@@ -7979,6 +8131,10 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                 return;
             }
             Type* initType = getExprType(*node.initExpr);
+            if (initType && !checkNullPointerConversion(
+                              target->type, initType, node.initExpr.get(), node)) {
+                return;
+            }
             if (initType && !typesCompatible(target->type, initType)) {
                 emitError("type mismatch in initialization of '" + node.staticClass +
                               "::" + node.staticMember + "': expected '" +
@@ -8250,6 +8406,11 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                         // lazily and the node field is not yet populated here.
                         Type* it = getExprType(*initList->initializers[i]);
                         if (!it) continue;
+                        if (!checkNullPointerConversion(
+                                fieldTypes[i], it,
+                                initList->initializers[i].get(), node)) {
+                            continue;
+                        }
                         // Flag fields (valid/ok) follow the language's normal
                         // bool-assignment channel (`true` literals are int32
                         // in this language, C-style). Value/error fields are
