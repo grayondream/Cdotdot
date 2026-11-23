@@ -1448,7 +1448,7 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName = mangleFunction(name, astParamTypes);
+    std::string mangledName = mangleFunction(name, astParamTypes, isVarArg);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {
@@ -1501,7 +1501,7 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName = mangleFunction(name, astParamTypes);
+    std::string mangledName = mangleFunction(name, astParamTypes, isVarArg);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {

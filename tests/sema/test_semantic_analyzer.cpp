@@ -1365,6 +1365,15 @@ TEST(SliceSemTest, SMStaticNotInLayout) {
         "int32 main() { return (sizeof(SML) == sizeof(int32) && SML::big == 0) ? 0 : 1; }"));
 }
 
+TEST(SliceSemTest, FunctionAndVariableShareNoOrdinaryIdentifier) {
+    // C ordinary-identifier namespace: a function and an object cannot have
+    // the same name in one scope. Allowing both also makes a zero-parameter
+    // function and a global variable collide on the raw LLVM symbol name.
+    EXPECT_FALSE(analyzeOk(
+        "int32 same_name = 1; int32 same_name() { return 2; } "
+        "int32 main() { return 0; }"));
+}
+
 TEST(SliceSemTest, SMStaticDoesNotFalseCollideWithFlatGlobal) {
     // Qualified `SMC::v` is encoded as `SMC.v`; the flat global `SMC_v` is a
     // distinct symbol and must remain legal.

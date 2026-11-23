@@ -86,12 +86,14 @@
 
 当前规则（`src/ast/Mangle.cpp`）：
 
-1. 经 `extern` 声明的符号标记为 C 名，**不修饰**（`isCName`）→ 直接 C ABI 链接；
-   `main` 同样保持裸 `main`。
+1. 经 `extern` 声明的**具体签名**标记为 C 名，**不修饰** → 直接 C ABI 链接；
+   同名但非 extern 的 CDD 重载仍走修饰名（例如 extern `f(int32)` 保持
+   `f`，CDD 重载 `f(int64)` 为 `f_int64`）。`main` 同样保持裸 `main`。
 2. 限定名（namespace/class/module）用 `.` 连接：`ns::f` / `ns.f` → `ns.f`。
    `.` 不属于源标识符，因此不会与源程序中的 `ns_f` 冲突。
 3. 普通函数：函数名中的 `_` 双写，随后每个参数前加单个 `_` 和参数类型编码。
    例如 `f(int32)` → `f_int32`，零参数函数 `f_int32()` → `f__int32`。
+   可变参数函数在末尾追加 `_vararg`（`f(int32, ...)` → `f_int32_vararg`）。
    参数编码是自定界的，函数名转义后单个 `_` 不会与类型名中的 `_` 混淆。
 4. **static 成员（AGG-10，2026-10-05）**：类内 `static` 成员去糖为全局符号——
    `Class::member` → `Class.member`（与 namespace 限定名共用
@@ -119,11 +121,13 @@
 | using 别名 | 展开到底层 | TypeVar | `X<长度>:<参数名>` |
 | TypeInstance | `I<长度>:<模板名><类型实参个数>:...<值实参个数>:...<值参数名个数>:...` | 函数类型 | `<返回>fn<参数个数>:<参数...><v|n>` |
 
-限定符在每一层参与编码：普通类型用前缀 `C`/`V`/`atomic`，指针对象自身的
-`const`/`volatile` 用 `ptr`/`ref` 后的 `C`/`V` 后缀；`restrict` 不参与编码。
-所有复合编码都可以作为另一个编码的组成部分而保持单射，例如
-`Box<A*>` 与 `Box<A>*`、`result<A,B>*` 与 `result<A,B*>`、`A[N]` 与 `A[M]`
-均生成不同符号。
+限定符在每一层参与编码：标量/名义类型用前缀 `C`/`V`/`atomic`；指针/引用、
+数组、切片、optional、result 与函数类型把自身限定符放在构造器**后缀**，
+避免与元素/返回类型的限定符前缀混淆（`slice<const int32>` ≠
+`const slice<int32>`）。`using` 别名展开时把限定符合并到别名的顶层。
+`restrict` 不参与编码。所有复合编码都可以作为另一个编码的组成部分而保持
+单射，例如 `Box<A*>` 与 `Box<A>*`、`result<A,B>*` 与 `result<A,B*>`、
+`A[N]` 与 `A[M]` 均生成不同符号。
 
 **目标（MOD-15）**：名称必须稳定、可复现（INF-07），并与 C ABI / FFI 边界
 清晰（MEM-12/ACC-05）。当前内部符号已采用上述单射编码；C 名保持裸名。

@@ -13,11 +13,16 @@ std::string typeToMangled(Type* type);
 // Signature mangling: applies C parameter adjustment (top-level cv/restrict
 // ignored) and preserves pointee cv and reference-ness.
 std::string typeToMangledSignature(Type* type);
-std::string mangleFunction(const std::string& name, const std::vector<Type*>& paramTypes);
+std::string mangleFunction(const std::string& name,
+                           const std::vector<Type*>& paramTypes,
+                           bool isVarArg = false);
 
-// Mark a function name as having C linkage (extern "C" / extern declarations):
-// it will be emitted with its plain, unmangled symbol name.
-void markCName(const std::string& name);
-void markNamespaceCName(const std::string& name);
+// Mark a function signature as having C linkage (extern "C" / extern
+// declarations): only that signature is emitted with its plain, unmangled
+// symbol name. A CDD overload sharing the name keeps its mangled symbol.
+void markCName(const std::string& name, const std::vector<Type*>& paramTypes,
+               bool isVarArg);
+void markNamespaceCName(const std::string& name,
+                        const std::vector<Type*>& paramTypes, bool isVarArg);
 bool isCName(const std::string& name);
 bool isNamespaceCName(const std::string& name);

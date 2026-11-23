@@ -1075,13 +1075,15 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
             v = emitCallArgument(ctx, *args[i], v, pt);
             if (pt && !isReferenceType(pt))
                 v = ctx.castValue(v, args[i]->type, ctx.getLLVMType(pt));
+            else if (!pt && resolvedVarArg)
+                v = promoteVarArg(ctx, v, args[i]->type);
             callArgs.push_back(v);
         }
         std::vector<llvm::Type*> paramLLVMTypes;
         for (auto* t : resolvedParamTypes) paramLLVMTypes.push_back(ctx.getLLVMType(t));
         llvm::Type* retLLVM = type ? ctx.getLLVMType(type)
                                    : llvm::Type::getVoidTy(ctx.getContext());
-        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVMTypes, false);
+        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVMTypes, resolvedVarArg);
         if (retLLVM->isVoidTy())
             return ctx.getBuilder().CreateCall(fnType, fnPtr, callArgs);
         return ctx.getBuilder().CreateCall(fnType, fnPtr, callArgs, "icalltmp");
@@ -1588,6 +1590,8 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
             if (pt && !isReferenceType(pt)) {
                 argVal = ctx.castValue(argVal, args[i]->type,
                                        ctx.getLLVMType(pt));
+            } else if (!pt && resolvedVarArg) {
+                argVal = promoteVarArg(ctx, argVal, args[i]->type);
             }
             // I4 (D6): string 按值形参（间接调用路径）——活值实参深拷贝。
             if (pt && isStringType(pt) &&
@@ -1601,7 +1605,7 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         for (auto* t : resolvedParamTypes) paramLLVMTypes.push_back(ctx.getLLVMType(t));
         llvm::Type* retLLVM = type ? ctx.getLLVMType(type)
                                    : llvm::Type::getVoidTy(ctx.getContext());
-        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVMTypes, false);
+        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVMTypes, resolvedVarArg);
         if (retLLVM->isVoidTy()) {
             return ctx.getBuilder().CreateCall(fnType, fnPtr, argsV);
         }
@@ -1618,7 +1622,7 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
             argTypes.push_back(arg->type);
         }
     }
-    std::string mangledName = mangleFunction(callee, argTypes);
+    std::string mangledName = mangleFunction(callee, argTypes, resolvedVarArg);
     
     llvm::Function* calleeFn = ctx.getModule().getFunction(mangledName);
     if (!calleeFn) {
@@ -1631,7 +1635,7 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         }
         std::vector<llvm::Type*> paramLLVM;
         for (auto* pt : argTypes) paramLLVM.push_back(ctx.getLLVMType(pt));
-        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVM, false);
+        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVM, resolvedVarArg);
         calleeFn = llvm::Function::Create(fnType, llvm::Function::ExternalLinkage,
                                           mangledName, ctx.getModule());
     }
@@ -1819,7 +1823,7 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
 
     std::string mangledName = !mangledCallee.empty()
         ? mangledCallee
-        : mangleFunction(methodName, argTypes);
+        : mangleFunction(methodName, argTypes, resolvedVarArg);
 
     llvm::Function* calleeFn = ctx.getModule().getFunction(mangledName);
     if (!calleeFn) {
@@ -1832,7 +1836,7 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
         llvm::Type* retLLVM = ctx.getLLVMType(type);
         std::vector<llvm::Type*> paramLLVM;
         for (auto* pt : argTypes) paramLLVM.push_back(ctx.getLLVMType(pt));
-        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVM, false);
+        auto* fnType = llvm::FunctionType::get(retLLVM, paramLLVM, resolvedVarArg);
         calleeFn = llvm::Function::Create(fnType, llvm::Function::ExternalLinkage,
                                           mangledName, ctx.getModule());
     }

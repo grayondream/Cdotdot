@@ -2042,7 +2042,8 @@ SemanticAnalyzer::evalConstexprCallCT(CallExprAST& call,
     // Prefer the sema-resolved signature so overloads do not collapse to the
     // last function registered under the bare name.
     if (!call.resolvedParamTypes.empty()) {
-        fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes));
+        fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes,
+                                   call.resolvedVarArg));
     }
     if (!fn) fn = lookup(calleeName);
     if (!fn) {
@@ -2538,7 +2539,8 @@ SemanticAnalyzer::evalConstexprCall(CallExprAST& call, int depth) {
     // Prefer the sema-resolved signature so overloads do not collapse to the
     // last function registered under the bare name.
     if (!call.resolvedParamTypes.empty()) {
-        fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes));
+        fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes,
+                                   call.resolvedVarArg));
     }
     if (!fn) fn = lookup(calleeName);
     if (!fn) {
@@ -3536,7 +3538,8 @@ void SemanticAnalyzer::visit(VariableExprAST& node) {
         auto* funcType = static_cast<FunctionType*>(sym->type);
         node.name = key;
         node.isFunctionRef = true;
-        node.resolvedFunctionName = mangleFunction(node.name, funcType->paramTypes);
+        node.resolvedFunctionName =
+            mangleFunction(node.name, funcType->paramTypes, funcType->isVarArg);
         FunctionDeclAST* fn = findCtFunction(node.resolvedFunctionName);
         if (fn && fn->isCompileOnly) {
             emitError("compile_only function '" + fn->name +
@@ -3765,7 +3768,9 @@ void SemanticAnalyzer::visit(BinaryExprAST& node) {
                         auto* ft = static_cast<FunctionType*>(method->type);
                         node.isMethodOperator = true;
                         node.resolvedParamTypes = ft->paramTypes;
-                        node.mangledCallee = mangleFunction(opName, ft->paramTypes);
+                        node.resolvedVarArg = ft->isVarArg;
+                        node.mangledCallee =
+                            mangleFunction(opName, ft->paramTypes, ft->isVarArg);
                         if (isReferenceType(ft->returnType)) {
                             node.type = referenceReferent(ft->returnType);
                             node.isLValue = true;
@@ -3902,8 +3907,11 @@ void SemanticAnalyzer::visit(UnaryExprAST& node) {
                 Symbol* resolved = overloadSet->resolve({operandType});
                 if (resolved && resolved->type &&
                     resolved->type->kind == TypeKind::Function) {
-                    node.mangledCallee = mangleFunction(opName, {operandType});
-                    node.type = static_cast<FunctionType*>(resolved->type)->returnType;
+                    auto* opType = static_cast<FunctionType*>(resolved->type);
+                    node.resolvedVarArg = opType->isVarArg;
+                    node.mangledCallee =
+                        mangleFunction(opName, {operandType}, opType->isVarArg);
+                    node.type = opType->returnType;
                     node.isLValue = false;
                     return;
                 }
@@ -3925,8 +3933,10 @@ void SemanticAnalyzer::visit(UnaryExprAST& node) {
                         auto* ft = static_cast<FunctionType*>(method->type);
                         node.isMethodOperator = true;
                         node.resolvedParamTypes = ft->paramTypes;
+                        node.resolvedVarArg = ft->isVarArg;
                         node.mangledCallee = mangleFunction(
-                            opName, {new Type(TypeKind::Pointer, definingClass)});
+                            opName, {new Type(TypeKind::Pointer, definingClass)},
+                            ft->isVarArg);
                         node.type = ft->returnType;
                         node.isLValue = false;
                         delete method;
@@ -5190,6 +5200,7 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
             return;
         }
         node.resolvedParamTypes = ft->paramTypes;
+        node.resolvedVarArg = ft->isVarArg;
         node.type = ft->returnType;
         node.isLValue = false;
         return;
@@ -5287,6 +5298,7 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
             }
             node.isIndirect = true;
             node.resolvedParamTypes = funcType->paramTypes;
+            node.resolvedVarArg = funcType->isVarArg;
             node.type = funcType->returnType;
             node.isLValue = false;
             return;
@@ -5310,8 +5322,10 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
                 if (resolved && resolved->type &&
                     resolved->type->kind == TypeKind::Function) {
                     auto* ft = static_cast<FunctionType*>(resolved->type);
-                    node.mangledCallee = mangleFunction("operator()", ft->paramTypes);
+                    node.mangledCallee = mangleFunction("operator()", ft->paramTypes,
+                                                        ft->isVarArg);
                     node.resolvedParamTypes = ft->paramTypes;
+                    node.resolvedVarArg = ft->isVarArg;
                     if (isReferenceType(ft->returnType)) {
                         node.type = referenceReferent(ft->returnType);
                         node.isLValue = true;
@@ -5344,9 +5358,11 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
                         return;
                     }
                     auto* ft = static_cast<FunctionType*>(method->type);
-                    node.mangledCallee = mangleFunction("operator()", ft->paramTypes);
+                    node.mangledCallee = mangleFunction("operator()", ft->paramTypes,
+                                                        ft->isVarArg);
                     node.memberOperator = true;
                     node.resolvedParamTypes = ft->paramTypes;
+                    node.resolvedVarArg = ft->isVarArg;
                     if (isReferenceType(ft->returnType)) {
                         node.type = referenceReferent(ft->returnType);
                         node.isLValue = true;
@@ -5376,8 +5392,10 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
     }
     if (funcType) {
         node.resolvedParamTypes = funcType->paramTypes;
+        node.resolvedVarArg = funcType->isVarArg;
         FunctionDeclAST* calleeDecl =
-            findCtFunction(mangleFunction(node.callee, funcType->paramTypes));
+            findCtFunction(mangleFunction(node.callee, funcType->paramTypes,
+                                          funcType->isVarArg));
         if (calleeDecl && currentFunction) {
             m_callEdges.push_back({currentFunction, calleeDecl});
         }
@@ -5941,8 +5959,10 @@ void SemanticAnalyzer::visit(PostfixIncDecExprAST& node) {
             Symbol* resolved = overloadSet->resolve({operandType, dummy});
             if (resolved && resolved->type &&
                 resolved->type->kind == TypeKind::Function) {
-                node.mangledCallee = mangleFunction(opName, {operandType, dummy});
-                node.type = static_cast<FunctionType*>(resolved->type)->returnType;
+                auto* opType = static_cast<FunctionType*>(resolved->type);
+                node.mangledCallee = mangleFunction(opName, {operandType, dummy},
+                                                    opType->isVarArg);
+                node.type = opType->returnType;
                 node.isLValue = false;
                 return;
             }
@@ -5991,8 +6011,10 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
                         return;
                     }
                 }
-                node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
+                node.mangledCallee = mangleFunction("operator[]", ft->paramTypes,
+                                                    ft->isVarArg);
                 node.resolvedParamTypes = ft->paramTypes;
+                node.resolvedVarArg = ft->isVarArg;
                 if (ft->returnType && isReferenceType(ft->returnType)) {
                     node.type = referenceReferent(ft->returnType);
                     node.isLValue = true;
@@ -6024,9 +6046,11 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
                     return;
                 }
                 auto* ft = static_cast<FunctionType*>(method->type);
-                node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
+                node.mangledCallee = mangleFunction("operator[]", ft->paramTypes,
+                                                    ft->isVarArg);
                 node.memberOperator = true;
                 node.resolvedParamTypes = ft->paramTypes;
+                node.resolvedVarArg = ft->isVarArg;
                 if (isReferenceType(ft->returnType)) {
                     node.type = referenceReferent(ft->returnType);
                     node.isLValue = true;
@@ -6760,6 +6784,7 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
                 node.fieldCallee->isLValue = wasLValue;
                 node.isFunctionPointerCall = true;
                 node.resolvedParamTypes = fnType->paramTypes;
+                node.resolvedVarArg = fnType->isVarArg;
                 node.type = fnType->returnType;
                 node.isLValue = false;
                 return;
@@ -6867,13 +6892,15 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
     // Store the declared parameter types (incl. this) so codegen mangles
     // against the definition site — required for decayed arguments.
     node.resolvedParamTypes = funcType->paramTypes;
+    node.resolvedVarArg = funcType->isVarArg;
     // Namespace members are emitted under a mangled key (`std.init`), but the
     // call spelling is bare (`init`). Reuse the definition-side name.
     if (definingClass) {
         auto dit = m_methodDecls.find(definingClass->name + "::" + node.methodName);
         if (dit != m_methodDecls.end() && dit->second) {
             node.mangledCallee =
-                mangleFunction(dit->second->name, funcType->paramTypes);
+                mangleFunction(dit->second->name, funcType->paramTypes,
+                               funcType->isVarArg);
         }
     }
     // FUN-09: fold default values for trailing params not supplied.
@@ -10371,7 +10398,8 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     }
     auto* funcType = new FunctionType(node.returnType, std::move(paramTypes), node.isVarArg);
     funcType->isConstMethod = node.isConstMethod;
-    std::string signature = mangleFunction(node.name, funcType->paramTypes);
+    std::string signature =
+        mangleFunction(node.name, funcType->paramTypes, funcType->isVarArg);
     m_allFunctions[node.name] = &node;
     m_allFunctions[signature] = &node;
     if (node.isCompileTime) {
@@ -10382,6 +10410,19 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     }
     Symbol* declaredSym = declareSymbol(node.name, funcType);
     if (!declaredSym) {
+        // Functions and objects share the C ordinary-identifier namespace.
+        if (OverloadSet* os = currentScope->lookupOverload(node.name)) {
+            for (Symbol* cand : os->getCandidates()) {
+                if (cand->type && cand->type->kind != TypeKind::Function) {
+                    emitError(DiagnosticCode::SemRedefinition,
+                              "redefinition of '" + node.name +
+                                  "': function conflicts with a variable of the "
+                                  "same name",
+                              node);
+                    return;
+                }
+            }
+        }
         // A by-value parameter and an lvalue reference to the same referent are
         // the same overload; their mangled names differ, so reject the pair
         // explicitly instead of treating it as a prototype/definition pair.
@@ -10398,7 +10439,8 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                 if (existing->paramTypes.size() != funcType->paramTypes.size())
                     continue;
                 std::string existingSignature =
-                    mangleFunction(node.name, existing->paramTypes);
+                    mangleFunction(node.name, existing->paramTypes,
+                                   existing->isVarArg);
                 if (existingSignature == signature) continue;
                 bool same = true;
                 for (size_t i = 0; i < existing->paramTypes.size(); ++i) {

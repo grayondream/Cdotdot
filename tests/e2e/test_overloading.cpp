@@ -159,6 +159,26 @@ TEST_F(OverloadingE2E, FlatFunctionNameDoesNotCollideWithMangledOverload) {
     )", "mangle_flat_function.cdd"), 0);
 }
 
+TEST_F(OverloadingE2E, CLinkageNameOnlyAppliesToExternSignature) {
+    EXPECT_EQ(runSource(R"(
+        extern int32 cdd_c_link_probe(int32);
+        int32 cdd_c_link_probe(int64 x) { return (int32)x + 1; }
+        int32 main() { return cdd_c_link_probe((int64)2) - 3; }
+    )", "mangle_c_link_overload.cdd"), 0);
+}
+
+TEST_F(OverloadingE2E, VarArgOverloadHasDistinctSymbol) {
+    EXPECT_EQ(runSource(R"(
+        int32 f(int32 x) { return 1; }
+        int32 f(int32 x, ...) { return 2; }
+        int32 main() {
+            if (f(0) != 1) return 1;
+            if (f(0, 5) != 2) return 2;
+            return 0;
+        }
+    )", "mangle_vararg_overload.cdd"), 0);
+}
+
 TEST_F(OverloadingE2E, UnderscoreParameterSeparatorDoesNotCreateAmbiguity) {
     EXPECT_EQ(runSource(R"(
         struct A { int32 x; };

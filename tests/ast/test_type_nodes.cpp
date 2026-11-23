@@ -154,6 +154,50 @@ TEST_F(TypeNodeTest, MangledTypeEncodingSeparatesCompositeBoundaries) {
     delete ptrResult;
 }
 
+TEST_F(TypeNodeTest, MangledCompositeQualifiersKeepTheirLevel) {
+    auto* constInt = new Type(TypeKind::Int32);
+    constInt->isConst = true;
+
+    SliceType sliceOfConst(constInt);
+    SliceType constSlice(typeCtx->getInt32());
+    constSlice.isConst = true;
+    EXPECT_NE(typeToMangled(&sliceOfConst), typeToMangled(&constSlice));
+
+    OptionalType optionalOfConst(constInt);
+    OptionalType constOptional(typeCtx->getInt32());
+    constOptional.isConst = true;
+    EXPECT_NE(typeToMangled(&optionalOfConst), typeToMangled(&constOptional));
+
+    StructType A("A");
+    StructType B("B");
+    StructType constA("A");
+    constA.isConst = true;
+    ResultType resultOfConst(&constA, &B);
+    ResultType constResult(&A, &B);
+    constResult.isConst = true;
+    EXPECT_NE(typeToMangled(&resultOfConst), typeToMangled(&constResult));
+
+    ArrayType arrayOfConst(constInt, 2);
+    ArrayType constArray(typeCtx->getInt32(), 2);
+    constArray.isConst = true;
+    EXPECT_NE(typeToMangled(&arrayOfConst), typeToMangled(&constArray));
+    ArrayType plainArray(typeCtx->getInt32(), 2);
+    EXPECT_NE(typeToMangled(&constArray), typeToMangled(&plainArray));
+
+    delete constInt;
+}
+
+TEST_F(TypeNodeTest, CLinkageAppliesToSignatureNotEverySameNameOverload) {
+    std::vector<Type*> cParams{typeCtx->getInt32()};
+    markCName("cdd_test_c_link_name", cParams, false);
+    EXPECT_EQ(mangleFunction("cdd_test_c_link_name", cParams, false),
+              "cdd_test_c_link_name");
+
+    std::vector<Type*> overloadParams{typeCtx->getInt64()};
+    EXPECT_NE(mangleFunction("cdd_test_c_link_name", overloadParams, false),
+              "cdd_test_c_link_name");
+}
+
 TEST_F(TypeNodeTest, MangledFunctionNamesAreInjectiveForKnownCollisions) {
     Type* int32Ptr = new Type(TypeKind::Pointer, typeCtx->getInt32());
     StructType int32ptrRecord("int32ptr");
@@ -169,6 +213,10 @@ TEST_F(TypeNodeTest, MangledFunctionNamesAreInjectiveForKnownCollisions) {
     // `A_B` in a parameter list is two parameters, not one type name.
     EXPECT_NE(mangleFunction("f", {&A, &B}),
               mangleFunction("f_A", {&B}));
+    // Variadic and non-variadic overloads are distinct even with the same
+    // fixed parameter list.
+    EXPECT_NE(mangleFunction("f", {typeCtx->getInt32()}, true),
+              mangleFunction("f", {typeCtx->getInt32()}, false));
 
     delete int32Ptr;
 }

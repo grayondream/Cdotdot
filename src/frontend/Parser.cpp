@@ -3382,10 +3382,12 @@ std::unique_ptr<DeclAST> Parser::parseDeclarationImpl() {
             // extern (prelude `malloc`/`strlen`) is NOT — namespace isolation
             // preserved. `m_typeNamespacePrefix` is non-empty in namespace
             // (and class) bodies.
+            std::vector<Type*> externParamTypes;
+            for (auto& param : fn->params) externParamTypes.push_back(param->type);
             if (m_typeNamespacePrefix.empty()) {
-                markCName(fn->name);
+                markCName(fn->name, externParamTypes, fn->isVarArg);
             } else {
-                markNamespaceCName(fn->name);
+                markNamespaceCName(fn->name, externParamTypes, fn->isVarArg);
             }
         }
         return decl;

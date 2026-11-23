@@ -418,6 +418,11 @@ bool Scope::declare(const std::string& name, Symbol* sym) {
             }
         } else if (existing->type->kind != TypeKind::Function && sym->type->kind != TypeKind::Function) {
             return false; // Duplicate variable declaration
+        } else {
+            // Functions and objects share the C ordinary-identifier namespace.
+            // Allowing both also makes a zero-parameter function and a global
+            // variable collide on the raw LLVM symbol name.
+            return false;
         }
     }
     overloadSet.add(sym);

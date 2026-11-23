@@ -210,6 +210,7 @@ public:
     // SEM-17: member-form operator call (`a + b` resolving to `a.operator+(b)`).
     bool isMethodOperator = false;
     std::vector<Type*> resolvedParamTypes;
+    bool resolvedVarArg = false;
 
 
     BinaryExprAST(BinaryOp oper, std::unique_ptr<ExprAST> l, std::unique_ptr<ExprAST> r)
@@ -228,6 +229,7 @@ public:
     std::string mangledCallee;
     bool isMethodOperator = false;
     std::vector<Type*> resolvedParamTypes;
+    bool resolvedVarArg = false;
 
 
     UnaryExprAST(UnaryOp oper, std::unique_ptr<ExprAST> expr)
@@ -266,6 +268,9 @@ public:
     // Parameter types of the overload chosen by semantic analysis. Empty when
     // unresolved (e.g. codegen is run without semantic analysis).
     std::vector<Type*> resolvedParamTypes;
+    // True when the selected function type is variadic. Kept beside
+    // resolvedParamTypes so codegen mangles the same symbol as the definition.
+    bool resolvedVarArg = false;
     // FUN-09: folded values for trailing default arguments (position i fills
     // resolvedParamTypes[args.size()+i]).
     std::vector<DefaultArgValue> defaultArgValues;
@@ -421,6 +426,7 @@ public:
     bool memberOperator = false;
     // Declared parameter types of the resolved operator[] (object, index).
     std::vector<Type*> resolvedParamTypes;
+    bool resolvedVarArg = false;
 
     ArrayAccessExprAST(std::unique_ptr<ExprAST> arr, std::unique_ptr<ExprAST> idx)
         : array(std::move(arr)), index(std::move(idx)) {}
@@ -515,6 +521,7 @@ public:
     // Declared parameter types (incl. this at index 0) filled by sema so
     // codegen mangles against the definition site. Mirror of CallExprAST.
     std::vector<Type*> resolvedParamTypes;
+    bool resolvedVarArg = false;
     // Namespace-qualified method definition name chosen by sema. The
     // definition side applies the namespace prefix (`std.init`), while the
     // call-site spelling is bare (`init`); codegen must reuse this name.
