@@ -458,10 +458,13 @@ llvm::Value* BinaryExprAST::codegen(CodegenContext& ctx) {
                 calleeFn = llvm::Function::Create(fnType, llvm::Function::ExternalLinkage,
                                                   mangledCallee, ctx.getModule());
             }
-            if (right->isLValue) rhs = readLValue(ctx, *right, rhs);
-            if (resolvedParamTypes.size() > 1)
+            Type* rhsParam = resolvedParamTypes.size() > 1
+                                  ? resolvedParamTypes[1] : nullptr;
+            rhs = emitCallArgument(ctx, *right, rhs, rhsParam);
+            if (!(rhsParam && isReferenceType(rhsParam)) && rhsParam) {
                 rhs = ctx.castValue(rhs, right->type,
-                                    ctx.getLLVMType(resolvedParamTypes[1]));
+                                    ctx.getLLVMType(rhsParam));
+            }
             return builder.CreateCall(calleeFn, {lhs, rhs}, "mopcalltmp");
         }
 
@@ -1060,9 +1063,11 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         for (size_t i = 0; i < args.size(); ++i) {
             llvm::Value* v = args[i]->codegen(ctx);
             if (!v) return nullptr;
-            if (args[i]->isLValue) v = readLValue(ctx, *args[i], v);
-            if (i < resolvedParamTypes.size())
-                v = ctx.castValue(v, args[i]->type, ctx.getLLVMType(resolvedParamTypes[i]));
+            Type* pt = i < resolvedParamTypes.size()
+                           ? resolvedParamTypes[i] : nullptr;
+            v = emitCallArgument(ctx, *args[i], v, pt);
+            if (pt && !isReferenceType(pt))
+                v = ctx.castValue(v, args[i]->type, ctx.getLLVMType(pt));
             callArgs.push_back(v);
         }
         std::vector<llvm::Type*> paramLLVMTypes;
@@ -1104,10 +1109,12 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         for (size_t i = 0; i < args.size(); ++i) {
             llvm::Value* v = args[i]->codegen(ctx);
             if (!v) return nullptr;
-            if (args[i]->isLValue) v = readLValue(ctx, *args[i], v);
-            if (i < resolvedParamTypes.size())
+            Type* pt = i < resolvedParamTypes.size()
+                           ? resolvedParamTypes[i] : nullptr;
+            v = emitCallArgument(ctx, *args[i], v, pt);
+            if (pt && !isReferenceType(pt))
                 v = ctx.castValue(v, args[i]->type,
-                                  ctx.getLLVMType(resolvedParamTypes[i]));
+                                  ctx.getLLVMType(pt));
             callArgs.push_back(v);
         }
         if (type && type->kind != TypeKind::Void)
@@ -1127,12 +1134,25 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         std::vector<llvm::Value*> callArgs;
         llvm::Value* obj = calleeExpr->codegen(ctx);
         if (!obj) return nullptr;
-        if (!memberOperator) obj = emitRValue(ctx, *calleeExpr, obj);
+        Type* objParam = resolvedParamTypes.empty()
+                             ? nullptr : resolvedParamTypes[0];
+        if (!memberOperator) {
+            if (objParam && isReferenceType(objParam)) {
+                obj = ctx.bindReference(*calleeExpr, obj, objParam);
+            } else {
+                obj = emitRValue(ctx, *calleeExpr, obj);
+            }
+        }
         callArgs.push_back(obj);
-        for (auto& arg : args) {
-            llvm::Value* v = arg->codegen(ctx);
+        for (size_t i = 0; i < args.size(); ++i) {
+            llvm::Value* v = args[i]->codegen(ctx);
             if (!v) return nullptr;
-            callArgs.push_back(emitRValue(ctx, *arg, v));
+            Type* pt = i + 1 < resolvedParamTypes.size()
+                           ? resolvedParamTypes[i + 1] : nullptr;
+            v = emitCallArgument(ctx, *args[i], v, pt);
+            if (pt && !isReferenceType(pt))
+                v = ctx.castValue(v, args[i]->type, ctx.getLLVMType(pt));
+            callArgs.push_back(v);
         }
         return ctx.getBuilder().CreateCall(calleeFn, callArgs, "opcalltmp");
     }
@@ -1555,16 +1575,17 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         for (size_t i = 0; i < args.size(); ++i) {
             llvm::Value* argVal = args[i]->codegen(ctx);
             if (!argVal) return nullptr;
-            if (args[i]->isLValue) argVal = readLValue(ctx, *args[i], argVal);
-            if (i < resolvedParamTypes.size()) {
+            Type* pt = i < resolvedParamTypes.size()
+                           ? resolvedParamTypes[i] : nullptr;
+            argVal = emitCallArgument(ctx, *args[i], argVal, pt);
+            if (pt && !isReferenceType(pt)) {
                 argVal = ctx.castValue(argVal, args[i]->type,
-                                       ctx.getLLVMType(resolvedParamTypes[i]));
+                                       ctx.getLLVMType(pt));
             }
             // I4 (D6): string 按值形参（间接调用路径）——活值实参深拷贝。
-            if (i < resolvedParamTypes.size() &&
-                isStringType(resolvedParamTypes[i]) &&
+            if (pt && isStringType(pt) &&
                 !ctx.isFreshStringValue(*args[i])) {
-                argVal = emitStringArgCopy(ctx, argVal, resolvedParamTypes[i]);
+                argVal = emitStringArgCopy(ctx, argVal, pt);
             }
             argsV.push_back(argVal);
         }
@@ -1718,10 +1739,12 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
         for (size_t i = 0; i < args.size(); ++i) {
             llvm::Value* v = args[i]->codegen(ctx);
             if (!v) return nullptr;
-            if (args[i]->isLValue) v = readLValue(ctx, *args[i], v);
-            if (i < resolvedParamTypes.size())
+            Type* pt = i < resolvedParamTypes.size()
+                           ? resolvedParamTypes[i] : nullptr;
+            v = emitCallArgument(ctx, *args[i], v, pt);
+            if (pt && !isReferenceType(pt))
                 v = ctx.castValue(v, args[i]->type,
-                                  ctx.getLLVMType(resolvedParamTypes[i]));
+                                  ctx.getLLVMType(pt));
             callArgs.push_back(v);
         }
         std::vector<llvm::Type*> paramLLVM;
@@ -2420,7 +2443,12 @@ llvm::Value* ArrayAccessExprAST::codegen(CodegenContext& ctx) {
                 obj = emitRValue(ctx, *array, obj);
             }
         }
-        idx = emitRValue(ctx, *index, idx);
+        Type* idxParam = resolvedParamTypes.size() > 1
+                             ? resolvedParamTypes[1] : nullptr;
+        idx = emitCallArgument(ctx, *index, idx, idxParam);
+        if (idxParam && !isReferenceType(idxParam)) {
+            idx = ctx.castValue(idx, index->type, ctx.getLLVMType(idxParam));
+        }
         return ctx.getBuilder().CreateCall(calleeFn, {obj, idx}, "idxcalltmp");
     }
     llvm::Value* arrVal = array->codegen(ctx);
@@ -2832,7 +2860,8 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
                 unitBits = it->second.unitBits;
             }
         }
-        return builder.CreateStructGEP(unionLLVM, objVal, 0, "unionmember");
+        return finishMember(
+            builder.CreateStructGEP(unionLLVM, objVal, 0, "unionmember"));
     }
 
     if (valType && valType->kind == TypeKind::Struct) {
@@ -2882,11 +2911,11 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {
             if (auto* gep = emitBitFieldGEP(ctx, valBase, objVal, *this)) {
-                return gep;
+                return finishMember(gep);
             }
         }
         if (auto* gep = emitClassFieldGEP(ctx, valBase, objVal, memberName)) {
-            return gep;
+            return finishMember(gep);
         }
         for (size_t i = 0; i < structType->fields.size(); ++i) {
             if (structType->fields[i].name == memberName) {
@@ -2905,11 +2934,11 @@ llvm::Value* MemberAccessExprAST::codegen(CodegenContext& ctx) {
         // P1-07: 位域成员 → 存储单元 GEP。
         if (isBitField) {
             if (auto* gep = emitBitFieldGEP(ctx, classType, objVal, *this)) {
-                return gep;
+                return finishMember(gep);
             }
         }
         if (auto* gep = emitClassFieldGEP(ctx, classType, objVal, memberName)) {
-            return gep;
+            return finishMember(gep);
         }
         objType = ctx.getLLVMType(valBase);
     } else if (valType && valType->kind == TypeKind::Pointer) {
@@ -3320,10 +3349,12 @@ llvm::Value* LambdaCallExprAST::codegen(CodegenContext& ctx) {
     for (size_t i = 0; i < args.size(); ++i) {
         llvm::Value* argVal = args[i]->codegen(ctx);
         if (!argVal) return nullptr;
-        if (args[i]->isLValue) argVal = readLValue(ctx, *args[i], argVal);
-        if (i < lambda->params.size()) {
+        Type* pt = i < lambda->params.size()
+                       ? lambda->params[i]->type : nullptr;
+        argVal = emitCallArgument(ctx, *args[i], argVal, pt);
+        if (pt && !isReferenceType(pt)) {
             argVal = ctx.castValue(argVal, args[i]->type,
-                                   ctx.getLLVMType(lambda->params[i]->type));
+                                   ctx.getLLVMType(pt));
         }
         argsV.push_back(argVal);
     }

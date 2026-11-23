@@ -202,3 +202,90 @@ TEST(ReferenceTemplates, LvalueReferenceRejectsRvalue) {
     )");
     EXPECT_TRUE(hasError(result, "rvalue") || hasError(result, "cannot deduce"));
 }
+
+TEST(ReferenceBinding, ConstRefRejectsIncompatibleRvalue) {
+    auto stringToInt = analyzeSource(
+        "int32 main() { const int32& r = \"hello\"; return r; }");
+    EXPECT_TRUE(hasError(stringToInt, "incompatible") || hasError(stringToInt, "rvalue"));
+    auto recordMismatch = analyzeSource(R"(
+        struct RIncompatA { int32 a; };
+        struct RIncompatB { int32 a; int32 b; };
+        RIncompatB make_b() { RIncompatB v = {1, 2}; return v; }
+        int32 main() { const RIncompatA& r = make_b(); return r.a; }
+    )");
+    EXPECT_TRUE(hasError(recordMismatch, "incompatible") ||
+                hasError(recordMismatch, "rvalue"));
+}
+
+TEST(ReferenceBinding, RejectsVoidReferent) {
+    auto result = analyzeSource("int32 main() { const void& r = 1; return 0; }");
+    EXPECT_TRUE(hasError(result, "void"));
+}
+
+TEST(ReferenceBinding, ConstRefAllowsArithmeticConversionRvalue) {
+    auto result = analyzeSource(
+        "int32 main() { const float64& r = 3; return r > 2.0 ? 0 : 1; }");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceMembers, GlobalAggregateWithReferenceRejected) {
+    auto result = analyzeSource(R"(
+        struct SGlobalRef { int32& r; };
+        int32 g = 1;
+        SGlobalRef gs = {g};
+        int32 main() { return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "automatic storage") || hasError(result, "reference"));
+}
+
+TEST(ReferenceMembers, StaticLocalAggregateWithReferenceRejected) {
+    auto result = analyzeSource(R"(
+        struct SStaticRef { int32& r; };
+        int32 main() { int32 x = 1; static SStaticRef s = {x}; return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "static"));
+}
+
+TEST(ReferenceDefaults, ReferenceParameterDefaultRejected) {
+    auto result = analyzeSource(
+        "int32 g(int32& r = 5) { return r; } int32 main() { return 0; }");
+    EXPECT_TRUE(hasError(result, "default"));
+}
+
+TEST(ReferenceMethods, DuplicateMethodNamesAreDiagnosed) {
+    auto result = analyzeSource(R"(
+        class CMethodDup {
+        public:
+            int32 f(int32 x) { return x; }
+            int32 f(int64 x) { return (int32)x; }
+        };
+        int32 main() { return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "overload") || hasError(result, "redefinition"));
+}
+
+TEST(ReferenceMembers, NestedReferenceMemberTemporaryRejected) {
+    auto result = analyzeSource(R"(
+        struct RefInnerTemp { const int32& r; };
+        struct RefOuterTemp { RefInnerTemp in; };
+        int32 main() { RefOuterTemp o = {{5}}; return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "temporary") || hasError(result, "rvalue"));
+}
+
+TEST(ReferenceMembers, DesignatedReferenceMemberTemporaryRejected) {
+    auto result = analyzeSource(R"(
+        struct RefDesigTemp { int32 x; const int32& r; int32 y; };
+        int32 main() { int32 z = 2; RefDesigTemp s = {.r = 5, .y = z}; return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "temporary") || hasError(result, "rvalue"));
+}
+
+TEST(ReferenceSignature, ConstReferenceBeatsWideningForExactLvalue) {
+    auto result = analyzeSource(R"(
+        int32 pick(const int32& r) { return 1; }
+        int32 pick(int64 v) { return 2; }
+        int32 main() { int32 x = 0; return pick(x) - 1; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}

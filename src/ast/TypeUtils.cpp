@@ -366,8 +366,8 @@ Type* referenceReferent(const Type* type) {
     return const_cast<Type*>(stripped->base);
 }
 
-bool typeContainsReference(const Type* type) {
-    if (!type) return false;
+bool typeContainsReferenceImpl(const Type* type, int depth) {
+    if (!type || depth > 64) return false;
     type = stripTypedefPreservingQualifiers(type);
     if (!type) return false;
     if (type->kind == TypeKind::Pointer) {
@@ -375,25 +375,25 @@ bool typeContainsReference(const Type* type) {
     }
     switch (type->kind) {
         case TypeKind::Array:
-            return typeContainsReference(
-                static_cast<const ArrayType*>(type)->elementType);
+            return typeContainsReferenceImpl(
+                static_cast<const ArrayType*>(type)->elementType, depth + 1);
         case TypeKind::Struct: {
             const auto* record = static_cast<const StructType*>(type);
             const auto& fields = !record->semanticFields.empty()
                                      ? record->semanticFields : record->fields;
             for (const auto& field : fields) {
-                if (typeContainsReference(field.type)) return true;
+                if (typeContainsReferenceImpl(field.type, depth + 1)) return true;
             }
-            return record->base && typeContainsReference(record->base);
+            return record->base && typeContainsReferenceImpl(record->base, depth + 1);
         }
         case TypeKind::Class: {
             const auto* record = static_cast<const ClassType*>(type);
             const auto& fields = !record->semanticFields.empty()
                                      ? record->semanticFields : record->fields;
             for (const auto& field : fields) {
-                if (typeContainsReference(field.type)) return true;
+                if (typeContainsReferenceImpl(field.type, depth + 1)) return true;
             }
-            return type->base && typeContainsReference(type->base);
+            return type->base && typeContainsReferenceImpl(type->base, depth + 1);
         }
         case TypeKind::Union: {
             for (const auto& member : static_cast<const UnionType*>(type)->members) {
@@ -402,16 +402,20 @@ bool typeContainsReference(const Type* type) {
             return false;
         }
         case TypeKind::Optional:
-            return typeContainsReference(
-                static_cast<const OptionalType*>(type)->elementType);
+            return typeContainsReferenceImpl(
+                static_cast<const OptionalType*>(type)->elementType, depth + 1);
         case TypeKind::Result: {
             const auto* result = static_cast<const ResultType*>(type);
-            return typeContainsReference(result->successType) ||
-                   typeContainsReference(result->errorType);
+            return typeContainsReferenceImpl(result->successType, depth + 1) ||
+                   typeContainsReferenceImpl(result->errorType, depth + 1);
         }
         default:
             return false;
     }
+}
+
+bool typeContainsReference(const Type* type) {
+    return typeContainsReferenceImpl(type, 0);
 }
 
 bool referencePlacementValid(const Type* type, std::string* reason) {
@@ -443,6 +447,10 @@ bool referencePlacementValid(const Type* type, std::string* reason) {
     }
     if (referent->kind == TypeKind::Auto) {
         if (reason) *reason = "auto& deduction is not supported";
+        return false;
+    }
+    if (referent->kind == TypeKind::Void) {
+        if (reason) *reason = "reference to void is not supported";
         return false;
     }
     return true;
@@ -616,6 +624,52 @@ bool referenceBindingAllowed(const Type* referenceType, const Type* sourceType,
     if (!sourceIsLValue) {
         if (!referent->isConst) {
             if (reason) *reason = "cannot bind a non-const reference to an rvalue";
+            return false;
+        }
+        const Type* referentUnqual = stripTopLevelQualifiers(referent);
+        const Type* sourceUnqual = stripTopLevelQualifiers(source);
+        auto arithmeticKind = [](const Type* t) {
+            if (!t) return false;
+            switch (t->kind) {
+                case TypeKind::Bool:
+                case TypeKind::Char:
+                case TypeKind::Int8:
+                case TypeKind::Int16:
+                case TypeKind::Int32:
+                case TypeKind::Int64:
+                case TypeKind::Int128:
+                case TypeKind::UInt8:
+                case TypeKind::UInt16:
+                case TypeKind::UInt32:
+                case TypeKind::UInt64:
+                case TypeKind::UInt128:
+                case TypeKind::ISize:
+                case TypeKind::USize:
+                case TypeKind::Float16:
+                case TypeKind::Float32:
+                case TypeKind::Float64:
+                case TypeKind::Float128:
+                    return true;
+                default:
+                    return false;
+            }
+        };
+        bool compatible = typesIdentical(referentUnqual, sourceUnqual);
+        if (!compatible && arithmeticKind(referentUnqual) &&
+            arithmeticKind(sourceUnqual)) {
+            compatible = true;
+        }
+        if (!compatible && referentUnqual->kind == TypeKind::Pointer &&
+            (sourceUnqual->kind == TypeKind::Pointer ||
+             sourceUnqual->kind == TypeKind::Array)) {
+            compatible = pointerConversionAllowed(referentUnqual, sourceUnqual);
+        }
+        if (!compatible) {
+            if (reason) {
+                *reason = "cannot bind a const reference to an incompatible "
+                          "rvalue of type '" +
+                          qualifiedTypeToString(source) + "'";
+            }
             return false;
         }
         needsTemporary = true;

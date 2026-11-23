@@ -209,3 +209,107 @@ TEST_F(ReferencesE2E, FreeOperatorSubscriptIsWritableReference) {
         }
     )"), 0);
 }
+
+TEST_F(ReferencesE2E, ArrowAndMethodDecodeReferenceMembers) {
+    EXPECT_EQ(runSource(R"(
+        struct RefMemberArrow {
+            int32& r;
+            void set(int32 v) { r = v; }
+            void set_this(int32 v) { this->r = v; }
+            int32 read() { return r; }
+        };
+        int32 main() {
+            int32 x = 1;
+            RefMemberArrow h = {x};
+            RefMemberArrow* p = &h;
+            if (p->r != 1) return 1;
+            p->r = 2;
+            if (x != 2) return 2;
+            int32* addr = &p->r;
+            *addr = 3;
+            if (x != 3) return 3;
+            h.set(4);
+            if (x != 4) return 4;
+            h.set_this(5);
+            if (x != 5) return 5;
+            return h.read() - 5;
+        }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, FreeBinaryOperatorWithConstReferenceParameters) {
+    EXPECT_EQ(runSource(R"(
+        struct OpVecA { int32 x; };
+        OpVecA operator+(const OpVecA& a, const OpVecA& b) {
+            OpVecA r; r.x = a.x + b.x; return r;
+        }
+        int32 main() { OpVecA a; OpVecA b; a.x = 1; b.x = 2; return (a + b).x - 3; }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, MemberOperatorWithConstReferenceParameter) {
+    EXPECT_EQ(runSource(R"(
+        struct OpEqA {
+            int32 x;
+            int32 operator==(const OpEqA& o) const { return this->x == o.x; }
+        };
+        int32 main() { OpEqA a; OpEqA b; a.x = 4; b.x = 4; return (a == b) - 1; }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, UnaryOperatorWithConstReferenceParameter) {
+    EXPECT_EQ(runSource(R"(
+        struct OpNegA { int32 x; };
+        OpNegA operator-(const OpNegA& a) { OpNegA r; r.x = -a.x; return r; }
+        int32 main() { OpNegA a; a.x = 5; return (-a).x + 5; }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, CallOperatorWithReferenceReturn) {
+    EXPECT_EQ(runSource(R"(
+        struct OpCallA {
+            int32 data[2];
+            int32& operator()(int32 i) { return this->data[i]; }
+        };
+        int32 main() { OpCallA c; c(0) = 7; return c.data[0] - 7; }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, ReferenceArgumentThroughFunctionPointer) {
+    EXPECT_EQ(runSource(R"(
+        void set_fp(int32& r) { r = 9; }
+        int32 main() {
+            void (*fp)(int32&) = set_fp;
+            int32 x = 1;
+            fp(x);
+            return x - 9;
+        }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, FreeSubscriptRespectsConstBinding) {
+    auto ir = compileIR(R"(
+        struct ConstSubA { int32 data[2]; };
+        int32& operator[](ConstSubA& b, int32 i) { return b.data[i]; }
+        int32 main() { const ConstSubA b = {{1, 2}}; b[0] = 9; return 0; }
+    )");
+    EXPECT_TRUE(ir.empty());
+}
+
+TEST_F(ReferencesE2E, FreeSubscriptReferenceIndex) {
+    EXPECT_EQ(runSource(R"(
+        struct RefIndexSub { int32 data[2]; };
+        int32& operator[](RefIndexSub& b, int32& i) { return b.data[i]; }
+        int32 main() { RefIndexSub b; int32 i = 1; b[i] = 6; return b.data[1] - 6; }
+    )"), 0);
+}
+
+TEST_F(ReferencesE2E, ReferenceArgumentThroughLambdaCall) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            int32 x = 1;
+            [](int32& r) { r = 5; }(x);
+            return x - 5;
+        }
+    )"), 0);
+}

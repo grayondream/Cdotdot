@@ -1081,11 +1081,13 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
                 }
                 int rank = conversionRank(argTypes[i], ft->paramTypes[i]);
                 if (rank < 0) return -1;
-                score += rank;
+                score += rank * 2;
+                Type* referent = referenceReferent(ft->paramTypes[i]);
+                if (referent && referent->isConst) ++score;
             } else {
                 int rank = conversionRank(argTypes[i], ft->paramTypes[i]);
                 if (rank < 0) return -1;
-                score += rank;
+                score += rank * 2;
             }
         }
         return score;
@@ -3708,10 +3710,14 @@ void SemanticAnalyzer::visit(BinaryExprAST& node) {
                         auto* ft = static_cast<FunctionType*>(method->type);
                         node.isMethodOperator = true;
                         node.resolvedParamTypes = ft->paramTypes;
-                        node.mangledCallee = mangleFunction(
-                            opName, {new Type(TypeKind::Pointer, definingClass), rightType});
-                        node.type = ft->returnType;
-                        node.isLValue = false;
+                        node.mangledCallee = mangleFunction(opName, ft->paramTypes);
+                        if (isReferenceType(ft->returnType)) {
+                            node.type = referenceReferent(ft->returnType);
+                            node.isLValue = true;
+                        } else {
+                            node.type = ft->returnType;
+                            node.isLValue = false;
+                        }
                         delete method;
                         return;
                     }
@@ -5198,9 +5204,16 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
                 Symbol* resolved = overloadSet->resolve(params);
                 if (resolved && resolved->type &&
                     resolved->type->kind == TypeKind::Function) {
-                    node.mangledCallee = mangleFunction("operator()", params);
-                    node.type = static_cast<FunctionType*>(resolved->type)->returnType;
-                    node.isLValue = false;
+                    auto* ft = static_cast<FunctionType*>(resolved->type);
+                    node.mangledCallee = mangleFunction("operator()", ft->paramTypes);
+                    node.resolvedParamTypes = ft->paramTypes;
+                    if (isReferenceType(ft->returnType)) {
+                        node.type = referenceReferent(ft->returnType);
+                        node.isLValue = true;
+                    } else {
+                        node.type = ft->returnType;
+                        node.isLValue = false;
+                    }
                     return;
                 }
             }
@@ -5228,8 +5241,14 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
                     auto* ft = static_cast<FunctionType*>(method->type);
                     node.mangledCallee = mangleFunction("operator()", ft->paramTypes);
                     node.memberOperator = true;
-                    node.type = ft->returnType;
-                    node.isLValue = false;
+                    node.resolvedParamTypes = ft->paramTypes;
+                    if (isReferenceType(ft->returnType)) {
+                        node.type = referenceReferent(ft->returnType);
+                        node.isLValue = true;
+                    } else {
+                        node.type = ft->returnType;
+                        node.isLValue = false;
+                    }
                     delete method;
                     return;
                 }
@@ -5815,6 +5834,27 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
             if (resolved && resolved->type &&
                 resolved->type->kind == TypeKind::Function) {
                 auto* ft = static_cast<FunctionType*>(resolved->type);
+                for (size_t k = 0; k < 2 && k < ft->paramTypes.size(); ++k) {
+                    if (!isReferenceType(ft->paramTypes[k])) continue;
+                    ExprAST* arg = k == 0 ? node.array.get() : node.index.get();
+                    Type* argType = k == 0 ? arrayType : indexType;
+                    bool needsTemporary = false;
+                    std::string reason;
+                    bool isBitField = false;
+                    if (auto* member = dynamic_cast<MemberAccessExprAST*>(arg))
+                        isBitField = member->isBitField;
+                    if (!referenceBindingAllowed(ft->paramTypes[k], argType,
+                                                 arg->isLValue, isBitField,
+                                                 needsTemporary, &reason)) {
+                        emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                                  "cannot bind operator[] argument " +
+                                      std::to_string(k + 1) + ": " + reason,
+                                  node);
+                        node.type = nullptr;
+                        node.isLValue = false;
+                        return;
+                    }
+                }
                 node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
                 node.resolvedParamTypes = ft->paramTypes;
                 if (ft->returnType && isReferenceType(ft->returnType)) {
@@ -5851,8 +5891,8 @@ void SemanticAnalyzer::visit(ArrayAccessExprAST& node) {
                 node.mangledCallee = mangleFunction("operator[]", ft->paramTypes);
                 node.memberOperator = true;
                 node.resolvedParamTypes = ft->paramTypes;
-                if (ft->returnType && ft->returnType->isReference) {
-                    node.type = ft->returnType->base;
+                if (isReferenceType(ft->returnType)) {
+                    node.type = referenceReferent(ft->returnType);
                     node.isLValue = true;
                 } else {
                     node.type = ft->returnType;
@@ -8723,55 +8763,112 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
         }
     }
     if (!referenceVar && typeContainsReference(node.type)) {
-        if (!node.initExpr) {
+        if (!currentFunction || node.isStaticLocal || node.isThreadLocal ||
+            node.isExternLocal || node.isOutOfClassStatic) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "aggregate '" + node.name +
+                          "' with a reference member requires automatic storage",
+                      node);
+        } else if (!node.initExpr) {
             emitError(DiagnosticCode::SemUninitializedReference,
                       "aggregate '" + node.name +
                           "' contains a reference member and must be initialized",
                       node);
         } else if (auto* initList =
                        dynamic_cast<InitializerListExprAST*>(node.initExpr.get())) {
-            Type* agg = canonicalRecordType(node.type);
-            const std::vector<FieldInfo>* fields = nullptr;
-            if (agg && agg->kind == TypeKind::Struct) {
-                auto* record = static_cast<StructType*>(agg);
-                fields = &(!record->semanticFields.empty()
-                               ? record->semanticFields : record->fields);
-            } else if (agg && agg->kind == TypeKind::Class) {
-                auto* record = static_cast<ClassType*>(agg);
-                fields = &(!record->semanticFields.empty()
-                               ? record->semanticFields : record->fields);
-            }
-            if (fields) {
-                for (size_t i = 0; i < fields->size(); ++i) {
-                    if (!isReferenceType((*fields)[i].type)) continue;
-                    if (i >= initList->initializers.size()) {
-                        emitError(DiagnosticCode::SemUninitializedReference,
-                                  "reference member '" + (*fields)[i].name +
-                                      "' must be initialized",
-                                  node);
-                        continue;
+            std::function<void(Type*, InitializerListExprAST*)> checkList =
+                [&](Type* aggType, InitializerListExprAST* list) {
+                aggType = canonicalRecordType(aggType);
+                if (!aggType || !list) return;
+                if (aggType->kind == TypeKind::Struct ||
+                    aggType->kind == TypeKind::Class) {
+                    std::unordered_set<std::string> initialized;
+                    for (size_t i = 0; i < list->initializers.size() &&
+                                       i < list->resolvedTargets.size(); ++i) {
+                        for (const auto& des : list->resolvedTargets[i]) {
+                            if (des.kind == Designator::Kind::Field) {
+                                initialized.insert(des.field);
+                                break;
+                            }
+                        }
                     }
-                    ExprAST* init = initList->initializers[i].get();
-                    bool needsTemporary = false;
-                    std::string reason;
-                    bool isBitField = false;
-                    if (auto* member = dynamic_cast<MemberAccessExprAST*>(init))
-                        isBitField = member->isBitField;
-                    if (!init->isLValue || isBitField) {
-                        emitError(DiagnosticCode::SemInvalidReferenceBinding,
-                                  "reference member '" + (*fields)[i].name +
-                                      "' cannot bind to a temporary",
-                                  node);
-                    } else if (!referenceBindingAllowed(
-                                   (*fields)[i].type, getExprType(*init), true,
-                                   false, needsTemporary, &reason)) {
-                        emitError(DiagnosticCode::SemInvalidReferenceBinding,
-                                  "invalid binding for reference member '" +
-                                      (*fields)[i].name + "': " + reason,
-                                  node);
+                    auto* fields = semanticFieldList(aggType);
+                    if (fields) {
+                        for (const auto& f : *fields) {
+                            if (isReferenceType(f.type) &&
+                                !initialized.count(f.name)) {
+                                emitError(DiagnosticCode::SemUninitializedReference,
+                                          "reference member '" + f.name +
+                                              "' must be initialized",
+                                          node);
+                            }
+                        }
                     }
                 }
-            }
+                for (size_t i = 0; i < list->initializers.size(); ++i) {
+                    Type* elemType = nullptr;
+                    if (i < list->resolvedTargets.size() &&
+                        !list->resolvedTargets[i].empty()) {
+                        Type* cur = aggType;
+                        for (const auto& des : list->resolvedTargets[i]) {
+                            cur = canonicalRecordType(cur);
+                            if (!cur) break;
+                            if (des.kind == Designator::Kind::Index) {
+                                if (cur->kind != TypeKind::Array) { cur = nullptr; break; }
+                                cur = static_cast<ArrayType*>(cur)->elementType;
+                            } else {
+                                Type* fieldType = nullptr;
+                                Type* walk = cur;
+                                int depth = 0;
+                                while (walk && (walk->kind == TypeKind::Struct ||
+                                                walk->kind == TypeKind::Class)) {
+                                    auto* fields = semanticFieldList(walk);
+                                    if (fields) {
+                                        for (const auto& f : *fields) {
+                                            if (f.name == des.field) {
+                                                fieldType = f.type;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (fieldType) break;
+                                    walk = walk->base;
+                                    if (++depth > 64) break;
+                                }
+                                cur = fieldType;
+                            }
+                        }
+                        elemType = cur;
+                    }
+                    if (!elemType && aggType->kind == TypeKind::Array) {
+                        elemType = static_cast<ArrayType*>(aggType)->elementType;
+                    }
+                    if (!elemType) continue;
+                    ExprAST* init = list->initializers[i].get();
+                    if (isReferenceType(elemType)) {
+                        bool needsTemporary = false;
+                        std::string reason;
+                        bool isBitField = false;
+                        if (auto* member = dynamic_cast<MemberAccessExprAST*>(init))
+                            isBitField = member->isBitField;
+                        if (!init->isLValue || isBitField) {
+                            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                                      "reference member cannot bind to a temporary",
+                                      node);
+                        } else if (!referenceBindingAllowed(
+                                       elemType, getExprType(*init), true, false,
+                                       needsTemporary, &reason)) {
+                            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                                      "invalid reference member binding: " + reason,
+                                      node);
+                        }
+                    } else if (auto* nested =
+                                   dynamic_cast<InitializerListExprAST*>(init)) {
+                        checkList(elemType, nested);
+                    }
+                }
+            };
+            checkList(node.type, initList);
         }
     }
     Symbol* declaredVar = declareSymbol(node.name, node.type);
@@ -9276,14 +9373,24 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         // 触发）。非实例路径不变。
         const bool lazyMethods = m_lazyInstanceMethods.count(node.name) > 0;
 
+        std::unordered_set<std::string> seenMethodNames;
         for (auto& method : node.methods) {
             // AGG-10/DS1: static methods are not instance members — they
             // never enter the class method table, so instance calls reject.
+            // Static members have their own desugared symbol table and may
+            // share a name with an instance method / overload each other.
             if (method->isStatic) {
                 if (method->isConstMethod) {
                     emitError("const qualifier is not valid on a static method",
                               *method);
                 }
+                continue;
+            }
+            if (!seenMethodNames.insert(method->name).second) {
+                emitError(DiagnosticCode::SemRedefinition,
+                          "redefinition of method '" + method->name +
+                              "': overloaded instance methods are not supported",
+                          *method);
                 continue;
             }
             FunctionType* existing = classType->getMethod(method->name);
@@ -9302,6 +9409,11 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
                     emitError(DiagnosticCode::SemRedefinition,
                               "redefinition of method '" + method->name +
                                   "': const-qualified and non-const overloads are not supported",
+                              *method);
+                } else {
+                    emitError(DiagnosticCode::SemRedefinition,
+                              "redefinition of method '" + method->name +
+                                  "': overloaded methods are not supported",
                               *method);
                 }
             }
@@ -9770,6 +9882,12 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
         std::string reason;
         if (!referencePlacementValid(p->type, &reason)) {
             emitError(DiagnosticCode::SemInvalidReferenceBinding, reason, node);
+        }
+        if (p->hasDefault && isReferenceType(p->type)) {
+            emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                      "reference parameter '" + p->name +
+                          "' cannot have a default argument",
+                      node);
         }
     }
     if (!node.className.empty()) {

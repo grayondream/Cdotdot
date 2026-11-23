@@ -280,11 +280,7 @@ int conversionRank(Type* from, Type* to) {
     // cv binding.  This keeps `f(int&)` selectable for an int argument while
     // `f(int*)` remains a pointer conversion.
     if (to->kind == TypeKind::Pointer && to->isReference) {
-        int rank = conversionRank(from, to->base);
-        if (rank < 0) return -1;
-        // Prefer a non-const reference over a const reference when both bind;
-        // rvalue-only viability is enforced later by referenceBindingAllowed.
-        return to->base && to->base->isConst ? rank + 1 : rank;
+        return conversionRank(from, to->base);
     }
 
     // Arrays decay to a pointer to their first element, preserving element
