@@ -726,7 +726,10 @@ llvm::Value* CodegenContext::tryUserConversion(llvm::Value* val, Type* fromAST,
             bool isExact = false;
             bool canStandard = false;
             if (to) {
-                isExact = typesEqual(ret, to) || retLLVM == targetLLVMType;
+                isExact =
+                    typesIdentical(adjustParameterTypeForSignature(ret),
+                                   adjustParameterTypeForSignature(to)) ||
+                    retLLVM == targetLLVMType;
                 canStandard =
                     (isArithmeticType(ret) && isArithmeticType(to)) ||
                     (isPointerishType(ret) && isPointerishType(to));

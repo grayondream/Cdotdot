@@ -25,22 +25,6 @@ static Type* stripTypedef(Type* type) {
     return stripTypedefPreservingQualifiers(type);
 }
 
-// Slice/array view element compatibility: the destination may add top-level
-// cv, but may not drop it.  Pointer elements use the ordinary C pointer rule
-// (including pointee qualifiers).
-static bool qualifiedElementCompatible(Type* target, Type* source) {
-    target = stripTypedef(target);
-    source = stripTypedef(source);
-    if (!target || !source) return false;
-    if (typesIdentical(target, source)) return true;
-    if (target->kind == TypeKind::Pointer && source->kind == TypeKind::Pointer)
-        return pointerConversionAllowed(target, source);
-    if (source->isConst && !target->isConst) return false;
-    if (source->isVolatile && !target->isVolatile) return false;
-    return typesIdentical(adjustParameterTypeForSignature(target),
-                          adjustParameterTypeForSignature(source));
-}
-
 // `nullptr` is a distinct null-pointer literal; integer literal 0 remains the
 // C null pointer constant. Both may initialize/compare with pointers, but only
 // `nullptr` participates in overload resolution as a nullptr, never as int/bool.
@@ -531,10 +515,10 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     // P1-02 (TYP-13/14): Optional/Result match strictly by their type
     // arguments (int32? != float64?) — before the generic same-kind rule.
     if (left->kind == TypeKind::Optional && right->kind == TypeKind::Optional)
-        return typesEqual(static_cast<OptionalType*>(left)->elementType,
-                          static_cast<OptionalType*>(right)->elementType);
+        return typesIdentical(static_cast<OptionalType*>(left)->elementType,
+                              static_cast<OptionalType*>(right)->elementType);
     if (left->kind == TypeKind::Result && right->kind == TypeKind::Result)
-        return typesEqual(left, right);
+        return typesIdentical(left, right);
     // P1-06 (FMT-03): str is a byte view — implicit str -> char* is allowed
     // (drops the UTF-8 guarantee and the length). char* -> str is NOT
     // implicit (length/UTF-8 cannot be recovered; use the str_from_c
@@ -560,7 +544,12 @@ bool SemanticAnalyzer::typesCompatible(Type* left, Type* right) const {
     if (left->kind == right->kind &&
         (left->kind == TypeKind::Struct || left->kind == TypeKind::Class ||
          left->kind == TypeKind::Union)) {
-        if (typesEqual(left, right)) return true;
+        // Top-level cv on the aggregate value does not affect copy
+        // compatibility; qualifiers inside the aggregate remain part of its
+        // identity.
+        if (typesIdentical(adjustParameterTypeForSignature(left),
+                           adjustParameterTypeForSignature(right)))
+            return true;
         if (isDerivedFrom(right, left)) return true;
         return false;
     }
@@ -890,7 +879,8 @@ FunctionType* SemanticAnalyzer::findUserConversion(Type* from, Type* to,
             if (!canAccessMember(ct, ct->memberAccessLevel(entry.first))) continue;
             Type* ret = stripTypedef(entry.second->returnType);
             if (!ret) continue;
-            if (typesEqual(ret, to)) {
+            if (typesIdentical(adjustParameterTypeForSignature(ret),
+                               adjustParameterTypeForSignature(to))) {
                 if (owner) *owner = ct;
                 if (exact) *exact = true;
                 return entry.second;
@@ -1038,13 +1028,18 @@ Type* SemanticAnalyzer::checkAssignmentTypes(Type* lhs, Type* rhs, ExprAST& node
         // arguments — the generic same-kind rule would mis-accept
         // int32? = float64?.
         if (lhsS->kind == TypeKind::Optional || lhsS->kind == TypeKind::Result)
-            return typesEqual(lhsS, rhsS) ? lhsRaw : nullptr;
+            return typesIdentical(adjustParameterTypeForSignature(lhsS),
+                                  adjustParameterTypeForSignature(rhsS))
+                       ? lhsRaw : nullptr;
         // PAR-12 (TYP-19 落点): 聚合是名义类型——struct/class/union 必须
-        // 名字相同（typesEqual）才可赋值；两次独立的匿名定义名字不同，
+        // 类型同一（typesIdentical）才可赋值；两次独立的匿名定义名字不同，
         // 赋值拒绝（C 语义）。例外：派生→基 值赋值（INH-04 切片语义）。
+        // 顶层的 cv 属于值而非聚合身份，因此先做签名顶层限定剥离。
         if (lhsS->kind == TypeKind::Struct || lhsS->kind == TypeKind::Class ||
             lhsS->kind == TypeKind::Union) {
-            if (typesEqual(lhsS, rhsS)) return lhsRaw;
+            if (typesIdentical(adjustParameterTypeForSignature(lhsS),
+                               adjustParameterTypeForSignature(rhsS)))
+                return lhsRaw;
             if (isDerivedFrom(rhsS, lhsS)) return lhsRaw;
             emitError(DiagnosticCode::SemIncompatibleAssignment,
                       "cannot assign '" + typeToString(rhs) + "' to '" +
@@ -1296,7 +1291,10 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
     for (size_t i = 0; i < checkedArgs; ++i) {
         Type* at = stripTypedef(argTypes[i]);
         Type* pt = stripTypedef(funcType->paramTypes[i]);
-        if (!at || !pt || at->kind != TypeKind::Class || typesEqual(at, pt)) continue;
+        if (!at || !pt || at->kind != TypeKind::Class ||
+            typesIdentical(adjustParameterTypeForSignature(at),
+                           adjustParameterTypeForSignature(pt)))
+            continue;
         if (conversionRank(at, pt) >= 0 && !hasUserConversion(at, pt)) {
             emitError(DiagnosticCode::SemPrivateMemberAccess,
                       "cannot use a private/protected conversion operator of class '" +
@@ -4377,7 +4375,9 @@ bool SemanticAnalyzer::tryAnalyzeAtomicBuiltin(CallExprAST& node) {
                 expectedPtr && expectedPtr->kind == TypeKind::Pointer
                     ? stripTypedef(expectedPtr->base)
                     : nullptr;
-            if (!expectedType || !typesEqual(valueType, expectedType)) {
+            if (!expectedType ||
+                !typesIdentical(adjustParameterTypeForSignature(valueType),
+                                adjustParameterTypeForSignature(expectedType))) {
                 emitError("atomic compare-exchange expects a pointer to '" +
                               typeToString(valueType) + "'",
                           *node.args[1]);
@@ -6865,7 +6865,10 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
         }
         Type* at = stripTypedef(argTypes[i]);
         Type* pt = stripTypedef(funcType->paramTypes[i + 1]);
-        if (!at || !pt || at->kind != TypeKind::Class || typesEqual(at, pt)) continue;
+        if (!at || !pt || at->kind != TypeKind::Class ||
+            typesIdentical(adjustParameterTypeForSignature(at),
+                           adjustParameterTypeForSignature(pt)))
+            continue;
         if (conversionRank(at, pt) >= 0 && !hasUserConversion(at, pt)) {
             emitError(DiagnosticCode::SemPrivateMemberAccess,
                       "cannot use a private/protected conversion operator of class '" +
@@ -8870,7 +8873,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                         // Flag fields (valid/ok) follow the language's normal
                         // bool-assignment channel (`true` literals are int32
                         // in this language, C-style). Value/error fields are
-                        // positional literal slots: exact typesEqual — else
+                        // positional literal slots: exact typesIdentical — else
                         // `{5, true}` would silently accept bool as the value.
                         bool okField;
                         if (i == 0) {
@@ -8881,15 +8884,18 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                         } else {
                             // Value/error slots are positional literal slots:
                             // exact match after stripping typedefs on BOTH
-                            // sides (评审 I2: typesEqual does not strip —
-                            // `Optional<MyInt> o = {true, 5}` was mis-rejected).
+                            // sides (评审 I2: the old equality helper did not
+                            // strip — `Optional<MyInt> o = {true, 5}` was
+                            // mis-rejected).
                             Type* ft = fieldTypes[i];
                             while (ft && ft->kind == TypeKind::Typedef)
                                 ft = static_cast<TypedefType*>(ft)->aliasedType;
                             Type* its = it;
                             while (its && its->kind == TypeKind::Typedef)
                                 its = static_cast<TypedefType*>(its)->aliasedType;
-                            okField = typesEqual(ft, its);
+                            okField = typesIdentical(
+                                adjustParameterTypeForSignature(ft),
+                                adjustParameterTypeForSignature(its));
                         }
                         if (!okField) {
                             emitError("type mismatch in initializer " +
@@ -10105,13 +10111,18 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                               node.className + "'", node);
                 return;
             }
-            bool sigOk = declared->returnType && node.returnType &&
-                         typesEqual(declared->returnType, node.returnType) &&
-                         declared->isConstMethod == node.isConstMethod &&
-                         declared->paramTypes.size() == node.params.size() + 1;
+            bool sigOk =
+                declared->returnType && node.returnType &&
+                typesIdentical(
+                    adjustParameterTypeForSignature(declared->returnType),
+                    adjustParameterTypeForSignature(node.returnType)) &&
+                declared->isConstMethod == node.isConstMethod &&
+                declared->paramTypes.size() == node.params.size() + 1;
             if (sigOk) {
                 for (size_t i = 0; i < node.params.size(); ++i) {
-                    if (!typesEqual(declared->paramTypes[i + 1], node.params[i]->type)) {
+                    if (!typesIdentical(
+                            adjustParameterTypeForSignature(declared->paramTypes[i + 1]),
+                            adjustParameterTypeForSignature(node.params[i]->type))) {
                         sigOk = false;
                         break;
                     }
@@ -10443,7 +10454,10 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                     if (ft->paramTypes.size() != funcType->paramTypes.size()) continue;
                     bool same = true;
                     for (size_t i = 0; i < ft->paramTypes.size(); ++i) {
-                        if (!typesEqual(ft->paramTypes[i], funcType->paramTypes[i])) {
+                        if (!typesIdentical(
+                                adjustParameterTypeForSignature(ft->paramTypes[i]),
+                                adjustParameterTypeForSignature(
+                                    funcType->paramTypes[i]))) {
                             same = false;
                             break;
                         }

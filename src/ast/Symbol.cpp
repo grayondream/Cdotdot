@@ -2,86 +2,6 @@
 #include "Decl.h"
 #include "ast/TypeUtils.h"
 
-bool typesEqual(Type* a, Type* b) {
-    if (!a || !b) return a == b;
-    if (a->kind != b->kind) return false;
-    // CON-01: atomic-ness is part of the type identity (`atomic int32` != `int32`).
-    if (a->isAtomic != b->isAtomic) return false;
-    switch (a->kind) {
-        case TypeKind::Pointer:
-            if (a->isReference != b->isReference) return false;
-            return typesEqual(a->base, b->base);
-        case TypeKind::Optional: {
-            // P1-02 (TYP-13): optional<T> matches by element type only —
-            // int32? != float64? (the generic same-kind rule would mis-accept).
-            auto* oa = static_cast<OptionalType*>(a);
-            auto* ob = static_cast<OptionalType*>(b);
-            return typesEqual(oa->elementType, ob->elementType);
-        }
-        case TypeKind::Result: {
-            // P1-02 (TYP-14): result<T,E> matches by both arguments.
-            auto* ra = static_cast<ResultType*>(a);
-            auto* rb = static_cast<ResultType*>(b);
-            return typesEqual(ra->successType, rb->successType) &&
-                   typesEqual(ra->errorType, rb->errorType);
-        }
-        case TypeKind::Array: {
-            // Array types carry their length and element type: int32[2] !=
-            // int32[3], and int32[2] != float64[2] (C semantics). Note
-            // ArrayType stores its element in `elementType`, not `base`.
-            auto* aa = static_cast<ArrayType*>(a);
-            auto* ab = static_cast<ArrayType*>(b);
-            return aa->size == ab->size && typesEqual(aa->elementType, ab->elementType);
-        }
-        case TypeKind::Struct: {
-            auto* sa = static_cast<StructType*>(a);
-            auto* sb = static_cast<StructType*>(b);
-            return sa->name == sb->name;
-        }
-        case TypeKind::Class: {
-            auto* ca = static_cast<ClassType*>(a);
-            auto* cb = static_cast<ClassType*>(b);
-            return ca->name == cb->name;
-        }
-        case TypeKind::Union: {
-            auto* ua = static_cast<UnionType*>(a);
-            auto* ub = static_cast<UnionType*>(b);
-            return ua->name == ub->name;
-        }
-        case TypeKind::Enum: {
-            // Enums are nominally typed: two enums are equal only if they share
-            // the same name (TYP-09 / TYP-20). Previously any two enums compared
-            // equal, which silently allowed mixing distinct enums.
-            auto* ea = static_cast<EnumType*>(a);
-            auto* eb = static_cast<EnumType*>(b);
-            return ea->name == eb->name;
-        }
-        case TypeKind::Typedef: {
-            auto* ta = static_cast<TypedefType*>(a);
-            auto* tb = static_cast<TypedefType*>(b);
-            return typesEqual(ta->aliasedType, tb->aliasedType);
-        }
-        case TypeKind::Slice: {
-            // TYP-12: slices match by element type (int32[] != float64[]).
-            auto* sa = static_cast<SliceType*>(a);
-            auto* sb = static_cast<SliceType*>(b);
-            return typesEqual(sa->elementType, sb->elementType);
-        }
-        case TypeKind::Function: {
-            auto* fa = static_cast<FunctionType*>(a);
-            auto* fb = static_cast<FunctionType*>(b);
-            if (!typesEqual(fa->returnType, fb->returnType)) return false;
-            if (fa->paramTypes.size() != fb->paramTypes.size()) return false;
-            for (size_t i = 0; i < fa->paramTypes.size(); ++i) {
-                if (!typesEqual(fa->paramTypes[i], fb->paramTypes[i])) return false;
-            }
-            return true;
-        }
-        default:
-            return true; // All primitive types with same kind are equal
-    }
-}
-
 // Function types in overload sets compare their adjusted signatures: by-value
 // top-level cv/restrict is not part of the signature, while pointee cv and
 // reference-ness are.
@@ -302,10 +222,12 @@ int conversionRank(Type* from, Type* to) {
         return targetBase && targetBase->kind == TypeKind::Void ? 2 : 1;
     }
 
-    // TYP-12: an array decays to a slice view of itself (zero-copy).
+    // TYP-12: an array decays to a slice view of itself (zero-copy). The
+    // destination element may add cv but may not drop it.
     if (from->kind == TypeKind::Array && to->kind == TypeKind::Slice &&
-        typesEqual(static_cast<ArrayType*>(from)->elementType,
-                   static_cast<SliceType*>(to)->elementType)) return 1;
+        qualifiedElementCompatible(
+            static_cast<SliceType*>(to)->elementType,
+            static_cast<ArrayType*>(from)->elementType)) return 1;
 
     // Review 2.5: views/literals may become read-only C strings; mutable
     // char* requires an explicit cast.
@@ -317,7 +239,7 @@ int conversionRank(Type* from, Type* to) {
 
     // Enum types are strongly typed (TYP-09 / TYP-20): enum <-> integer/float
     // and enum <-> other enum require an explicit conversion. Exact-same-enum
-    // was already handled by the `typesEqual` checks above.
+    // was already handled by the `typesIdentical` checks above.
     if (from->kind == TypeKind::Enum || to->kind == TypeKind::Enum) {
         return -1;
     }
@@ -349,7 +271,9 @@ int conversionRank(Type* from, Type* to) {
                 while (ret && ret->kind == TypeKind::Typedef)
                     ret = static_cast<TypedefType*>(ret)->aliasedType;
                 if (!ret) continue;
-                if (typesEqual(ret, to)) return 2;
+                if (typesIdentical(adjustParameterTypeForSignature(ret),
+                                   adjustParameterTypeForSignature(to)))
+                    return 2;
                 const bool stdConv =
                     (isArithmeticType(ret) && isArithmeticType(to)) ||
                     ((ret->kind == TypeKind::Pointer || ret->kind == TypeKind::Array) &&

@@ -88,6 +88,11 @@ bool isModifiableLValueType(const Type* type, std::string* reason = nullptr);
 // ignored.
 bool pointerConversionAllowed(const Type* target, const Type* source);
 
+// Slice/array view element compatibility: the destination may add top-level
+// cv, but may not drop it. Pointer elements use the ordinary C pointer rule
+// (including pointee qualifiers).
+bool qualifiedElementCompatible(const Type* target, const Type* source);
+
 // Render qualifiers at the level where they belong, e.g. `const int32*`,
 // `int32* const`, and `const int32* const restrict`.
 std::string qualifiedTypeToString(const Type* type);

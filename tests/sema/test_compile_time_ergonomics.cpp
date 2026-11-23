@@ -729,6 +729,24 @@ template<typename T> struct Box { T value; };
     EXPECT_EQ(b->intVal, 0);
 }
 
+TEST_F(CompileTimeErgonomics, IsSameDistinguishesQualifiers) {
+    auto check = [&](const std::string& expr, long long expected) {
+        Extracted ex;
+        ASSERT_NO_FATAL_FAILURE(extract(ex, "", expr));
+        auto v = evalExpr(ex);
+        ASSERT_TRUE(v.has_value()) << expr;
+        EXPECT_EQ(v->intVal, expected) << expr;
+    };
+    check("compile_time.is_same(compile_time.const_of(int32), int32)", 0);
+    check("compile_time.is_same(compile_time.const_of(int32), "
+          "compile_time.const_of(int32))", 1);
+    check("compile_time.is_same(compile_time.pointer_to(int32), "
+          "compile_time.pointer_to(compile_time.const_of(int32)))", 0);
+    check("compile_time.is_same(compile_time.pointer_to(compile_time.const_of(int32)), "
+          "compile_time.pointer_to(compile_time.const_of(int32)))", 1);
+    check("compile_time.is_convertible(compile_time.const_of(int32), int32)", 1);
+}
+
 TEST_F(CompileTimeErgonomics, OffsetOfInheritedField) {
     const std::string decls = R"(
 struct C1Base { int32 a; };

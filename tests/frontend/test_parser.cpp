@@ -4,6 +4,7 @@
 #include "ast/Expr.h"
 #include "ast/Symbol.h"
 #include "ast/Type.h"
+#include "ast/TypeUtils.h"
 #include <spdlog/spdlog.h>
 
 class ParserTest : public ::testing::Test {
@@ -2496,7 +2497,7 @@ TEST(ParserAnonTypeTest, AnonymousStructGetsUniqueSyntheticName) {
     EXPECT_NE(sb->name, "");
     EXPECT_NE(sa->name, sb->name);
     EXPECT_TRUE(sa->name.rfind("__anon_", 0) == 0);
-    EXPECT_FALSE(typesEqual(ta, tb));
+    EXPECT_FALSE(typesIdentical(ta, tb));
 }
 
 TEST(ParserAnonTypeTest, AnonymousUnionGetsUniqueSyntheticName) {

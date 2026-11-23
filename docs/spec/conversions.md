@@ -4,12 +4,17 @@
 > 状态：`[impl]` 以 `src/sema/SemanticAnalyzer.cpp`、`src/ast/Symbol.cpp`、`src/codegen/CodegenContext.cpp` 为准；`[plan]` 为目标。
 > 设计原则：与 C 的内存模型/转换语义对齐，但去掉隐式危险转换（如 enum↔int32、指针↔int32 的静默）。
 
-## 1. 类型等价 `[impl]`
+## 1. 类型同一 `[impl]`
 
-`typesEqual`（`src/ast/Symbol.cpp`）：
+`typesIdentical`（`src/ast/TypeUtils.cpp`）是**唯一**的结构化类型比较入口；旧的
+`typesEqual` 已删除，避免两套等价规则在同一条语义路径上给出不同答案。
 
 - 同 `TypeKind` 基本相等（标量只看 kind）。
-- 指针/数组：递归比较元素类型（数组不比较长度）。
+- 指针/引用：递归比较目标/被引用类型；`isReference` 参与身份。
+- 数组：比较长度、`sizeParam` 和元素类型（`int32[2]` ≠ `int32[3]`）。
+- `const`/`volatile`：在**每一层**参与身份（`const int32*` ≠ `int32*`，
+  `int32* const` ≠ `int32*`）；`restrict` 只影响优化，不参与身份。
+- `atomic`：参与身份（`atomic int32` ≠ `int32`）。
 - struct/class/union：按**名字**相等。匿名定义（无 tag）获得唯一合成名
   `__anon_N`（PAR-12，2026-10-17）——每次匿名定义是**独立类型**，两次匿名
   定义互不相等（C 语义）。
@@ -17,9 +22,15 @@
 - Optional（TYP-13）：按元素类型相等（`int32?` ≠ `float64?`，2026-10-06）。
 - Result（TYP-14）：按两个实参类型相等。
 - using 别名：展开后比较。
-- 函数：返回类型 + 参数逐个比较（不比较 `isVarArg`）。
+- 函数：返回类型、参数、`isVarArg` 与签名调整（按值顶层 cv 忽略、pointee cv
+  保留）一起比较。
+- `TypeVar`/`TypeInstance`：分别比较名字、模板名、类型实参、值实参与值参数名；
+  `decltype(...)` 按表达式类型身份比较（不把任意两个 `decltype` 视为相等）。
 
-**目标 `[plan]`**：数组长度应参与等价（TYP-11）；`const`/限定符应参与兼容性判断（TYP-16）。
+需要“可赋值/可转换”的判断在调用点显式放宽顶层 cv（例如
+`adjustParameterTypeForSignature`），而不是再引入第二套全局等价规则。数组→
+slice 的元素兼容性使用 `qualifiedElementCompatible`：目标可添加 cv，但不能丢弃
+源 cv。
 
 ## 2. 隐式转换（当前实现）`[impl]`
 
@@ -38,9 +49,10 @@
 | `enum` ↔ 整数/浮点/其它 `enum` | ❌（须显式转换，TYP-20） |
 
 > **聚合名义兼容（PAR-12，2026-10-17）**：struct/class/union 赋值/初始化/
-> 实参/返回/比较的同 kind 放行收紧为**同名**（`typesEqual`）或**派生→基**
-> （INH-04 值切片，`isDerivedFrom`）。两次独立匿名定义（合成名不同）互斥；
-> 同一声明多变量（`struct { ... } a, b;`）共享类型。见 §1。
+> 实参/返回/比较的同 kind 放行收紧为**类型同一**（`typesIdentical`）或
+> **派生→基**（INH-04 值切片，`isDerivedFrom`）。两次独立匿名定义（合成名
+> 不同）互斥；同一声明多变量（`struct { ... } a, b;`）共享类型。聚合值的
+> 顶层 cv 不参与复制兼容，内部限定符仍参与身份。见 §1。
 >
 > **指针/整数按表达式判定**：`typesCompatible` 本身不再把指针与整数视为类型
 > 兼容；初始化/赋值/返回/实参/三元/闭包与函数指针调用统一经

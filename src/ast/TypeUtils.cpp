@@ -597,6 +597,19 @@ bool pointerConversionAllowed(const Type* target, const Type* source) {
     return isDerivedRecord(sourceBase, targetBase);
 }
 
+bool qualifiedElementCompatible(const Type* target, const Type* source) {
+    target = stripTypedefsForQualifiers(target);
+    source = stripTypedefsForQualifiers(source);
+    if (!target || !source) return false;
+    if (typesIdentical(target, source)) return true;
+    if (target->kind == TypeKind::Pointer && source->kind == TypeKind::Pointer)
+        return pointerConversionAllowed(target, source);
+    if (source->isConst && !target->isConst) return false;
+    if (source->isVolatile && !target->isVolatile) return false;
+    return typesIdentical(adjustParameterTypeForSignature(target),
+                          adjustParameterTypeForSignature(source));
+}
+
 bool referenceBindingAllowed(const Type* referenceType, const Type* sourceType,
                              bool sourceIsLValue, bool sourceIsBitField,
                              bool& needsTemporary, std::string* reason) {

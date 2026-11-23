@@ -4,6 +4,7 @@
 #include "ast/LayoutBuilder.h"
 #include "ast/Decl.h"
 #include "ast/Type.h"
+#include "ast/TypeUtils.h"
 #include "ast/Symbol.h"
 #include "sema/SemanticAnalyzer.h"
 #include "llvm/IR/LLVMContext.h"
@@ -663,22 +664,10 @@ bool CompileTimeEvaluator::isCompleteAggregate(Type* t) const {
 }
 
 bool CompileTimeEvaluator::typesSame(Type* a, Type* b) {
-    a = stripTypedef(a);
-    b = stripTypedef(b);
-    if (a == b) return true;
-    if (!a || !b) return false;
-    if (a->kind == TypeKind::TypeInstance && b->kind == TypeKind::TypeInstance) {
-        auto* ai = static_cast<TypeInstanceType*>(a);
-        auto* bi = static_cast<TypeInstanceType*>(b);
-        if (ai->templateName != bi->templateName) return false;
-        if (ai->typeArgs.size() != bi->typeArgs.size()) return false;
-        for (size_t i = 0; i < ai->typeArgs.size(); ++i)
-            if (!typesSame(ai->typeArgs[i], bi->typeArgs[i])) return false;
-        if (ai->valueArgs != bi->valueArgs) return false;
-        return true;
-    }
-    if (a->kind != b->kind) return false;
-    return typesEqual(a, b);
+    // Aliases are transparent for compile-time type queries; the canonical
+    // structural identity lives in typesIdentical (qualifiers, arrays,
+    // function signatures, template instances, and decltype included).
+    return typesIdentical(stripTypedef(a), stripTypedef(b));
 }
 
 bool CompileTimeEvaluator::isIntegerKind(Type* t) const {
