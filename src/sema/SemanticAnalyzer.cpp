@@ -1045,31 +1045,104 @@ Type* SemanticAnalyzer::checkFunctionCall(const std::string& name, const std::ve
         argTypes.push_back(argType);
     }
 
-    // Resolve overload
-    Symbol* resolved = overloadSet->resolve(argTypes);
+    // Resolve overload, filtering candidates whose reference parameters cannot
+    // bind these expressions.  Type-only conversionRank cannot know whether an
+    // argument is an lvalue, so `f(int&)` and `f(const int&)` need this
+    // expression-aware pass to choose the const overload for an rvalue.
+    std::string firstReferenceReason;
+    auto candidateScore = [&](Symbol* sym) -> int {
+        if (!sym->type || sym->type->kind != TypeKind::Function) return -1;
+        auto* ft = static_cast<FunctionType*>(sym->type);
+        size_t defaultCount = sym->decl
+                                  ? static_cast<size_t>(sym->decl->defaultArgCount)
+                                  : 0;
+        size_t minArgs = ft->paramTypes.size() > defaultCount
+                             ? ft->paramTypes.size() - defaultCount : 0;
+        if (!ft->isVarArg &&
+            (argTypes.size() > ft->paramTypes.size() ||
+             argTypes.size() < minArgs)) {
+            return -1;
+        }
+        int score = 0;
+        size_t checked = std::min(argTypes.size(), ft->paramTypes.size());
+        for (size_t i = 0; i < checked; ++i) {
+            if (isReferenceType(ft->paramTypes[i])) {
+                bool needsTemporary = false;
+                std::string reason;
+                bool isBitField = false;
+                if (auto* member = dynamic_cast<MemberAccessExprAST*>(args[i].get()))
+                    isBitField = member->isBitField;
+                if (!referenceBindingAllowed(ft->paramTypes[i], argTypes[i],
+                                             args[i]->isLValue, isBitField,
+                                             needsTemporary, &reason)) {
+                    if (firstReferenceReason.empty())
+                        firstReferenceReason = reason;
+                    return -1;
+                }
+                int rank = conversionRank(argTypes[i], ft->paramTypes[i]);
+                if (rank < 0) return -1;
+                score += rank;
+            } else {
+                int rank = conversionRank(argTypes[i], ft->paramTypes[i]);
+                if (rank < 0) return -1;
+                score += rank;
+            }
+        }
+        return score;
+    };
+
+    bool anyReferenceCandidate = false;
+    for (auto* sym : overloadSet->getCandidates()) {
+        if (!sym->type || sym->type->kind != TypeKind::Function) continue;
+        auto* ft = static_cast<FunctionType*>(sym->type);
+        for (Type* pt : ft->paramTypes) {
+            if (isReferenceType(pt)) {
+                anyReferenceCandidate = true;
+                break;
+            }
+        }
+        if (anyReferenceCandidate) break;
+    }
+
+    Symbol* resolved = nullptr;
+    if (!anyReferenceCandidate) {
+        resolved = overloadSet->resolve(argTypes);
+    } else {
+        Symbol* best = nullptr;
+        int bestScore = INT_MAX;
+        int bestDefaults = INT_MAX;
+        bool tie = false;
+        for (auto* sym : overloadSet->getCandidates()) {
+            int score = candidateScore(sym);
+            if (score < 0) continue;
+            auto* ft = static_cast<FunctionType*>(sym->type);
+            if (ft->isVarArg) ++score;
+            int defaults = sym->decl
+                               ? static_cast<int>(sym->decl->defaultArgCount) : 0;
+            if (score < bestScore ||
+                (score == bestScore && defaults < bestDefaults)) {
+                bestScore = score;
+                bestDefaults = defaults;
+                best = sym;
+                tie = false;
+            } else if (score == bestScore && defaults == bestDefaults) {
+                tie = true;
+            }
+        }
+        if (best && !tie) resolved = best;
+    }
+    if (!resolved && anyReferenceCandidate &&
+        !firstReferenceReason.empty()) {
+        emitError(DiagnosticCode::SemInvalidReferenceBinding,
+                  "cannot bind reference argument: " + firstReferenceReason,
+                  node);
+        return nullptr;
+    }
     if (!resolved) {
         // Distinguish "no viable candidate" from "ambiguous".
         bool anyViable = false;
         for (auto* sym : overloadSet->getCandidates()) {
-            if (sym->type->kind != TypeKind::Function) continue;
-            auto* funcType = static_cast<FunctionType*>(sym->type);
-            size_t fixedCount = funcType->paramTypes.size();
-            size_t defaultCount = sym->decl ? static_cast<size_t>(sym->decl->defaultArgCount) : 0;
-            size_t minArgs = fixedCount > defaultCount ? fixedCount - defaultCount : 0;
-            if (funcType->isVarArg) {
-                if (argTypes.size() < minArgs) continue;
-            } else if (argTypes.size() < minArgs || argTypes.size() > fixedCount) {
-                continue;
-            }
-            bool viable = true;
-            size_t checked = std::min(argTypes.size(), fixedCount);
-            for (size_t i = 0; i < checked; ++i) {
-                if (conversionRank(argTypes[i], funcType->paramTypes[i]) < 0) {
-                    viable = false;
-                    break;
-                }
-            }
-            if (viable) {
+            if (candidateScore(sym) >= 0) {
                 anyViable = true;
                 break;
             }
@@ -9978,6 +10051,42 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     }
     Symbol* declaredSym = declareSymbol(node.name, funcType);
     if (!declaredSym) {
+        // A by-value parameter and an lvalue reference to the same referent are
+        // the same overload; their mangled names differ, so reject the pair
+        // explicitly instead of treating it as a prototype/definition pair.
+        auto duplicateParam = [](Type* t) {
+            t = stripTypedefPreservingQualifiers(t);
+            if (t && t->kind == TypeKind::Pointer && t->isReference)
+                return t->base; // keep referent cv
+            return adjustParameterTypeForSignature(t);
+        };
+        if (OverloadSet* os = currentScope->lookupOverload(node.name)) {
+            for (Symbol* cand : os->getCandidates()) {
+                if (!cand->type || cand->type->kind != TypeKind::Function) continue;
+                auto* existing = static_cast<FunctionType*>(cand->type);
+                if (existing->paramTypes.size() != funcType->paramTypes.size())
+                    continue;
+                std::string existingSignature =
+                    mangleFunction(node.name, existing->paramTypes);
+                if (existingSignature == signature) continue;
+                bool same = true;
+                for (size_t i = 0; i < existing->paramTypes.size(); ++i) {
+                    if (!typesIdentical(duplicateParam(existing->paramTypes[i]),
+                                        duplicateParam(funcType->paramTypes[i]))) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    emitError(DiagnosticCode::SemRedefinition,
+                              "redefinition of function '" + node.name +
+                                  "': reference and value parameters are the "
+                                  "same overload signature",
+                              node);
+                    return;
+                }
+            }
+        }
         // A matching declaration already exists. That is legal for repeated
         // prototypes or a prototype followed by its definition; only two
         // definitions of the same signature are an error.

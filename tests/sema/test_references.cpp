@@ -151,3 +151,30 @@ TEST(ReferenceMembers, ReferenceMemberFromTemporaryRejected) {
         "struct STempRef { int32& r; }; int32 main() { STempRef s = {1}; return 0; }");
     EXPECT_TRUE(hasError(result, "temporary") || hasError(result, "rvalue"));
 }
+
+TEST(ReferenceSignature, PointerAndReferenceAreDistinctOverloads) {
+    auto result = analyzeSource(R"(
+        int32 f(int32* p) { return 1; }
+        int32 f(int32& r) { return 2; }
+        int32 main() { int32 x = 0; return f(&x) + f(x) - 3; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceSignature, ConstReferenceIsDistinctOverload) {
+    auto result = analyzeSource(R"(
+        int32 f(int32& r) { return 1; }
+        int32 f(const int32& r) { return 2; }
+        int32 main() { int32 x = 0; return f(x) + f(1) - 3; }
+    )");
+    EXPECT_TRUE(result.errors.empty());
+}
+
+TEST(ReferenceSignature, ValueAndReferenceParametersAreDuplicate) {
+    auto result = analyzeSource(R"(
+        void f(int32 x) {}
+        void f(int32& r) {}
+        int32 main() { return 0; }
+    )");
+    EXPECT_TRUE(hasError(result, "redefinition") || hasError(result, "duplicate"));
+}

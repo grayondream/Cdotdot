@@ -9,6 +9,7 @@ bool typesEqual(Type* a, Type* b) {
     if (a->isAtomic != b->isAtomic) return false;
     switch (a->kind) {
         case TypeKind::Pointer:
+            if (a->isReference != b->isReference) return false;
             return typesEqual(a->base, b->base);
         case TypeKind::Optional: {
             // P1-02 (TYP-13): optional<T> matches by element type only —
@@ -84,6 +85,18 @@ bool typesEqual(Type* a, Type* b) {
 // Function types in overload sets compare their adjusted signatures: by-value
 // top-level cv/restrict is not part of the signature, while pointee cv and
 // reference-ness are.
+static const Type* duplicateSignatureType(const Type* type) {
+    type = stripTypedefPreservingQualifiers(type);
+    // A by-value parameter and an lvalue reference to the same referent are
+    // the same overload signature in this language.  Referent cv still
+    // distinguishes `T&` from `const T&`.
+    if (type && type->kind == TypeKind::Pointer && type->isReference) {
+        // Keep referent cv: `T&` and `const T&` are distinct signatures.
+        return type->base;
+    }
+    return adjustParameterTypeForSignature(type);
+}
+
 static bool functionSignaturesIdentical(const FunctionType* a,
                                         const FunctionType* b) {
     if (a->isVarArg != b->isVarArg) return false;
@@ -92,8 +105,8 @@ static bool functionSignaturesIdentical(const FunctionType* a,
         return false;
     if (a->paramTypes.size() != b->paramTypes.size()) return false;
     for (size_t i = 0; i < a->paramTypes.size(); ++i) {
-        if (!typesIdentical(adjustParameterTypeForSignature(a->paramTypes[i]),
-                            adjustParameterTypeForSignature(b->paramTypes[i])))
+        if (!typesIdentical(duplicateSignatureType(a->paramTypes[i]),
+                            duplicateSignatureType(b->paramTypes[i])))
             return false;
     }
     return true;
@@ -267,7 +280,11 @@ int conversionRank(Type* from, Type* to) {
     // cv binding.  This keeps `f(int&)` selectable for an int argument while
     // `f(int*)` remains a pointer conversion.
     if (to->kind == TypeKind::Pointer && to->isReference) {
-        return conversionRank(from, to->base);
+        int rank = conversionRank(from, to->base);
+        if (rank < 0) return -1;
+        // Prefer a non-const reference over a const reference when both bind;
+        // rvalue-only viability is enforced later by referenceBindingAllowed.
+        return to->base && to->base->isConst ? rank + 1 : rank;
     }
 
     // Arrays decay to a pointer to their first element, preserving element
