@@ -107,6 +107,8 @@ public:
     // CT-24: compile-only free function; codegen must not emit any symbol.
     bool isCompileOnly = false;
     bool isVarArg = false;
+    // Trailing `const` on an instance method (`int32 get() const`).
+    bool isConstMethod = false;
     // AGG-10: class-body `static` method — no `this` insertion; sema rewrites
     // the name to the desugared `Class_method` global symbol.
     bool isStatic = false;

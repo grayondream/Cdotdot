@@ -31,6 +31,15 @@ static auto parse(const std::string& source) {
     return parser.parse();
 }
 
+TEST_F(ParserTest, ParsesConstMemberFunction) {
+    Lexer lexer("const_method.cdd",
+                "class ConstMethodParserC { public: int32 get() const { return 1; } };");
+    Parser parser(lexer.tokenize());
+    auto tu = parser.parse();
+    ASSERT_NE(tu, nullptr);
+    EXPECT_TRUE(parser.getErrors().empty());
+}
+
 static std::vector<Diagnostic> parseErrors(const std::string& source) {
     Lexer lexer("alias_err.c", source);
     Parser parser(lexer.tokenize());

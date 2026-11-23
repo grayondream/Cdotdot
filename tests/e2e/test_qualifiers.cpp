@@ -75,3 +75,19 @@ TEST_F(QualifiersE2E, ConstObjectPointerMemberKeepsMutablePointee) {
         }
     )"), 0);
 }
+
+TEST_F(QualifiersE2E, ConstMethodReadsState) {
+    EXPECT_EQ(runQualifierSource(R"(
+        class QualifierE2ECM {
+        public:
+            int32 v;
+            int32 get() const { return this->v; }
+        };
+        int32 main() {
+            QualifierE2ECM c;
+            c.v = 7;
+            const QualifierE2ECM* p = &c;
+            return p->get() - 7;
+        }
+    )"), 0);
+}

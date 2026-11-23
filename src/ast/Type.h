@@ -238,6 +238,10 @@ public:
     Type* returnType;
     std::vector<Type*> paramTypes;
     bool isVarArg;
+    // Trailing `const` on an instance method.  Part of method metadata and
+    // this-typing, but deliberately not part of mangling because const-only
+    // overloads are rejected.
+    bool isConstMethod = false;
 
     FunctionType(Type* ret, std::vector<Type*> params, bool varArg = false)
         : Type(TypeKind::Function), returnType(ret), paramTypes(std::move(params)), isVarArg(varArg) {}

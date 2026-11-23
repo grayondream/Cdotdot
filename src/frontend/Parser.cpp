@@ -4361,6 +4361,13 @@ std::unique_ptr<FunctionDeclAST> Parser::parseFunctionDecl(Type* returnType, con
 
     if (!expect(TokenType::TOKEN_RPAREN, "expected ')' after parameter list")) return nullptr;
 
+    // Optional trailing `const` on an instance method.
+    bool isConstMethod = false;
+    if (check(TokenType::TOKEN_CONST)) {
+        advance();
+        isConstMethod = true;
+    }
+
     // Check for function body
     std::unique_ptr<CompoundStmtAST> body;
     if (check(TokenType::TOKEN_LBRACE)) {
@@ -4370,7 +4377,10 @@ std::unique_ptr<FunctionDeclAST> Parser::parseFunctionDecl(Type* returnType, con
         errorUnexpected("expected '{' or ';' after function declaration");
     }
 
-    return std::make_unique<FunctionDeclAST>(name, returnType, params, body, isCompileTime, isVarArg);
+    auto fn = std::make_unique<FunctionDeclAST>(
+        name, returnType, params, body, isCompileTime, isVarArg);
+    fn->isConstMethod = isConstMethod;
+    return fn;
 }
 
 std::unique_ptr<DeclAST> Parser::parseVariableDecl(Type* type, const std::string& name, bool isCompileTime) {

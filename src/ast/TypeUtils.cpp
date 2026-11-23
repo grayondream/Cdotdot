@@ -201,8 +201,10 @@ Type* cloneType(const Type* type) {
         }
         case TypeKind::Function: {
             const auto* source = static_cast<const FunctionType*>(type);
-            clone = new FunctionType(source->returnType, source->paramTypes,
-                                     source->isVarArg);
+            auto* copy = new FunctionType(source->returnType, source->paramTypes,
+                                          source->isVarArg);
+            copy->isConstMethod = source->isConstMethod;
+            clone = copy;
             break;
         }
         case TypeKind::Typedef: {

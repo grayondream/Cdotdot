@@ -263,3 +263,24 @@ TEST(QualifierConstLValue, ConstAliasPreservesReadonly) {
         int32 main() { CI x = 1; x = 2; return x; }
     )"), "const"));
 }
+
+TEST(QualifierConstMethods, ConstObjectCanCallConstMethod) {
+    EXPECT_TRUE(analyzeSource(R"(
+        class QCM1 { public: int32 v; int32 get() const { return this->v; } };
+        int32 main() { QCM1 c; c.v = 1; const QCM1* p = &c; return p->get(); }
+    )").errors.empty());
+}
+
+TEST(QualifierConstMethods, ConstObjectCannotCallNonConstMethod) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        class QCM2 { public: int32 v; void set(int32 x) { this->v = x; } };
+        int32 main() { QCM2 c; const QCM2* p = &c; p->set(1); return 0; }
+    )"), "const"));
+}
+
+TEST(QualifierConstMethods, ConstMethodCannotWriteField) {
+    EXPECT_TRUE(hasError(analyzeSource(R"(
+        class QCM3 { public: int32 v; void set() const { this->v = 1; } };
+        int32 main() { return 0; }
+    )"), "const"));
+}

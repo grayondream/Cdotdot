@@ -6185,11 +6185,22 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
         return analyzeStringMethod(node, objType);
     }
 
+    auto canonicalClass = [&](Type* type) -> ClassType* {
+        type = stripTypedef(type);
+        if (!type || type->kind != TypeKind::Class) return nullptr;
+        auto* candidate = static_cast<ClassType*>(type);
+        // A qualifier clone made at parse time may not yet carry the method
+        // table populated by sema; resolve by nominal name to the registered
+        // class while keeping the qualifier on the expression type.
+        if (auto* registered = typeCtx->getClass(candidate->name))
+            return registered;
+        return candidate;
+    };
     ClassType* classType = nullptr;
     if (objType->kind == TypeKind::Class) {
-        classType = static_cast<ClassType*>(objType);
-    } else if (objType->kind == TypeKind::Pointer && objType->base && objType->base->kind == TypeKind::Class) {
-        classType = static_cast<ClassType*>(objType->base);
+        classType = canonicalClass(objType);
+    } else if (objType->kind == TypeKind::Pointer && objType->base) {
+        classType = canonicalClass(objType->base);
     }
 
     std::vector<Type*> argTypes;
@@ -6329,6 +6340,25 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
     }
 
     auto* funcType = static_cast<FunctionType*>(method->type);
+    // A const object may call only const methods.  The object's qualifier is
+    // on the class itself (direct access) or on the pointee (pointer/arrow).
+    {
+        Type* objectType = stripTypedef(objType);
+        bool objectIsConst = objectType && objectType->isConst;
+        if (objectType && objectType->kind == TypeKind::Pointer) {
+            Type* pointee = stripTypedef(objectType->base);
+            objectIsConst = pointee && pointee->isConst;
+        }
+        if (objectIsConst && !funcType->isConstMethod) {
+            emitError("cannot call non-const method '" + node.methodName +
+                          "' on a const object",
+                      node);
+            node.type = nullptr;
+            node.isLValue = false;
+            delete method;
+            return;
+        }
+    }
     for (size_t i = 0; i < argTypes.size() && i + 1 < funcType->paramTypes.size(); ++i) {
         Type* at = stripTypedef(argTypes[i]);
         Type* pt = stripTypedef(funcType->paramTypes[i + 1]);
@@ -8770,15 +8800,44 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         for (auto& method : node.methods) {
             // AGG-10/DS1: static methods are not instance members — they
             // never enter the class method table, so instance calls reject.
-            if (method->isStatic) continue;
+            if (method->isStatic) {
+                if (method->isConstMethod) {
+                    emitError("const qualifier is not valid on a static method",
+                              *method);
+                }
+                continue;
+            }
+            FunctionType* existing = classType->getMethod(method->name);
+            if (existing) {
+                bool sameParams = existing->paramTypes.size() == method->params.size() + 1;
+                if (sameParams) {
+                    for (size_t i = 0; i < method->params.size(); ++i) {
+                        if (!typesIdentical(existing->paramTypes[i + 1],
+                                            method->params[i]->type)) {
+                            sameParams = false;
+                            break;
+                        }
+                    }
+                }
+                if (sameParams && existing->isConstMethod != method->isConstMethod) {
+                    emitError(DiagnosticCode::SemRedefinition,
+                              "redefinition of method '" + method->name +
+                                  "': const-qualified and non-const overloads are not supported",
+                              *method);
+                }
+            }
             // Only add if not already present
-            if (!classType->getMethod(method->name)) {
+            if (!existing) {
                 std::vector<Type*> paramTypes;
-                paramTypes.push_back(new Type(TypeKind::Pointer, classType));
+                Type* thisBase = method->isConstMethod
+                    ? qualifyTopLevel(classType, true, false)
+                    : classType;
+                paramTypes.push_back(new Type(TypeKind::Pointer, thisBase));
                 for (auto& param : method->params) {
                     paramTypes.push_back(param->type);
                 }
                 auto* methodType = new FunctionType(method->returnType, std::move(paramTypes));
+                methodType->isConstMethod = method->isConstMethod;
                 classType->addMethod(method->name, methodType);
             }
             if (lazyMethods) {
@@ -8855,7 +8914,10 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
                 visit(*method);
                 m_inStaticMethod = false;
             } else {
-                auto* thisType = new Type(TypeKind::Pointer, classType);
+                Type* thisBase = method->isConstMethod
+                    ? qualifyTopLevel(classType, true, false)
+                    : classType;
+                auto* thisType = new Type(TypeKind::Pointer, thisBase);
                 auto thisParam = std::make_unique<ParamDeclAST>("this", thisType);
                 // FUN-09: 登记方法默认参数计数（定义类沿继承链 = classType）。
                 {
@@ -9175,6 +9237,12 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     // Capture method-ness before the out-of-class static path clears
     // className/oocClass; Auto-return rejection must still see it.
     const bool isMethodDecl = currentClass != nullptr || !node.className.empty();
+    if (node.isConstMethod && !isMethodDecl) {
+        emitError("const qualifier is only valid on an instance method", node);
+    }
+    if (node.isConstMethod && node.isStatic) {
+        emitError("const qualifier is not valid on a static method", node);
+    }
     if (isReferenceType(node.returnType) &&
         !(isMethodDecl && methodLookupName == "operator[]")) {
         emitError("reference types are only supported as the return type of operator[]", node);
@@ -9247,6 +9315,7 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
             }
             bool sigOk = declared->returnType && node.returnType &&
                          typesEqual(declared->returnType, node.returnType) &&
+                         declared->isConstMethod == node.isConstMethod &&
                          declared->paramTypes.size() == node.params.size() + 1;
             if (sigOk) {
                 for (size_t i = 0; i < node.params.size(); ++i) {
@@ -9261,9 +9330,12 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                               node.name + "' does not match the declaration in the class", node);
                 return;
             }
+            Type* thisBase = node.isConstMethod
+                ? qualifyTopLevel(oocClass, true, false)
+                : oocClass;
             node.params.insert(node.params.begin(),
                 std::make_unique<ParamDeclAST>("this",
-                    new Type(TypeKind::Pointer, oocClass)));
+                    new Type(TypeKind::Pointer, thisBase)));
             currentClass = oocClass;
             // An out-of-class definition satisfies a deferred auto prototype.
             if (node.body) {
@@ -9503,6 +9575,7 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
         paramTypes.push_back(param->type);
     }
     auto* funcType = new FunctionType(node.returnType, std::move(paramTypes), node.isVarArg);
+    funcType->isConstMethod = node.isConstMethod;
     std::string signature = mangleFunction(node.name, funcType->paramTypes);
     m_allFunctions[node.name] = &node;
     m_allFunctions[signature] = &node;
@@ -10090,7 +10163,10 @@ void SemanticAnalyzer::visitLazyMethodsOf(const std::string& className) {
             visit(*method);
             m_inStaticMethod = false;
         } else {
-            auto thisType = new Type(TypeKind::Pointer, classType);
+            Type* thisBase = method->isConstMethod
+                ? qualifyTopLevel(classType, true, false)
+                : classType;
+            auto thisType = new Type(TypeKind::Pointer, thisBase);
             method->params.insert(method->params.begin(),
                                   std::make_unique<ParamDeclAST>("this", thisType));
             visit(*method);
