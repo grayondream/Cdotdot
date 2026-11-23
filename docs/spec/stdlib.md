@@ -298,7 +298,8 @@ JIT 经进程符号解析）+ `compile_time` 常量 + 位级浮点分类。
 | `bool isnan(float64)` / `bool isinf(float64)` / `bool is_finite(float64)` | IEEE754 位级分类（纯语言，不依赖 libc 分类宏） |
 
 **C 符号名说明**：namespace 内 extern C 函数保持 C 裸符号名（`std::sqrt` 链接
-到 libm 的 `sqrt`，非 `std_sqrt_float64`）——namespace 前缀仅作访问语法。
+到 libm 的 `sqrt`，不是内部修饰名 `std.sqrt_float64`）——namespace 前缀仅作
+访问语法。
 
 ## 14. 容器库 `std.vec` / `std.deque` / `std.hashmap` / `std.hashset`（STD-06~08）`[impl]`
 

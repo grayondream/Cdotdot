@@ -68,9 +68,9 @@ public:
         TypeContext::instance().removeInstanceTypes();
     }
 
-    // 命名空间限定名 -> TypeContext/Registry 使用的扁平键：
-    // `std::Box` / `std.Box` -> `std_Box`（与 Parser 的 m_typeNamespacePrefix
-    // 和 SemanticAnalyzer::mangleNamespaceName 保持一致）。
+    // 命名空间限定名 -> TypeContext/Registry 使用的限定键：
+    // `std::Box` / `std.Box` -> `std.Box`（与 Parser 的 m_typeNamespacePrefix
+    // 共用 Mangle::mangleQualifiedName）。
     static std::string canonicalName(const std::string& name);
 
     // 实例命名：`名 + 每个类型实参的 typeToMangled 拼写 + 非类型实参值`。

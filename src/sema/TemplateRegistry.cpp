@@ -24,8 +24,8 @@ void TemplateRegistry::registerTemplate(TemplateDeclAST* decl,
         }
     }
     m_templates[name] = decl;
-    // Namespaced templates are registered under the parser's flattened key
-    // (`std_Box`); also accept the source spelling as a defensive alias.
+    // Namespaced templates are registered under the parser's qualified key
+    // (`std.Box`); also accept the source spelling as a defensive alias.
     m_templates[canonicalName(name)] = decl;
 
     // 模板体 parse 走了普通声明路径，把类型名注册成了占位 StructType/
@@ -37,19 +37,7 @@ void TemplateRegistry::registerTemplate(TemplateDeclAST* decl,
 }
 
 std::string TemplateRegistry::canonicalName(const std::string& name) {
-    std::string out;
-    out.reserve(name.size());
-    for (size_t i = 0; i < name.size(); ++i) {
-        if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
-            out.push_back('_');
-            ++i;
-        } else if (name[i] == '.') {
-            out.push_back('_');
-        } else {
-            out.push_back(name[i]);
-        }
-    }
-    return out;
+    return mangleQualifiedName(name);
 }
 
 TemplateDeclAST* TemplateRegistry::find(const std::string& name) const {

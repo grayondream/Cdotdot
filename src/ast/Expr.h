@@ -516,7 +516,7 @@ public:
     // codegen mangles against the definition site. Mirror of CallExprAST.
     std::vector<Type*> resolvedParamTypes;
     // Namespace-qualified method definition name chosen by sema. The
-    // definition side applies the namespace prefix (`std_init`), while the
+    // definition side applies the namespace prefix (`std.init`), while the
     // call-site spelling is bare (`init`); codegen must reuse this name.
     std::string mangledCallee;
 

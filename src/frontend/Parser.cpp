@@ -87,23 +87,6 @@ bool isCompileTimeChainRoot(const ExprAST* expr) {
 }
 
 
-// Mangle a (possibly qualified) type name to a symbol-table key:
-// `A::B::T` / `A.B.T` -> `A_B_T`.
-std::string mangleQualifiedTypeName(const std::string& name) {    std::string out;
-    out.reserve(name.size());
-    for (size_t i = 0; i < name.size(); ++i) {
-        if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
-            out.push_back('_');
-            ++i;
-        } else if (name[i] == '.') {
-            out.push_back('_');
-        } else {
-            out.push_back(name[i]);
-        }
-    }
-    return out;
-}
-
 int hexDigit(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -2485,7 +2468,7 @@ std::string Parser::qualifyTypeDeclName(const std::string& name) const {
     // `S___anon_0` 使 isAnonymousAggregate 的 `__anon_` 前缀判定失配。
     if (name.rfind("__anon_", 0) == 0) return name;
     if (name.find("::") != std::string::npos || name.find('.') != std::string::npos) {
-        return mangleQualifiedTypeName(name);
+        return mangleQualifiedName(name);
     }
     if (!m_typeNamespacePrefix.empty()) {
         return m_typeNamespacePrefix + name;
@@ -2513,7 +2496,7 @@ Type* Parser::lookupNamedType(const std::string& name) const {
         return nullptr;
     };
     if (name.find("::") != std::string::npos || name.find('.') != std::string::npos) {
-        return tryKey(mangleQualifiedTypeName(name));
+        return tryKey(mangleQualifiedName(name));
     }
     // PAR-24: block-scoped aliases shadow unqualified outer names.
     if (Type* t = visible(tc.getLocalTypedef(name))) return t;
@@ -2529,7 +2512,7 @@ bool Parser::isKnownTypeName(const std::string& name) const {
     auto& tc = TypeContext::instance();
     if (name.find("::") != std::string::npos ||
         name.find('.') != std::string::npos) {
-        return getTypeByExactName(mangleQualifiedTypeName(name)) != nullptr;
+        return getTypeByExactName(mangleQualifiedName(name)) != nullptr;
     }
     if (tc.getLocalTypedef(name)) return true;
     if (!m_typeNamespacePrefix.empty() &&
@@ -5366,7 +5349,7 @@ std::unique_ptr<StructDeclAST> Parser::parseRecordDecl(bool isClass) {
     // AGG-11: extend the type-name prefix with this class's bare name while
     // parsing the body (same mechanism as namespaces).
     std::string savedPrefix = m_typeNamespacePrefix;
-    m_typeNamespacePrefix += mangleQualifiedTypeName(bareName) + "_";
+    m_typeNamespacePrefix += mangleQualifiedName(bareName) + ".";
 
     std::vector<FieldInfo> fields;
     std::vector<std::unique_ptr<FunctionDeclAST>> methods;
@@ -5956,7 +5939,7 @@ std::unique_ptr<UnionDeclAST> Parser::parseUnionDecl() {
     // AGG-11: extend the type-name prefix with this union's bare name while
     // parsing the body (same mechanism as namespaces).
     std::string savedPrefix = m_typeNamespacePrefix;
-    m_typeNamespacePrefix += mangleQualifiedTypeName(bareName) + "_";
+    m_typeNamespacePrefix += mangleQualifiedName(bareName) + ".";
 
     std::vector<FieldInfo> members;
     // AGG-11: nested type declarations, in source order.
@@ -6243,7 +6226,7 @@ std::unique_ptr<DeclAST> Parser::parseNamespaceDeclImpl() {
     // Qualify type declarations/references inside this namespace body.
     std::string savedPrefix = m_typeNamespacePrefix;
     if (!name.empty()) {
-        m_typeNamespacePrefix += mangleQualifiedTypeName(name) + "_";
+        m_typeNamespacePrefix += mangleQualifiedName(name) + ".";
     }
 
     std::vector<std::unique_ptr<DeclAST>> decls;

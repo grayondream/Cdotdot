@@ -86,35 +86,47 @@
 
 当前规则（`src/ast/Mangle.cpp`）：
 
-1. 经 `extern` 声明的符号标记为 C 名，**不修饰**（`isCName`）→ 直接 C ABI 链接。
-2. 无参数函数名保持原名（`paramTypes.empty()` 时返回 `name`）。
-3. 其余函数：`name + "_" + typeToMangled(param)...`，例如 `max_int_int`。
+1. 经 `extern` 声明的符号标记为 C 名，**不修饰**（`isCName`）→ 直接 C ABI 链接；
+   `main` 同样保持裸 `main`。
+2. 限定名（namespace/class/module）用 `.` 连接：`ns::f` / `ns.f` → `ns.f`。
+   `.` 不属于源标识符，因此不会与源程序中的 `ns_f` 冲突。
+3. 普通函数：函数名中的 `_` 双写，随后每个参数前加单个 `_` 和参数类型编码。
+   例如 `f(int32)` → `f_int32`，零参数函数 `f_int32()` → `f__int32`。
+   参数编码是自定界的，函数名转义后单个 `_` 不会与类型名中的 `_` 混淆。
 4. **static 成员（AGG-10，2026-10-05）**：类内 `static` 成员去糖为全局符号——
-   `Class::member` → `Class_member`（`mangleNamespaceName` 变换，与 namespace
-   限定名共用编码）；随后按普通函数/全局变量规则叠加参数编码。static 成员
-   函数无 `this` 位。类在 namespace 内时，符号为
-   `<ns前缀>_<类名>_<成员>_<参数编码>`（由 sema `scopedName` 统一附加），
-   与访问侧全限定拼写 `ns::Class::member` 的拍平结果严格一致。
+   `Class::member` → `Class.member`（与 namespace 限定名共用
+   `mangleQualifiedName`）；随后按普通函数/全局变量规则叠加参数编码。static
+   成员函数无 `this` 位。类在 namespace 内时，符号为
+   `<ns前缀>.<类名>.<成员>_<参数编码>`（由 sema `scopedName` 统一附加），
+   与访问侧全限定拼写 `ns::Class::member` 的编码结果严格一致。
 5. **嵌套类型（AGG-11，2026-10-05）**：类/struct/union 体内声明的类型按
-   `Outer::Inner` → `Outer_Inner` 扁平键注册（`mangleQualifiedTypeName` 变换，
-   与 namespace 限定类型共用编码；namespace 组合 `ns::Outer::Inner` →
-   `ns_Outer_Inner`）。嵌套类型的 static 成员/方法沿第 4 条规则以扁平类名
-   为类路径（`ns::Outer::Inner::v` → `ns_Outer_Inner_v`）；类嵌套枚举常量
-   注册于外层类作用域（`Outer::Red` → `Outer_Red`，不注册裸键）。
+   `Outer::Inner` → `Outer.Inner` 限定键注册（与 namespace 限定类型共用
+   `mangleQualifiedName`；namespace 组合 `ns::Outer::Inner` → `ns.Outer.Inner`）。
+   嵌套类型的 static 成员/方法沿第 4 条规则以限定类名为路径
+   （`ns::Outer::Inner::v` → `ns.Outer.Inner.v`）；类嵌套枚举常量注册于外层
+   类作用域（`Outer::Red` → `Outer.Red`，不注册裸键）。
 
-`typeToMangled` 规则：
+`typeToMangled` 规则（标量名保持可读；所有变长名字用 `<长度>:<内容>` 自定界）：
 
 | 类型 | 编码 | 类型 | 编码 |
 |---|---|---|---|
 | `void/int32/float32/float64/char/bool` | `void/int32/float32/float64/char/bool` | `T*` | `<T>ptr` |
 | `int8..int128` | 同名 | `uint8..uint128` | 同名 |
-| `isize/usize` | 同名 | `float32/float64` | 同名 |
-| `A[N]` | `<A>arr` | `T[]` | `<T>slice` |
-| `T?` | `<T>opt` | `result<T,E>` | `<T>res<E>` |
-| struct/class/union | 类型名 | enum | `int32` |
-| using 别名 | 展开到底层 | | |
+| `isize/usize` | 同名 | `T&` | `<T>ref` |
+| `A[N]` | `<A>arrs<N>`（含 `sizeParam` 时另加 `p<长度>:<参数名>`） | `T[]` | `<T>slice` |
+| `T?` | `<T>opt` | `result<T,E>` | `<T>res<长度>:<E>` |
+| struct/class/union | `N<长度>:<类型名>` | 命名 enum | `N<长度>:<枚举名>`；匿名 enum → `int32` |
+| using 别名 | 展开到底层 | TypeVar | `X<长度>:<参数名>` |
+| TypeInstance | `I<长度>:<模板名><类型实参个数>:...<值实参个数>:...<值参数名个数>:...` | 函数类型 | `<返回>fn<参数个数>:<参数...><v|n>` |
 
-**目标（MOD-15）**：需补充 namespace（部分已落地：`scopedName` 前缀 + `mangleNamespaceName` 拍平）、模板单态化符号的规范编码，并保证与 C ABI / FFI 的边界清晰（MEM-12/ACC-05）。static 成员编码已完成（§4 第 4 条）。命名必须稳定、可复现（INF-07）。
+限定符在每一层参与编码：普通类型用前缀 `C`/`V`/`atomic`，指针对象自身的
+`const`/`volatile` 用 `ptr`/`ref` 后的 `C`/`V` 后缀；`restrict` 不参与编码。
+所有复合编码都可以作为另一个编码的组成部分而保持单射，例如
+`Box<A*>` 与 `Box<A>*`、`result<A,B>*` 与 `result<A,B*>`、`A[N]` 与 `A[M]`
+均生成不同符号。
+
+**目标（MOD-15）**：名称必须稳定、可复现（INF-07），并与 C ABI / FFI 边界
+清晰（MEM-12/ACC-05）。当前内部符号已采用上述单射编码；C 名保持裸名。
 
 ## 5. 端序与对齐
 

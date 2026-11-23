@@ -1365,10 +1365,10 @@ TEST(SliceSemTest, SMStaticNotInLayout) {
         "int32 main() { return (sizeof(SML) == sizeof(int32) && SML::big == 0) ? 0 : 1; }"));
 }
 
-TEST(SliceSemTest, SMStaticCollisionRejected) {
-    // Review Focus 5: hand-written SMC_v collides with the desugared
-    // SMC::v — a redefinition error, never silent shadowing.
-    EXPECT_FALSE(analyzeOk(
+TEST(SliceSemTest, SMStaticDoesNotFalseCollideWithFlatGlobal) {
+    // Qualified `SMC::v` is encoded as `SMC.v`; the flat global `SMC_v` is a
+    // distinct symbol and must remain legal.
+    EXPECT_TRUE(analyzeOk(
         "class SMC { public: static int32 v = 0; }; "
         "int32 SMC_v = 1; int32 main() { return 0; }"));
 }
@@ -1579,10 +1579,18 @@ TEST(SliceSemTest, NTUnionNestedStatic) {
 }
 
 TEST(SliceSemTest, NTUnionNestedNsStatic) {
-    // C1 的 ns 形态：ns_U_I_v 而非 ns_ns_U_I_v。
+    // C1 的 ns 形态：ns.U.I.v，而非重复 namespace 前缀。
     EXPECT_TRUE(analyzeOk(
         "namespace ntns2 { union NTUN2 { struct I { static int32 v = 3; }; }; } "
         "int32 main() { return ntns2::NTUN2::I::v; }"));
+}
+
+TEST(SliceSemTest, NestedNamespaceLookupFallsBackToOuter) {
+    // Unqualified lookup inside A.B must try A.B.name, then A.name, then name.
+    EXPECT_TRUE(analyzeOk(
+        "namespace A { int32 g() { return 3; } "
+        "namespace B { int32 f() { return g(); } } } "
+        "int32 main() { return A::B::f() - 3; }"));
 }
 
 TEST(SliceSemTest, NTClassFwdInClass) {

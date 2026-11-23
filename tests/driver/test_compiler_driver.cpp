@@ -656,8 +656,8 @@ int32 main() {
     testing::internal::CaptureStdout();
     EXPECT_EQ(driver.run(), 0);
     const std::string ir = testing::internal::GetCapturedStdout();
-    EXPECT_NE(ir.find("push_back_std_Deque"), std::string::npos);
-    EXPECT_NE(ir.find("put_raw_std_HashMap"), std::string::npos);
+    EXPECT_NE(ir.find("push__back_"), std::string::npos);
+    EXPECT_NE(ir.find("put__raw_"), std::string::npos);
     EXPECT_EQ(ir.find("urem"), std::string::npos);
     EXPECT_EQ(ir.find("srem"), std::string::npos);
     std::filesystem::remove(p);

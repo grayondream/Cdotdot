@@ -106,6 +106,73 @@ TEST_F(TypeNodeTest, ManglesStringViewAndOwningString) {
     EXPECT_EQ(typeToMangled(ptr), "strptr");
 }
 
+TEST_F(TypeNodeTest, QualifiedNameSeparatorIsNotAnIdentifierCharacter) {
+    EXPECT_EQ(mangleQualifiedName("std::Vec"), "std.Vec");
+    EXPECT_EQ(mangleQualifiedName("std.Vec"), "std.Vec");
+    EXPECT_NE(mangleQualifiedName("ns::f"), mangleQualifiedName("ns_f"));
+}
+
+TEST_F(TypeNodeTest, MangledTypeEncodingIsInjectiveForKnownCollisions) {
+    Type* int32Ptr = new Type(TypeKind::Pointer, typeCtx->getInt32());
+    StructType int32ptrRecord("int32ptr");
+    EXPECT_NE(typeToMangled(int32Ptr), typeToMangled(&int32ptrRecord));
+
+    ArrayType two(typeCtx->getInt32(), 2);
+    ArrayType three(typeCtx->getInt32(), 3);
+    EXPECT_NE(typeToMangled(&two), typeToMangled(&three));
+
+    delete int32Ptr;
+}
+
+TEST_F(TypeNodeTest, MangledTypeEncodingSeparatesCompositeBoundaries) {
+    StructType A("A");
+    Type* ptrA = new Type(TypeKind::Pointer, &A);
+    ArrayType arrA(&A, 2);
+
+    TypeInstanceType box("Box");
+    box.typeArgs.push_back(&A);
+    TypeInstanceType boxPtr("Box");
+    boxPtr.typeArgs.push_back(ptrA);
+    Type* ptrBox = new Type(TypeKind::Pointer, &box);
+    EXPECT_NE(typeToMangled(&boxPtr), typeToMangled(ptrBox));
+
+    TypeInstanceType boxArr("Box");
+    boxArr.typeArgs.push_back(&arrA);
+    ArrayType arrBox(&box, 2);
+    EXPECT_NE(typeToMangled(&boxArr), typeToMangled(&arrBox));
+
+    StructType B("B");
+    Type* ptrB = new Type(TypeKind::Pointer, &B);
+    ResultType resultAB(&A, &B);
+    Type* ptrResult = new Type(TypeKind::Pointer, &resultAB);
+    ResultType resultABPtr(&A, ptrB);
+    EXPECT_NE(typeToMangled(ptrResult), typeToMangled(&resultABPtr));
+
+    delete ptrA;
+    delete ptrB;
+    delete ptrBox;
+    delete ptrResult;
+}
+
+TEST_F(TypeNodeTest, MangledFunctionNamesAreInjectiveForKnownCollisions) {
+    Type* int32Ptr = new Type(TypeKind::Pointer, typeCtx->getInt32());
+    StructType int32ptrRecord("int32ptr");
+    StructType A("A");
+    StructType B("B");
+
+    // A one-parameter overload must not collide with a flat function name
+    // that already looks like a mangled spelling.
+    EXPECT_NE(mangleFunction("f", {int32Ptr}),
+              mangleFunction("f_int32ptr", {}));
+    EXPECT_NE(mangleFunction("f", {typeCtx->getInt32()}),
+              mangleFunction("f_int32", {}));
+    // `A_B` in a parameter list is two parameters, not one type name.
+    EXPECT_NE(mangleFunction("f", {&A, &B}),
+              mangleFunction("f_A", {&B}));
+
+    delete int32Ptr;
+}
+
 TEST_F(TypeNodeTest, PointerType) {
     auto ptrType = new Type(TypeKind::Pointer, typeCtx->getInt32());
 

@@ -1916,7 +1916,7 @@ TEST_F(ParserDeclTest, ClassMemberUsingAlias) {
     ASSERT_EQ(cls->nestedTypes.size(), 1u);
     auto* u = dynamic_cast<UsingDeclAST*>(cls->nestedTypes[0].get());
     ASSERT_NE(u, nullptr);
-    EXPECT_EQ(u->name, "C_T");
+    EXPECT_EQ(u->name, "C.T");
     EXPECT_EQ(u->bareName, "T");
     EXPECT_FALSE(u->isBlockScope);
 }

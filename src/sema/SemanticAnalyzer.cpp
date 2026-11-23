@@ -328,29 +328,13 @@ Symbol* SemanticAnalyzer::lookup(const std::string& name) {
 
 // Namespace helpers ---------------------------------------------------------
 
-std::string SemanticAnalyzer::mangleNamespaceName(const std::string& name) {
-    std::string out;
-    out.reserve(name.size());
-    for (size_t i = 0; i < name.size(); ++i) {
-        if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
-            out.push_back('_');
-            ++i;
-        } else if (name[i] == '.') {
-            out.push_back('_');
-        } else {
-            out.push_back(name[i]);
-        }
-    }
-    return out;
-}
-
 // AGG-10/DS5: qualified access to a class static member goes through the
 // desugared global symbol; check the declaring class's access level here so
 // private static members stay unreachable from outside (E2009, as instance
 // members). `originalName` is the pre-resolution spelling, e.g. `SMP::secret`.
 void SemanticAnalyzer::checkStaticMemberAccess(const std::string& originalName, ExprAST& node) {
     if (originalName.find("::") == std::string::npos) return;
-    auto it = staticMemberIndex.find(mangleNamespaceName(originalName));
+    auto it = staticMemberIndex.find(mangleQualifiedName(originalName));
     if (it == staticMemberIndex.end()) return;
     ClassType* definingClass = it->second.first;
     if (!definingClass) return;
@@ -371,7 +355,7 @@ void SemanticAnalyzer::checkStaticMemberAccess(const std::string& originalName, 
 std::vector<std::string> SemanticAnalyzer::namespaceCandidates(const std::string& name) const {
     std::vector<std::string> candidates;
     if (name.find("::") != std::string::npos || name.find('.') != std::string::npos) {
-        candidates.push_back(mangleNamespaceName(name));
+        candidates.push_back(mangleQualifiedName(name));
         // C-linkage extern functions keep their plain symbol name even when
         // spelled `ns::f`; allow a fallback to the bare C name so `std::sqrt`
         // resolves to the extern `sqrt` (registered under the bare key).
@@ -384,11 +368,11 @@ std::vector<std::string> SemanticAnalyzer::namespaceCandidates(const std::string
         if (isNamespaceCName(bare)) candidates.push_back(bare);
         return candidates;
     }
-    std::string prefix = namespacePrefix; // e.g. "A_B_"
+    std::string prefix = namespacePrefix; // e.g. "A.B."
     while (!prefix.empty()) {
         candidates.push_back(prefix + name);
-        if (prefix.back() == '_') prefix.pop_back();
-        size_t pos = prefix.rfind('_');
+        if (prefix.back() == '.') prefix.pop_back();
+        size_t pos = prefix.rfind('.');
         prefix = (pos == std::string::npos) ? std::string() : prefix.substr(0, pos + 1);
     }
     candidates.push_back(name);
@@ -6883,7 +6867,7 @@ void SemanticAnalyzer::visit(MethodCallExprAST& node) {
     // Store the declared parameter types (incl. this) so codegen mangles
     // against the definition site — required for decayed arguments.
     node.resolvedParamTypes = funcType->paramTypes;
-    // Namespace members are emitted under a mangled key (`std_init`), but the
+    // Namespace members are emitted under a mangled key (`std.init`), but the
     // call spelling is bare (`init`). Reuse the definition-side name.
     if (definingClass) {
         auto dit = m_methodDecls.find(definingClass->name + "::" + node.methodName);
@@ -8548,7 +8532,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
     // AGG-10: out-of-class static data definition. Attach its initializer to
     // the in-class static member and do not declare/emit a second global.
     if (node.isOutOfClassStatic) {
-        std::string key = scopedName(mangleNamespaceName(
+        std::string key = scopedName(mangleQualifiedName(
             node.staticClass + "::" + node.staticMember));
         auto it = staticDataDecls.find(key);
         if (it == staticDataDecls.end()) {
@@ -9634,8 +9618,8 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         // classPathPrefix is extended with THIS class's bare name while its
         // nested types are visited (their members resolve against it).
         std::string savedPath = classPathPrefix;
-        classPathPrefix += mangleNamespaceName(
-            node.bareName.empty() ? node.name : node.bareName) + "_";
+        classPathPrefix += mangleQualifiedName(
+            node.bareName.empty() ? node.name : node.bareName) + ".";
         visitNestedTypeDecls(node.nestedTypes, classType);
         classPathPrefix = savedPath;
 
@@ -9648,7 +9632,7 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
             std::string origName = vd->name;
             std::string clsPath = classPathPrefix +
                 (node.bareName.empty() ? node.name : node.bareName);
-            vd->name = mangleNamespaceName(clsPath + "::" + origName);
+            vd->name = mangleQualifiedName(clsPath + "::" + origName);
             staticMemberIndex[scopedName(vd->name)] = {classType, origName};
             staticDataDecls[scopedName(vd->name)] = vd.get();
             ClassType* savedClass = currentClass;
@@ -9668,7 +9652,7 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
             std::string origName = method->name;
             std::string clsPath = classPathPrefix +
                 (node.bareName.empty() ? node.name : node.bareName);
-            method->name = mangleNamespaceName(clsPath + "::" + origName);
+            method->name = mangleQualifiedName(clsPath + "::" + origName);
             staticMemberIndex[scopedName(method->name)] = {classType, origName};
             std::vector<Type*> pts;
             for (auto& param : method->params) pts.push_back(param->type);
@@ -9770,8 +9754,8 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         typeCtx->addStruct(node.name, structType);
         // AGG-11/DS4: nested types first (structs' nested types are public).
         std::string savedPath = classPathPrefix;
-        classPathPrefix += mangleNamespaceName(
-            node.bareName.empty() ? node.name : node.bareName) + "_";
+        classPathPrefix += mangleQualifiedName(
+            node.bareName.empty() ? node.name : node.bareName) + ".";
         visitNestedTypeDecls(node.nestedTypes, nullptr);
         classPathPrefix = savedPath;
         // AGG-10: struct static data members — same desugar; no access-level
@@ -9781,7 +9765,7 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
             std::string origName = vd->name;
             std::string clsPath = classPathPrefix +
                 (node.bareName.empty() ? node.name : node.bareName);
-            vd->name = mangleNamespaceName(clsPath + "::" + origName);
+            vd->name = mangleQualifiedName(clsPath + "::" + origName);
             staticDataDecls[scopedName(vd->name)] = vd.get();
             visit(*vd);
         }
@@ -9879,8 +9863,8 @@ void SemanticAnalyzer::visit(UnionDeclAST& node) {
     }
     // AGG-11/DS4: nested types first (unions' nested types are public).
     std::string savedPath = classPathPrefix;
-    classPathPrefix += mangleNamespaceName(
-        node.bareName.empty() ? node.name : node.bareName) + "_";
+    classPathPrefix += mangleQualifiedName(
+        node.bareName.empty() ? node.name : node.bareName) + ".";
     visitNestedTypeDecls(node.nestedTypes, nullptr);
     classPathPrefix = savedPath;
 }
@@ -9924,7 +9908,7 @@ void SemanticAnalyzer::visit(EnumDeclAST& node) {
         // bare key is NOT registered, so `Red` stays unusable outside.
         std::string key = classPathPrefix.empty()
             ? scopedName(val.first)
-            : scopedName(mangleNamespaceName(classPathPrefix + val.first));
+            : scopedName(mangleQualifiedName(classPathPrefix + val.first));
         enumConstants[key] = {enumType, val.second};
     }
 }
@@ -10709,9 +10693,9 @@ void SemanticAnalyzer::visit(NamespaceDeclAST& node) {
     if (node.isExported) {
         namespaceExported = true;
     }
-    std::string segment = mangleNamespaceName(node.name);
+    std::string segment = mangleQualifiedName(node.name);
     if (!segment.empty()) {
-        namespacePrefix += segment + "_";
+        namespacePrefix += segment + ".";
     }
     for (auto& decl : node.declarations) {
         if (decl) {

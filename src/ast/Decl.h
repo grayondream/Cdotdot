@@ -224,7 +224,7 @@ public:
     // — sema uses it to keep ClassType::isComplete accurate.
     bool isForwardDecl = false;
     // AGG-11: nested type declarations (enum/struct/class/union), in source
-    // order. Registered under flat keys (`Outer_Inner`) at parse time.
+    // order. Registered under qualified keys (`Outer.Inner`) at parse time.
     std::vector<std::unique_ptr<DeclAST>> nestedTypes;
     bool isClassDecl = false;
     // PAR-12: 内联变量声明 `class { ... } c;` / `struct S { ... } s;` ——

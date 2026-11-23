@@ -73,14 +73,14 @@ TEST(CtValueTest, ContainerInfoDetectsStdContainers) {
     auto* ptrStr = new Type(TypeKind::Pointer, str);
     auto* u8Ptr = new Type(TypeKind::Pointer, tc.getUInt8());
 
-    auto* vec = makeContainerType("std_Vec$int32",
+    auto* vec = makeContainerType("std.Vec$int32",
                                   {{"data", ptrI32}, {"len", usize}, {"cap", usize}});
     auto vi = ctContainerInfo(vec);
     ASSERT_TRUE(vi);
     EXPECT_EQ(vi->kind, CtContainer::Vec);
     EXPECT_EQ(vi->elementType, i32);
 
-    auto* deque = makeContainerType("std_Deque$int64",
+    auto* deque = makeContainerType("std.Deque$int64",
                                     {{"data", ptrI64}, {"cap", usize},
                                      {"head", usize}, {"len", usize}});
     auto di = ctContainerInfo(deque);
@@ -88,7 +88,7 @@ TEST(CtValueTest, ContainerInfoDetectsStdContainers) {
     EXPECT_EQ(di->kind, CtContainer::Deque);
     EXPECT_EQ(di->elementType, i64);
 
-    auto* map = makeContainerType("std_HashMap$uint32$int32",
+    auto* map = makeContainerType("std.HashMap$uint32$int32",
                                   {{"keys", ptrU32}, {"values", ptrI32},
                                    {"states", u8Ptr}, {"cap", usize}, {"len", usize},
                                    {"tombstones", usize}, {"hash_fn", nullptr},
@@ -99,7 +99,7 @@ TEST(CtValueTest, ContainerInfoDetectsStdContainers) {
     EXPECT_EQ(mi->keyType, u32);
     EXPECT_EQ(mi->valueType, i32);
 
-    auto* set = makeContainerType("std_HashSet$str",
+    auto* set = makeContainerType("std.HashSet$str",
                                   {{"keys", ptrStr}, {"states", u8Ptr},
                                    {"cap", usize}, {"len", usize},
                                    {"tombstones", usize}, {"hash_fn", nullptr},

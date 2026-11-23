@@ -34,6 +34,24 @@ bool isNamespaceCName(const std::string& name) {
     return namespaceCNames().count(name) != 0;
 }
 
+std::string mangleQualifiedName(const std::string& name) {
+    // `.` is not a source-identifier character, so it separates qualification
+    // components without colliding with names that contain `_`.
+    std::string out;
+    out.reserve(name.size());
+    for (size_t i = 0; i < name.size(); ++i) {
+        if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
+            out.push_back('.');
+            ++i;
+        } else if (name[i] == '.') {
+            out.push_back('.');
+        } else {
+            out.push_back(name[i]);
+        }
+    }
+    return out;
+}
+
 namespace { std::string signatureTypeToMangled(const Type* type); }
 
 std::string typeToMangled(Type* type) {
@@ -54,6 +72,28 @@ std::string qualifierPrefix(const Type* type) {
     return result;
 }
 
+// Variable-length names are length-prefixed so a name like `int32ptr` cannot
+// be confused with the encoding of `int32*`.  The payload may contain any
+// character (including `_`, `.`, `$`, and `:`); the decimal length tells the
+// decoder exactly where it ends.
+std::string lengthPrefixedName(const std::string& name) {
+    return std::to_string(name.size()) + ":" + name;
+}
+
+// `mangleFunction` uses a single `_` between the function name and each
+// parameter.  Doubling underscores inside the name makes that separator
+// unambiguous: a zero-parameter function literally named `f_int32` and a
+// one-parameter function `f(int32)` can no longer both become `f_int32`.
+std::string escapeMangledName(const std::string& name) {
+    std::string out;
+    out.reserve(name.size() * 2);
+    for (char c : name) {
+        out.push_back(c);
+        if (c == '_') out.push_back('_');
+    }
+    return out;
+}
+
 // Signature mangling preserves cv-qualifiers at every level and distinguishes
 // references from pointers.  restrict is intentionally absent.
 std::string signatureTypeToMangled(const Type* type) {
@@ -66,21 +106,29 @@ std::string signatureTypeToMangled(const Type* type) {
             if (type->isVolatile) result += "V";
             return result;
         }
-        case TypeKind::Array:
-            return signatureTypeToMangled(
-                       static_cast<const ArrayType*>(type)->elementType) + "arr";
+        case TypeKind::Array: {
+            const auto* arr = static_cast<const ArrayType*>(type);
+            std::string result =
+                signatureTypeToMangled(arr->elementType) + "arr";
+            if (!arr->sizeParam.empty())
+                result += "p" + lengthPrefixedName(arr->sizeParam);
+            result += "s" + std::to_string(arr->size);
+            return result;
+        }
         case TypeKind::Struct:
-            return qualifierPrefix(type) +
-                   static_cast<const StructType*>(type)->name;
+            return qualifierPrefix(type) + "N" +
+                   lengthPrefixedName(static_cast<const StructType*>(type)->name);
         case TypeKind::Class:
-            return qualifierPrefix(type) +
-                   static_cast<const ClassType*>(type)->name;
+            return qualifierPrefix(type) + "N" +
+                   lengthPrefixedName(static_cast<const ClassType*>(type)->name);
         case TypeKind::Union:
-            return qualifierPrefix(type) +
-                   static_cast<const UnionType*>(type)->name;
+            return qualifierPrefix(type) + "N" +
+                   lengthPrefixedName(static_cast<const UnionType*>(type)->name);
         case TypeKind::Enum: {
             const auto* e = static_cast<const EnumType*>(type);
-            return qualifierPrefix(type) + (e->name.empty() ? "int32" : e->name);
+            return qualifierPrefix(type) +
+                   (e->name.empty() ? "int32"
+                                    : "N" + lengthPrefixedName(e->name));
         }
         case TypeKind::Void: return qualifierPrefix(type) + "void";
         case TypeKind::Nullptr: return qualifierPrefix(type) + "nullptr";
@@ -116,23 +164,32 @@ std::string signatureTypeToMangled(const Type* type) {
                    "opt";
         case TypeKind::Result: {
             const auto* r = static_cast<const ResultType*>(type);
+            // The error payload is length-prefixed so an outer constructor
+            // (e.g. `result<A,B>*`) cannot look like `result<A,B*>`.
             return qualifierPrefix(type) + signatureTypeToMangled(r->successType) +
-                   "res" + signatureTypeToMangled(r->errorType);
+                   "res" +
+                   lengthPrefixedName(signatureTypeToMangled(r->errorType));
         }
         case TypeKind::Typedef:
             return qualifierPrefix(type) +
                    signatureTypeToMangled(
                        static_cast<const TypedefType*>(type)->aliasedType);
         case TypeKind::TypeVar:
-            return qualifierPrefix(type) +
-                   static_cast<const TypeVarType*>(type)->name;
+            return qualifierPrefix(type) + "X" +
+                   lengthPrefixedName(static_cast<const TypeVarType*>(type)->name);
         case TypeKind::TypeInstance: {
             const auto* ti = static_cast<const TypeInstanceType*>(type);
-            std::string result = qualifierPrefix(type) + ti->templateName;
+            std::string result =
+                qualifierPrefix(type) + "I" + lengthPrefixedName(ti->templateName);
+            result += std::to_string(ti->typeArgs.size()) + ":";
             for (const auto* arg : ti->typeArgs)
-                result += "$" + signatureTypeToMangled(arg);
+                result += signatureTypeToMangled(arg);
+            result += std::to_string(ti->valueArgs.size()) + ":";
             for (long long value : ti->valueArgs)
-                result += "$" + std::to_string(value);
+                result += "v" + lengthPrefixedName(std::to_string(value));
+            result += std::to_string(ti->valueArgNames.size()) + ":";
+            for (const auto& argName : ti->valueArgNames)
+                result += lengthPrefixedName(argName);
             return result;
         }
         case TypeKind::Function: {
@@ -140,11 +197,11 @@ std::string signatureTypeToMangled(const Type* type) {
             std::string result = qualifierPrefix(type) +
                                  signatureTypeToMangled(
                                      adjustParameterTypeForSignature(fn->returnType)) +
-                                 "fn";
+                                 "fn" + std::to_string(fn->paramTypes.size()) + ":";
             for (const auto* param : fn->paramTypes)
-                result += "_" + signatureTypeToMangled(
-                                     adjustParameterTypeForSignature(param));
-            if (fn->isVarArg) result += "_vararg";
+                result += signatureTypeToMangled(
+                    adjustParameterTypeForSignature(param));
+            result += fn->isVarArg ? "v" : "n";
             return result;
         }
         default:
@@ -164,8 +221,7 @@ std::string mangleFunction(const std::string& name, const std::vector<Type*>& pa
     // `main_int32_charptrptr` and the linker could not find an entry point.
     if (name == "main") return "main";
     if (isCName(name)) return name;
-    if (paramTypes.empty()) return name;
-    std::string result = name;
+    std::string result = escapeMangledName(name);
     for (auto* type : paramTypes) {
         result += "_" + typeToMangledSignature(type);
     }

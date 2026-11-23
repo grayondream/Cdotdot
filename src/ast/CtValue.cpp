@@ -613,23 +613,23 @@ std::optional<CtContainerInfo> ctContainerInfo(Type* t) {
     };
 
     CtContainerInfo info;
-    if (name.rfind("std_Vec$", 0) == 0) {
+    if (name.rfind("std.Vec$", 0) == 0) {
         info.kind = CtContainer::Vec;
         info.elementType = pointee(fieldType("data"));
         return info;
     }
-    if (name.rfind("std_Deque$", 0) == 0) {
+    if (name.rfind("std.Deque$", 0) == 0) {
         info.kind = CtContainer::Deque;
         info.elementType = pointee(fieldType("data"));
         return info;
     }
-    if (name.rfind("std_HashMap$", 0) == 0) {
+    if (name.rfind("std.HashMap$", 0) == 0) {
         info.kind = CtContainer::HashMap;
         info.keyType = pointee(fieldType("keys"));
         info.valueType = pointee(fieldType("values"));
         return info;
     }
-    if (name.rfind("std_HashSet$", 0) == 0) {
+    if (name.rfind("std.HashSet$", 0) == 0) {
         info.kind = CtContainer::HashSet;
         info.keyType = pointee(fieldType("keys"));
         return info;

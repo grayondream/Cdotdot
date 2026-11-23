@@ -127,3 +127,48 @@ TEST_F(OverloadingE2E, ComparisonResultPrefersInt32Overload) {
         int32 main() { return pick(1 == 1) - 2; }
     )", "cmp_bool_overload.cdd"), 0);
 }
+
+TEST_F(OverloadingE2E, NamespaceQualifiedNameDoesNotCollideWithFlatName) {
+    EXPECT_EQ(runSource(R"(
+        namespace ns {
+        int32 f(int32 x) { return x + 1; }
+        }
+        int32 ns_f(int32 x) { return x + 100; }
+        int32 main() { return ns::f(0) + ns_f(0) - 101; }
+    )", "mangle_namespace_flat.cdd"), 0);
+}
+
+TEST_F(OverloadingE2E, PointerTypeNameDoesNotCollideWithNominalType) {
+    EXPECT_EQ(runSource(R"(
+        struct int32ptr { int32 x; };
+        int32 f(int32* p) { return 1; }
+        int32 f(int32ptr v) { return 2; }
+        int32 main() {
+            int32 x = 0;
+            int32ptr v = {0};
+            return f(&x) + f(v) - 3;
+        }
+    )", "mangle_nominal_pointer.cdd"), 0);
+}
+
+TEST_F(OverloadingE2E, FlatFunctionNameDoesNotCollideWithMangledOverload) {
+    EXPECT_EQ(runSource(R"(
+        int32 f(int32 x) { return x + 1; }
+        int32 f_int32() { return 100; }
+        int32 main() { return f(1) + f_int32() - 102; }
+    )", "mangle_flat_function.cdd"), 0);
+}
+
+TEST_F(OverloadingE2E, UnderscoreParameterSeparatorDoesNotCreateAmbiguity) {
+    EXPECT_EQ(runSource(R"(
+        struct A { int32 x; };
+        struct B { int32 y; };
+        int32 f(A a, B b) { return a.x + b.y; }
+        int32 f_A(B b) { return b.y + 10; }
+        int32 main() {
+            A a = {1};
+            B b = {2};
+            return f(a, b) + f_A(b) - 15;
+        }
+    )", "mangle_underscore_params.cdd"), 0);
+}

@@ -222,9 +222,8 @@ private:
     // constexpr function interpretation (CT-06 seed): evaluate a call and walk
     // the function body's statements (return / if / block / local decl).
     // Namespace support (PAR-22 / MOD-12). Declarations at namespace scope are
-    // registered under a mangled key ("A_B_name") and lookups try the enclosing
+    // registered under a mangled key ("A.B.name") and lookups try the enclosing
     // namespace prefixes before the global name.
-    static std::string mangleNamespaceName(const std::string& name);
     std::vector<std::string> namespaceCandidates(const std::string& name) const;
     std::string scopedName(const std::string& name) const;
     std::string resolveNamespaceName(const std::string& name) const;
@@ -430,7 +429,7 @@ private:
     ClassType* currentClass = nullptr; // SEM-04: class whose method is being analyzed
 
     // AGG-10: desugared static-member symbol key -> {defining class, member
-    // name}. Key is mangleNamespaceName of the fully qualified spelling
+    // name}. Key is mangleQualifiedName of the fully qualified spelling
     // (namespace prefix included), matching what access sites resolve.
     std::unordered_map<std::string, std::pair<ClassType*, std::string>> staticMemberIndex;
     // AGG-10: desugared static-data symbol key -> in-class VarDeclAST, used by
@@ -513,5 +512,5 @@ private:
     // interpreter aborts instead of silently skipping unsupported operations.
     bool m_ctFailed = false;
     bool ctStepAllowance(ASTNode& at);
-    std::string namespacePrefix;   // e.g. "A_B_" while analyzing namespace A::B
+    std::string namespacePrefix;   // e.g. "A.B." while analyzing namespace A::B
 };

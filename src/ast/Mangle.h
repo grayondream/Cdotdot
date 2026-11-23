@@ -4,6 +4,11 @@
 
 class Type;
 
+// Namespace/class/module qualification uses `.` as its separator.  `.` is not
+// part of a source identifier, so `ns::f` / `ns.f` never collide with the flat
+// source name `ns_f`.
+std::string mangleQualifiedName(const std::string& name);
+
 std::string typeToMangled(Type* type);
 // Signature mangling: applies C parameter adjustment (top-level cv/restrict
 // ignored) and preserves pointee cv and reference-ness.
