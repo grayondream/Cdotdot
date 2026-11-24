@@ -493,6 +493,13 @@ std::unique_ptr<StmtAST> TemplateInstantiator::cloneStmt(const StmtAST* s) {
 // ---------- 声明 ----------
 
 std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& decl) {
+    auto finish = [&](DeclAST* cloned) {
+        if (cloned) {
+            cloned->moduleName = decl.moduleName;
+            cloned->isExported = decl.isExported;
+        }
+        return std::unique_ptr<DeclAST>(cloned);
+    };
     if (auto* fn = dynamic_cast<const FunctionDeclAST*>(&decl)) {
         size_t baseShadow = m_shadowedValueParams.size();
         std::vector<std::unique_ptr<ParamDeclAST>> params;
@@ -507,12 +514,18 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         auto* cloned = new FunctionDeclAST(fn->name, rewrite(fn->returnType), params,
                                            body, fn->isCompileTime, fn->isVarArg);
         cloned->isStatic = fn->isStatic;
+        cloned->isExtern = fn->isExtern;
+        cloned->isConstMethod = fn->isConstMethod;
+        cloned->isCompileOnly = fn->isCompileOnly;
+        cloned->isConversionOperator = fn->isConversionOperator;
+        cloned->conversionType = fn->conversionType;
+        cloned->defaultArgCount = fn->defaultArgCount;
         cloned->className = fn->className;
         cloned->shadowedValueParams.assign(
             m_shadowedValueParams.begin() + baseShadow, m_shadowedValueParams.end());
         m_shadowedValueParams.resize(baseShadow);
         copyLoc(cloned, *fn);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* st = dynamic_cast<const StructDeclAST*>(&decl)) {
         std::vector<FieldInfo> fields;
@@ -535,7 +548,7 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         cloned->isForwardDecl = st->isForwardDecl;
         cloned->isClassDecl = st->isClassDecl;
         copyLoc(cloned, *st);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* vd = dynamic_cast<const VarDeclAST*>(&decl)) {
         // GEN-02: a local variable shadowing a value parameter is rejected.
@@ -544,7 +557,7 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         auto* cloned = new VarDeclAST(vd->name, rewrite(vd->type),
                                       cloneExpr(vd->initExpr.get()), vd->isCompileTime);
         copyLoc(cloned, *vd);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* ad = dynamic_cast<const ArrayDeclAST*>(&decl)) {
         // GEN-02: an array local shadowing a value parameter is rejected.
@@ -553,21 +566,21 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         auto* cloned = new ArrayDeclAST(ad->name, rewrite(ad->elementType), ad->size,
                                         cloneExpr(ad->initExpr.get()));
         copyLoc(cloned, *ad);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* mv = dynamic_cast<const MultiVarDeclAST*>(&decl)) {
         std::vector<std::unique_ptr<DeclAST>> decls;
         for (auto& d : mv->decls) decls.push_back(cloneDeclInternal(*d));
         auto* cloned = new MultiVarDeclAST(std::move(decls));
         copyLoc(cloned, *mv);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* ud = dynamic_cast<const UsingDeclAST*>(&decl)) {
         auto* cloned = new UsingDeclAST(ud->name, rewrite(ud->aliasedType));
         cloned->bareName = ud->bareName;
         cloned->isBlockScope = ud->isBlockScope;
         copyLoc(cloned, *ud);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     // 评审 I4：嵌套 union/enum/type 声明此前被静默丢弃。
     if (auto* un = dynamic_cast<const UnionDeclAST*>(&decl)) {
@@ -578,21 +591,21 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         cloned->isForwardDecl = un->isForwardDecl;
         for (auto& nt : un->nestedTypes) cloned->nestedTypes.push_back(cloneDeclInternal(*nt));
         copyLoc(cloned, *un);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* ed = dynamic_cast<const EnumDeclAST*>(&decl)) {
         auto* cloned = new EnumDeclAST(ed->name, ed->values, rewrite(ed->underlyingType));
         cloned->bareName = ed->bareName;
         cloned->isForwardDecl = ed->isForwardDecl;
         copyLoc(cloned, *ed);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     if (auto* ns = dynamic_cast<const NamespaceDeclAST*>(&decl)) {
         std::vector<std::unique_ptr<DeclAST>> decls;
         for (auto& d : ns->declarations) decls.push_back(cloneDeclInternal(*d));
         auto* cloned = new NamespaceDeclAST(ns->name, std::move(decls));
         copyLoc(cloned, *ns);
-        return std::unique_ptr<DeclAST>(cloned);
+        return finish(cloned);
     }
     return nullptr;
 }

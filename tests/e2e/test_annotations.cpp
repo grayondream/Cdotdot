@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "ast/Mangle.h"
 #include "frontend/Lexer.h"
 #include "frontend/Parser.h"
 #include "sema/SemanticAnalyzer.h"
@@ -147,7 +148,8 @@ TEST_F(AnnotationLayoutE2E, GlobalVarAlignIR) {
     ast->codegen(ctx);
     bool found = false;
     for (auto& gv : ctx.getModule().globals()) {
-        if (gv.getName() == "g" && gv.getAlignment() >= 64) {
+        if (gv.getName() == mangleGlobalVariable("g") &&
+            gv.getAlignment() >= 64) {
             found = true;
         }
     }

@@ -7,6 +7,8 @@
 #include "frontend/Parser.h"
 #include "sema/SemanticAnalyzer.h"
 #include "codegen/CodegenContext.h"
+#include "ast/Mangle.h"
+#include "ast/Type.h"
 #include "support/Log.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -157,6 +159,34 @@ TEST_F(OverloadingE2E, FlatFunctionNameDoesNotCollideWithMangledOverload) {
         int32 f_int32() { return 100; }
         int32 main() { return f(1) + f_int32() - 102; }
     )", "mangle_flat_function.cdd"), 0);
+}
+
+TEST_F(OverloadingE2E, FunctionSymbolDoesNotConsumeGlobalVariableName) {
+    const std::string filename = "mangle_var_vs_fn.cdd";
+    const char* source = R"(
+        int32 f_int32 = 100;
+        int32 f(int32 x) { return x + 1; }
+        int32 main() { return 0; }
+    )";
+    Lexer lexer(filename, source);
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    ASSERT_TRUE(analyzer.getErrors().empty());
+    CodegenContext ctx;
+    ctx.setSourceFile(filename);
+    ast->codegen(ctx);
+
+    Type int32Type(TypeKind::Int32);
+    EXPECT_NE(ctx.getModule().getGlobalVariable(
+                  mangleGlobalVariable("f_int32")), nullptr);
+    EXPECT_NE(ctx.getModule().getFunction(mangleFunction("f", {&int32Type})),
+              nullptr);
+    // The CDD function must not occupy the variable's symbol.
+    EXPECT_EQ(ctx.getModule().getFunction("f_int32"), nullptr);
 }
 
 TEST_F(OverloadingE2E, CLinkageNameOnlyAppliesToExternSignature) {

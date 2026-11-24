@@ -39,6 +39,10 @@ public:
     // overload resolution can read default-argument counts. Null for
     // non-function symbols and prelude/declared-only functions.
     FunctionDeclAST* decl = nullptr;
+
+    // File-scope variable/array LLVM symbol (module-qualified, `$`-reserved).
+    // Empty for locals, block-scope externs, and non-static symbols.
+    std::string mangledName;
 };
 
 // Returns the implicit-conversion rank from `from` to `to`:

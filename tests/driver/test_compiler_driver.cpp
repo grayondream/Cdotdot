@@ -244,7 +244,8 @@ std::size_t countOccurrences(const std::string& text, const std::string& needle)
 }
 
 std::string extractFunction(const std::string& ir, const std::string& name) {
-    const std::string marker = "@" + name + "(";
+    const std::string plainMarker = "@" + name + "(";
+    const std::string quotedMarker = "@\"" + name + "\"(";
     std::size_t pos = ir.find("define");
     while (pos != std::string::npos) {
         const std::size_t end = ir.find("\n}", pos);
@@ -253,9 +254,12 @@ std::string extractFunction(const std::string& ir, const std::string& name) {
         }
         std::string body = ir.substr(pos, end - pos + 2);
         const std::size_t signature_end = body.find('\n');
-        if (signature_end != std::string::npos &&
-            body.substr(0, signature_end).find(marker) != std::string::npos) {
-            return body;
+        if (signature_end != std::string::npos) {
+            const std::string signature = body.substr(0, signature_end);
+            if (signature.find(plainMarker) != std::string::npos ||
+                signature.find(quotedMarker) != std::string::npos) {
+                return body;
+            }
         }
         pos = ir.find("define", end);
     }
@@ -422,6 +426,111 @@ TEST_F(CompilerDriverTest, MainWithArgsLinksAndRuns) {
     EXPECT_EQ(driver.run(), 0);
     const std::string command = outPath + " x y";
     EXPECT_EQ(std::system(command.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateFunctionsInDifferentModulesKeepDistinctSymbols) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_module_symbols_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "int32 helper() { return 1; }\n"
+               "export int32 a_entry() { return helper(); }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "int32 helper() { return 2; }\n"
+               "export int32 b_entry() { return helper(); }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return a_entry() + b_entry() - 3; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, ModuleOperatorOverloadUsesQualifiedSymbol) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_module_operator_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "export struct S { int32 v; };\n"
+               "export S operator+(S a, S b) { S r; r.v = a.v + b.v; return r; }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "int32 main() {\n"
+               "    S a; S b; a.v = 2; b.v = 3;\n"
+               "    S c = a + b;\n"
+               "    return c.v - 5;\n"
+               "}\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateVariablesInDifferentModulesKeepDistinctSymbols) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_module_vars_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "int32 g = 1;\n"
+               "export int32 a_get() { return g; }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "int32 g = 2;\n"
+               "export int32 b_get() { return g; }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return a_get() + b_get() - 3; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
     std::filesystem::remove_all(dir);
 }
 
@@ -734,9 +843,9 @@ int32 main() { println("{}", fib(10)); return 0; }
     ASSERT_FALSE(withoutRec.empty());
 
     EXPECT_GT(withRec.size(), withoutRec.size());
-    const std::string fibBody = extractFunction(withRec, "fib_int32");
+    const std::string fibBody = extractFunction(withRec, "cdd$f$fib_int32");
     ASSERT_FALSE(fibBody.empty());
-    EXPECT_EQ(countOccurrences(fibBody, "call i32 @fib_int32"), 1u);
+    EXPECT_EQ(countOccurrences(fibBody, "call i32 @\"cdd$f$fib_int32\""), 1u);
     std::filesystem::remove(p);
 }
 
@@ -814,14 +923,14 @@ TEST_F(CompilerDriverTest, RecursiveWorkloadsStayUnderPostRerunInstructionCap) {
         const char *source;
     };
     const Case cases[] = {
-        {"cdd_rec_cap_fib.cdd", "fib_int32", R"(
+        {"cdd_rec_cap_fib.cdd", "cdd$f$fib_int32", R"(
 int32 fib(int32 n) {
     if (n < 2) { return n; }
     return fib(n - 1) + fib(n - 2);
 }
 int32 main() { println("{}", fib(10)); return 0; }
 )"},
-        {"cdd_rec_cap_nqueens.cdd", "solve_int32ptr_int32_int32", R"(
+        {"cdd_rec_cap_nqueens.cdd", "cdd$f$solve_int32ptr_int32_int32", R"(
 int32 solutions;
 bool safe(int32* cols, int32 row, int32 col) {
     for (int32 i = 0; i < row; i = i + 1) {

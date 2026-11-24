@@ -765,7 +765,9 @@ llvm::Value* CodegenContext::tryUserConversion(llvm::Value* val, Type* fromAST,
         builder.CreateStore(val, objPtr);
     }
     llvm::Function* fn = getModule().getFunction(
-        mangleFunction(chosenName, chosen->paramTypes, chosen->isVarArg));
+        chosen->symbolName.empty()
+            ? mangleFunction(chosenName, chosen->paramTypes, chosen->isVarArg)
+            : chosen->symbolName);
     if (!fn) return nullptr;
     llvm::Value* result = builder.CreateCall(fn, {objPtr}, "conv");
     if (targetLLVMType->isIntegerTy(1) &&

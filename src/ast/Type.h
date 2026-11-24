@@ -245,6 +245,10 @@ public:
     // this-typing, but deliberately not part of mangling because const-only
     // overloads are rejected.
     bool isConstMethod = false;
+    // Non-empty for a declaration's function type: the LLVM symbol chosen by
+    // sema (module-qualified CDD name, raw C-linkage name, or `main`).
+    // Structural function types (function pointers) leave it empty.
+    std::string symbolName;
 
     FunctionType(Type* ret, std::vector<Type*> params, bool varArg = false)
         : Type(TypeKind::Function), returnType(ret), paramTypes(std::move(params)), isVarArg(varArg) {}

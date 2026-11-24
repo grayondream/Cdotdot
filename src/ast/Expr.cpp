@@ -427,6 +427,21 @@ llvm::Value* VariableExprAST::codegen(CodegenContext& ctx) {
     // desugared it to `this->name`; emit that member access.
     if (implicitThisAccess) return implicitThisAccess->codegen(ctx);
 
+    // Static-storage symbols are keyed by their module-qualified LLVM name;
+    // the flat codegen scope cannot distinguish same-named module globals.
+    if (!resolvedGlobalName.empty()) {
+        if (llvm::GlobalVariable* gv =
+                ctx.getModule().getGlobalVariable(resolvedGlobalName, /*AllowInternal=*/true)) {
+            return gv;
+        }
+        llvm::Type* llvmTy = type ? ctx.getLLVMType(type) : nullptr;
+        if (!llvmTy) return nullptr;
+        return new llvm::GlobalVariable(
+            ctx.getModule(), llvmTy, /*isConstant=*/false,
+            llvm::GlobalVariable::ExternalLinkage, /*Initializer=*/nullptr,
+            resolvedGlobalName);
+    }
+
     Symbol* sym = ctx.currentScope()->lookup(name);
     if (!sym) {
         LOGE("unknown variable: {}", name);
@@ -473,8 +488,16 @@ llvm::Value* BinaryExprAST::codegen(CodegenContext& ctx) {
             return builder.CreateCall(calleeFn, {lhs, rhs}, "mopcalltmp");
         }
 
-        lhs = emitRValue(ctx, *left, lhs);
-        rhs = emitRValue(ctx, *right, rhs);
+        Type* lhsParam = resolvedParamTypes.size() > 0
+                             ? resolvedParamTypes[0] : nullptr;
+        Type* rhsParam = resolvedParamTypes.size() > 1
+                             ? resolvedParamTypes[1] : nullptr;
+        lhs = emitCallArgument(ctx, *left, lhs, lhsParam);
+        rhs = emitCallArgument(ctx, *right, rhs, rhsParam);
+        if (!(lhsParam && isReferenceType(lhsParam)) && lhsParam)
+            lhs = ctx.castValue(lhs, left->type, ctx.getLLVMType(lhsParam));
+        if (!(rhsParam && isReferenceType(rhsParam)) && rhsParam)
+            rhs = ctx.castValue(rhs, right->type, ctx.getLLVMType(rhsParam));
 
         llvm::Function* calleeFn = ctx.getModule().getFunction(mangledCallee);
         if (!calleeFn) {
@@ -748,7 +771,11 @@ llvm::Value* UnaryExprAST::codegen(CodegenContext& ctx) {
             LOGE("unknown unary operator function: {}", mangledCallee);
             return nullptr;
         }
-        arg = emitRValue(ctx, *operand, arg);
+        Type* param = resolvedParamTypes.empty() ? nullptr
+                                                 : resolvedParamTypes[0];
+        arg = emitCallArgument(ctx, *operand, arg, param);
+        if (!(param && isReferenceType(param)) && param)
+            arg = ctx.castValue(arg, operand->type, ctx.getLLVMType(param));
         return ctx.getBuilder().CreateCall(calleeFn, {arg}, "uopcalltmp");
     }
     llvm::Value* v = operand->codegen(ctx);
@@ -1622,7 +1649,10 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
             argTypes.push_back(arg->type);
         }
     }
-    std::string mangledName = mangleFunction(callee, argTypes, resolvedVarArg);
+    std::string mangledName = !mangledCallee.empty()
+                                  ? mangledCallee
+                                  : mangleFunction(callee, argTypes,
+                                                   resolvedVarArg);
     
     llvm::Function* calleeFn = ctx.getModule().getFunction(mangledName);
     if (!calleeFn) {
@@ -2387,7 +2417,11 @@ llvm::Value* PostfixIncDecExprAST::codegen(CodegenContext& ctx) {
         }
         llvm::Value* obj = operand->codegen(ctx);
         if (!obj) return nullptr;
-        obj = emitRValue(ctx, *operand, obj);
+        Type* param = resolvedParamTypes.empty() ? nullptr
+                                                 : resolvedParamTypes[0];
+        obj = emitCallArgument(ctx, *operand, obj, param);
+        if (!(param && isReferenceType(param)) && param)
+            obj = ctx.castValue(obj, operand->type, ctx.getLLVMType(param));
         llvm::Value* dummy = llvm::ConstantInt::get(
             llvm::Type::getInt32Ty(ctx.getContext()), 0);
         return ctx.getBuilder().CreateCall(calleeFn, {obj, dummy}, "popcalltmp");
@@ -3183,7 +3217,7 @@ llvm::Value* CompoundLiteralExprAST::codegen(CodegenContext& ctx) {
 
 // PAR-11/CG-11: lambda codegen。
 // 无捕获 → 生成静态函数并返回函数指针。
-// 有捕获 → 生成闭包调用函数 `__lambda_<N>__call(Closure*, params...)`，
+// 有捕获 → 生成闭包调用函数 `cdd$lambda$<N>__call(Closure*, params...)`，
 // body 内捕获名声明为从闭包加载的局部变量；表达式本身返回闭包 struct 值
 // （立即调用由 LambdaCallExprAST 组装：栈上构造闭包 → 调用）。
 LambdaExprAST::~LambdaExprAST() = default;
@@ -3254,10 +3288,10 @@ llvm::Value* LambdaExprAST::codegen(CodegenContext& ctx) {
     for (auto& p : params) paramTypes.push_back(p->type);
     Type* retType = returnType ? returnType : TypeContext::instance().getVoid();
 
-    // 函数名：无捕获 `__lambda_<N>`，有捕获 `__lambda_<N>__call`。
+    // 函数名：无捕获 `cdd$lambda$<N>`，有捕获 `cdd$lambda$<N>__call`。
     static int fnCounter = 0;
     if (lambdaFnName.empty()) {
-        lambdaFnName = "__lambda_" + std::to_string(fnCounter++);
+        lambdaFnName = "cdd$lambda$" + std::to_string(fnCounter++);
         if (closureType) lambdaFnName += "__call";
     }
 

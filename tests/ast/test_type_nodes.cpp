@@ -198,6 +198,23 @@ TEST_F(TypeNodeTest, CLinkageAppliesToSignatureNotEverySameNameOverload) {
               "cdd_test_c_link_name");
 }
 
+TEST_F(TypeNodeTest, CDDFunctionSymbolsUseReservedNamespace) {
+    // Source identifiers cannot contain `$`, so a CDD function can never
+    // collide with a global variable, a C symbol, or a user-written spelling
+    // that merely resembles a mangled name.
+    EXPECT_EQ(mangleFunction("f", {typeCtx->getInt32()}), "cdd$f$f_int32");
+    EXPECT_EQ(mangleFunction("f", {}), "cdd$f$f");
+    EXPECT_EQ(mangleFunction("main", {}), "main");
+    EXPECT_EQ(mangleFunction("f", {typeCtx->getInt32()}, false, "a"),
+              "cdd$fm1:a$f_int32");
+    EXPECT_EQ(qualifyFunctionSymbolForModule("cdd$f$f_int32", "a"),
+              "cdd$fm1:a$f_int32");
+    EXPECT_EQ(qualifyFunctionSymbolForModule("cdd$fm1:a$f_int32", "b"),
+              "cdd$fm1:a$f_int32");
+    EXPECT_EQ(mangleGlobalVariable("g"), "cdd$v$g");
+    EXPECT_EQ(mangleGlobalVariable("g", "a"), "cdd$vm1:a$g");
+}
+
 TEST_F(TypeNodeTest, MangledFunctionNamesAreInjectiveForKnownCollisions) {
     Type* int32Ptr = new Type(TypeKind::Pointer, typeCtx->getInt32());
     StructType int32ptrRecord("int32ptr");

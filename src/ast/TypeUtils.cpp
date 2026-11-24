@@ -205,6 +205,7 @@ Type* cloneType(const Type* type) {
             auto* copy = new FunctionType(source->returnType, source->paramTypes,
                                           source->isVarArg);
             copy->isConstMethod = source->isConstMethod;
+            copy->symbolName = source->symbolName;
             clone = copy;
             break;
         }

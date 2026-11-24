@@ -91,7 +91,7 @@ TEST_F(RestrictIR, DefinitionWithoutRestrictDoesNotInheritNoAlias) {
         int32 main() { int32 x = 1; return sum(&x) - 1; }
     )");
     ASSERT_FALSE(ir.empty());
-    size_t def = ir.find("define i32 @sum");
+    size_t def = ir.find("define i32 @\"cdd$f$sum_int32ptr\"");
     ASSERT_NE(def, std::string::npos);
     size_t eol = ir.find('\n', def);
     auto line = ir.substr(def, eol - def);

@@ -15,7 +15,19 @@ std::string typeToMangled(Type* type);
 std::string typeToMangledSignature(Type* type);
 std::string mangleFunction(const std::string& name,
                            const std::vector<Type*>& paramTypes,
-                           bool isVarArg = false);
+                           bool isVarArg = false,
+                           const std::string& moduleName = {});
+
+// Add the module qualifier to an already-mangled CDD function symbol when it
+// carries none. Raw C names and `main` are returned unchanged.
+std::string qualifyFunctionSymbolForModule(const std::string& symbol,
+                                           const std::string& moduleName);
+
+// File-scope variable/array symbol. `$` keeps it disjoint from source-level
+// identifiers, C symbols, and the CDD function namespace; participating
+// modules add their module name so private same-name variables do not collide.
+std::string mangleGlobalVariable(const std::string& name,
+                                 const std::string& moduleName = {});
 
 // Mark a function signature as having C linkage (extern "C" / extern
 // declarations): only that signature is emitted with its plain, unmangled

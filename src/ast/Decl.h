@@ -74,6 +74,8 @@ public:
     // C block-scope `extern`: refers to an existing/global symbol; no local
     // storage is allocated for it.
     bool isExternLocal = false;
+    // Sema-resolved LLVM symbol for a block-scope extern (empty for raw C).
+    std::string externSymbolName;
     // C++-style out-of-class static data definition:
     // `int32 S::x = 1;` — sema binds it to the in-class static member so the
     // definition does not emit a second global.

@@ -197,6 +197,11 @@ public:
     // Set by sema when the symbol is an lvalue reference: the expression type
     // is the referent and codegen yields the referent address.
     bool isReferenceBinding = false;
+    // File-scope variable/array symbol chosen by sema. Bypasses the flat
+    // codegen scope key so same-named globals in different modules stay
+    // distinct.
+    std::string resolvedGlobalName;
+
     explicit VariableExprAST(const std::string& n) : name(n) {}
     llvm::Value* codegen(CodegenContext& ctx) override;
 };
@@ -409,6 +414,8 @@ public:
     // SEM-17: postfix operator overloading — set by sema when an aggregate
     // operand resolves to `operator++(V, int32)` / `operator--(V, int32)`.
     std::string mangledCallee;
+    std::vector<Type*> resolvedParamTypes;
+    bool resolvedVarArg = false;
 
     PostfixIncDecExprAST(std::unique_ptr<ExprAST> expr, bool inc)
         : operand(std::move(expr)), isIncrement(inc) {}

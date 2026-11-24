@@ -6,7 +6,7 @@
 namespace {
 std::string mangleFunctionCpp(const std::string& name,
                               const std::vector<Type*>& paramTypes,
-                              bool isVarArg);
+                              bool isVarArg, const std::string& moduleName = {});
 }
 
 static std::unordered_set<std::string>& cNames() {
@@ -267,8 +267,16 @@ std::string typeToMangledSignature(Type* type) {
 namespace {
 std::string mangleFunctionCpp(const std::string& name,
                               const std::vector<Type*>& paramTypes,
-                              bool isVarArg) {
-    std::string result = escapeMangledName(name);
+                              bool isVarArg, const std::string& moduleName) {
+    // `$` cannot appear in a CDD source identifier. Reserving it for CDD
+    // function symbols keeps them disjoint from global variables, C symbols,
+    // and identifier-like spellings such as `f_int32`. Participating modules
+    // add their module name so module-private same-name functions do not
+    // collide in the shared object-file symbol space.
+    std::string result = "cdd$f$";
+    if (!moduleName.empty())
+        result = "cdd$fm" + lengthPrefixedName(moduleName) + "$";
+    result += escapeMangledName(name);
     for (auto* type : paramTypes) {
         result += "_" + typeToMangledSignature(type);
     }
@@ -280,13 +288,43 @@ std::string mangleFunctionCpp(const std::string& name,
 }
 } // namespace
 
+namespace {
+bool hasModuleQualifier(const std::string& symbol) {
+    if (symbol.rfind("cdd$fm", 0) != 0) return false;
+    size_t pos = 6; // cdd$fm
+    size_t digits = pos;
+    while (pos < symbol.size() && symbol[pos] >= '0' && symbol[pos] <= '9') ++pos;
+    return pos > digits && pos < symbol.size() && symbol[pos] == ':';
+}
+} // namespace
+
+std::string qualifyFunctionSymbolForModule(const std::string& symbol,
+                                           const std::string& moduleName) {
+    if (moduleName.empty() || symbol.rfind("cdd$f$", 0) != 0 ||
+        hasModuleQualifier(symbol)) {
+        return symbol;
+    }
+    return "cdd$fm" + lengthPrefixedName(moduleName) + "$" + symbol.substr(6);
+}
+
+std::string mangleGlobalVariable(const std::string& name,
+                                 const std::string& moduleName) {
+    std::string result = "cdd$v";
+    if (!moduleName.empty())
+        result += "m" + lengthPrefixedName(moduleName) + "$";
+    else
+        result += "$";
+    result += name;
+    return result;
+}
+
 std::string mangleFunction(const std::string& name,
                            const std::vector<Type*>& paramTypes,
-                           bool isVarArg) {
+                           bool isVarArg, const std::string& moduleName) {
     // The program entry point is the C `main` symbol even when it declares
     // argc/argv.  Without this, `main(int32, char**)` was mangled to
     // `main_int32_charptrptr` and the linker could not find an entry point.
     if (name == "main") return "main";
     if (isCNameSignature(name, paramTypes, isVarArg)) return name;
-    return mangleFunctionCpp(name, paramTypes, isVarArg);
+    return mangleFunctionCpp(name, paramTypes, isVarArg, moduleName);
 }

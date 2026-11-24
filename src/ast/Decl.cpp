@@ -989,7 +989,7 @@ static llvm::Constant* ctMakeStringConstant(CodegenContext& ctx,
     auto* data = llvm::ConstantDataArray::getString(ctx.getContext(), value, true);
     auto* gv = new llvm::GlobalVariable(module, arrTy, /*isConstant=*/true,
                                         llvm::GlobalVariable::PrivateLinkage, data,
-                                        "__cdd_ct_str_" + std::to_string(g_ctTableId++));
+                                        "cdd$ct$str_" + std::to_string(g_ctTableId++));
     return gv;
 }
 
@@ -1126,14 +1126,14 @@ static llvm::Constant* buildCtContainerConstant(CodegenContext& ctx, Type* type,
 
     if (c.kind == CtContainer::Vec || c.kind == CtContainer::Deque) {
         if (c.elementType) {
-            data = ctArrayConstant(ctx, c.elementType, storage, cap, "__cdd_ct_data");
+            data = ctArrayConstant(ctx, c.elementType, storage, cap, "cdd$ct$data");
         }
     } else {
         if (c.keyType) {
-            keys = ctArrayConstant(ctx, c.keyType, c.keys, cap, "__cdd_ct_keys");
+            keys = ctArrayConstant(ctx, c.keyType, c.keys, cap, "cdd$ct$keys");
         }
         if (c.kind == CtContainer::HashMap && c.valueType) {
-            values = ctArrayConstant(ctx, c.valueType, c.values, cap, "__cdd_ct_values");
+            values = ctArrayConstant(ctx, c.valueType, c.values, cap, "cdd$ct$values");
         }
         std::vector<CtValue> stateValues;
         stateValues.reserve(cap);
@@ -1142,7 +1142,7 @@ static llvm::Constant* buildCtContainerConstant(CodegenContext& ctx, Type* type,
             stateValues.push_back(ctInt(state, 8, true));
         }
         states = ctArrayConstant(ctx, TypeContext::instance().getUInt8(),
-                                 stateValues, cap, "__cdd_ct_states");
+                                 stateValues, cap, "cdd$ct$states");
         auto lookupFn = [&](const std::string& name) -> llvm::Constant* {
             if (name.empty()) return nullptr;
             return ctx.getModule().getFunction(name);
@@ -1193,11 +1193,15 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
     // C block-scope `extern`: alias the existing global (or emit an external
     // declaration); never allocate function-local storage.
     if (isExternLocal && !ctx.isGlobalScope()) {
-        llvm::GlobalVariable* global = ctx.getModule().getGlobalVariable(name);
+        const std::string symbol =
+            externSymbolName.empty() ? name : externSymbolName;
+        llvm::GlobalVariable* global = ctx.getModule().getGlobalVariable(
+            symbol, /*AllowInternal=*/true);
         if (!global) {
             global = new llvm::GlobalVariable(
                 ctx.getModule(), llvmType, /*isConstant=*/false,
-                llvm::GlobalVariable::ExternalLinkage, /*Initializer=*/nullptr, name);
+                llvm::GlobalVariable::ExternalLinkage, /*Initializer=*/nullptr,
+                symbol);
         }
         ctx.declareVariable(name, global, type);
         return global;
@@ -1231,7 +1235,7 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                                  : nullptr;
         std::string fnName = fn ? fn->getName().str() : "global";
         static unsigned long staticLocalId = 0;
-        std::string globalName = "__cdd_static_" + fnName + "_" + name + "_" +
+        std::string globalName = "cdd$static$" + fnName + "_" + name + "_" +
                                  std::to_string(staticLocalId++);
         auto* global = new llvm::GlobalVariable(
             ctx.getModule(), llvmType, type->isConst || isCompileTime,
@@ -1243,6 +1247,13 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
     }
 
     if (ctx.isGlobalScope()) {
+        const std::string globalSymbol =
+            mangleGlobalVariable(name, moduleName);
+        if (llvm::GlobalVariable* existing =
+                ctx.getModule().getGlobalVariable(globalSymbol, /*AllowInternal=*/true)) {
+            ctx.declareVariable(name, existing, type);
+            return existing;
+        }
         llvm::Constant* initConstant = nullptr;
         if (isCompileTime && foldedContainer) {
             initConstant = buildCtContainerConstant(ctx, type, *foldedContainer);
@@ -1276,7 +1287,8 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
             ? llvm::GlobalVariable::PrivateLinkage
             : llvm::GlobalVariable::ExternalLinkage;
         llvm::GlobalVariable* global = new llvm::GlobalVariable(
-            ctx.getModule(), llvmType, readOnlyGlobal, linkage, initConstant, name);
+            ctx.getModule(), llvmType, readOnlyGlobal, linkage, initConstant,
+            globalSymbol);
         // CON-04: `thread_local` → per-thread copy of the global.
         if (isThreadLocal) {
             global->setThreadLocal(true);
@@ -1448,7 +1460,8 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName = mangleFunction(name, astParamTypes, isVarArg);
+    std::string mangledName =
+        mangleFunction(name, astParamTypes, isVarArg, moduleName);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {
@@ -1501,7 +1514,8 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName = mangleFunction(name, astParamTypes, isVarArg);
+    std::string mangledName =
+        mangleFunction(name, astParamTypes, isVarArg, moduleName);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {
@@ -1618,10 +1632,38 @@ llvm::Value* TranslationUnitAST::codegen(CodegenContext& ctx) {
     }
 
     // 预扫 2：函数签名声明——调用点（含前向引用的模板实例方法/函数）按需
-    // 解析符号。
-    for (auto& decl : declarations) {
-        if (auto* fn = dynamic_cast<FunctionDeclAST*>(decl.get())) {
+    // 解析符号。递归进 namespace/record，使全局常量的函数指针初始化器在
+    // 普通声明循环之前就能解析到被导入模块的函数。
+    std::function<void(DeclAST*)> predeclareFunctions = [&](DeclAST* decl) {
+        if (!decl) return;
+        if (auto* fn = dynamic_cast<FunctionDeclAST*>(decl)) {
             fn->codegenPrototype(ctx);
+        } else if (auto* ns = dynamic_cast<NamespaceDeclAST*>(decl)) {
+            for (auto& child : ns->declarations)
+                predeclareFunctions(child.get());
+        } else if (auto* st = dynamic_cast<StructDeclAST*>(decl)) {
+            for (auto& method : st->methods)
+                predeclareFunctions(method.get());
+            for (auto& member : st->staticMembers)
+                predeclareFunctions(member.get());
+            for (auto& nested : st->nestedTypes)
+                predeclareFunctions(nested.get());
+        } else if (auto* mv = dynamic_cast<MultiVarDeclAST*>(decl)) {
+            for (auto& child : mv->decls)
+                predeclareFunctions(child.get());
+        }
+    };
+    for (auto& decl : declarations) predeclareFunctions(decl.get());
+
+    // Pre-scan 3: file-scope variables/arrays. Function bodies may reference
+    // them, so create their definitions before any body is emitted; otherwise
+    // a body's external declaration claims the symbol and the real definition
+    // is auto-renamed to `name.1`.
+    for (auto& decl : declarations) {
+        if (dynamic_cast<VarDeclAST*>(decl.get()) ||
+            dynamic_cast<ArrayDeclAST*>(decl.get()) ||
+            dynamic_cast<MultiVarDeclAST*>(decl.get())) {
+            decl->codegen(ctx);
         }
     }
 
@@ -1649,6 +1691,14 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
     // would make LLVM treat it as an external declaration). Nested
     // initializer lists recurse through buildAggregateConstant.
     if (ctx.isGlobalScope()) {
+        const std::string globalSymbol =
+            mangleGlobalVariable(name, moduleName);
+        if (llvm::GlobalVariable* existing =
+                ctx.getModule().getGlobalVariable(globalSymbol, /*AllowInternal=*/true)) {
+            ctx.declareVariable(name, existing,
+                                new ArrayType(elementType, effectiveSize));
+            return existing;
+        }
         llvm::Constant* initConstant = nullptr;
         if (initList) {
             Type* astArrayType = new ArrayType(elementType, effectiveSize);
@@ -1659,7 +1709,7 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
         }
         llvm::GlobalVariable* global = new llvm::GlobalVariable(
             ctx.getModule(), arrType, elementType->isConst,
-            llvm::GlobalVariable::ExternalLinkage, initConstant, name);
+            llvm::GlobalVariable::ExternalLinkage, initConstant, globalSymbol);
         ctx.declareVariable(name, global, new ArrayType(elementType, effectiveSize));
         return global;
     }

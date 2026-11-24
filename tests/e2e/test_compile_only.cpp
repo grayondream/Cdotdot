@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "ast/Mangle.h"
 #include "frontend/Lexer.h"
 #include "frontend/Parser.h"
 #include "sema/SemanticAnalyzer.h"
@@ -178,7 +179,8 @@ int32 main() { return EMAIL_DFA.next[0][1] - 'b'; }
 )", "ct_dfa.cdd");
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->getModule().getFunction("build_dfa"), nullptr);
-    EXPECT_NE(ctx->getModule().getNamedGlobal("EMAIL_DFA"), nullptr);
+    EXPECT_NE(ctx->getModule().getNamedGlobal(
+                  mangleGlobalVariable("EMAIL_DFA")), nullptr);
 }
 
 TEST_F(CompileOnlyE2E, CompileOnlyStepLimitDiagnosed) {
