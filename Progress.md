@@ -1958,3 +1958,10 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
   - `git diff --check` 无输出。
 - 提交：`f9134aa`。
+
+## 2026-11-24 — 全局函数指针的模块符号绑定
+
+- 问题：两个模块各自有私有全局函数指针 `fp`，`a_call()` / `b_call()` 内的 `fp()` 走 CallExprAST 间接调用路径，codegen 用扁平 `lookupVariableAddr("fp")`，导致两个模块都读同一个槽（编译后 b 调用 a 的 fp）。
+- 修复：`CallExprAST` 新增 `resolvedCalleeGlobalName`；sema 在函数指针变量为静态存储时填入 `Symbol::mangledName`；间接调用优先按该模块限定符号取 `GlobalVariable`，本地变量仍走作用域查找。新增跨模块回归测试。
+- 验证：全量 **2150/2150** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；16 个 quick benchmark 校验和一致。
+- 提交：`3d91efc`。
