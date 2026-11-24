@@ -1599,7 +1599,12 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
 
     // Indirect call through a function-pointer variable.
     if (isIndirect) {
-        llvm::Value* fpAddr = ctx.lookupVariableAddr(callee);
+        llvm::Value* fpAddr = nullptr;
+        if (!resolvedCalleeGlobalName.empty()) {
+            fpAddr = ctx.getModule().getGlobalVariable(
+                resolvedCalleeGlobalName, /*AllowInternal=*/true);
+        }
+        if (!fpAddr) fpAddr = ctx.lookupVariableAddr(callee);
         if (!fpAddr) {
             LOGE("unknown function pointer: {}", callee);
             return nullptr;

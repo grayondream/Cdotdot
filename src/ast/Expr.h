@@ -276,6 +276,9 @@ public:
     // True when the selected function type is variadic. Kept beside
     // resolvedParamTypes so codegen mangles the same symbol as the definition.
     bool resolvedVarArg = false;
+    // Module-qualified symbol for an indirect call through a file-scope
+    // function-pointer variable (empty for locals/parameters).
+    std::string resolvedCalleeGlobalName;
     // FUN-09: folded values for trailing default arguments (position i fills
     // resolvedParamTypes[args.size()+i]).
     std::vector<DefaultArgValue> defaultArgValues;

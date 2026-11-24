@@ -5330,6 +5330,8 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
             node.isIndirect = true;
             node.resolvedParamTypes = funcType->paramTypes;
             node.resolvedVarArg = funcType->isVarArg;
+            if (sym->isStaticStorage && !sym->mangledName.empty())
+                node.resolvedCalleeGlobalName = sym->mangledName;
             node.type = funcType->returnType;
             node.isLValue = false;
             return;

@@ -498,6 +498,44 @@ TEST_F(CompilerDriverTest, ModuleOperatorOverloadUsesQualifiedSymbol) {
     std::filesystem::remove_all(dir);
 }
 
+TEST_F(CompilerDriverTest, PrivateFunctionPointerGlobalsKeepDistinctSymbols) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_module_fnptr_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "int32 one() { return 1; }\n"
+               "int32 (*fp)() = one;\n"
+               "export int32 a_call() { return fp(); }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "int32 two() { return 2; }\n"
+               "int32 (*fp)() = two;\n"
+               "export int32 b_call() { return fp(); }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return a_call() + b_call() - 3; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
 TEST_F(CompilerDriverTest, PrivateVariablesInDifferentModulesKeepDistinctSymbols) {
     const std::filesystem::path dir =
         std::filesystem::temp_directory_path() /
