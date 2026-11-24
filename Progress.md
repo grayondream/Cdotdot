@@ -1931,3 +1931,30 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
   - `git diff --check` 无输出。
 - 提交：`21d0eea`。
+
+
+## 2026-11-24 — 符号命名空间与模块隔离
+
+- 背景：继续审查名称修饰，复现出跨类别/跨模块碰撞：
+  - 零参 CDD 函数 `g()` 与全局变量 `g` 同为裸 `g`；`f(int32)` 为 `f_int32`，可被同名全局变量 `f_int32` 占用。
+  - 两个参与模块各自定义私有 `helper()` / 全局 `g`，在共享 LLVM 模块/对象符号空间中同名冲突。
+  - 全局常量/编译期容器在函数体之后出码时，引用侧先创建 external 声明，真实定义被 LLVM 改名为 `name.1`；常量容器的 `hash_fn/eq_fn` 查找失败。
+  - 模块内自由运算符调用端未带模块限定，定义端带限定，链接找不到符号；自由运算符引用形参未按地址传递。
+- 修复：
+  - CDD 函数符号改为 `cdd$f$...`，文件作用域变量/数组改为 `cdd$v$...`；参与模块分别插入 `cdd$fm<len>:<module>$` / `cdd$vm<len>:<module>$`。C linkage 与 `main` 保持裸名。
+  - 新增 `FunctionType::symbolName` 与 `qualifyFunctionSymbolForModule`，在直接调用、函数引用、方法、运算符、转换运算符中复用 sema 选定的符号；模板实例/namespace/class/multi-declarator 传播 `moduleName`。
+  - 全局变量引用使用 sema 记录的 `resolvedGlobalName`，避免扁平 codegen 作用域串到其他模块的同名变量；全局定义在函数体前预扫，并用 `AllowInternal=true` 的幂等 guard 防止重复定义/改名。
+  - 函数原型预扫递归进入 namespace/record；全局变量初始化的函数指针（常量容器 hash/equal）因此在出码前可解析。
+  - C block-scope `extern` 记录全局变量的模块限定符号；lambda、编译期表、静态局部使用 `cdd$lambda$` / `cdd$ct$` / `cdd$static$` 保留前缀。
+  - 运算符调用端使用 resolved Symbol/FunctionType 的模块限定名；自由二元/一元/后缀运算符按 `resolvedParamTypes` 处理引用形参。
+  - `docs/spec/abi.md`、`docs/spec/modules.md` 同步新符号规则。
+- 测试：
+  - `TypeNodeTest.CDDFunctionSymbolsUseReservedNamespace`、C linkage/复合限定符/变参单射测试。
+  - `CompilerDriverTest.PrivateFunctionsInDifferentModulesKeepDistinctSymbols`、`PrivateVariablesInDifferentModulesKeepDistinctSymbols`、`ModuleOperatorOverloadUsesQualifiedSymbol`。
+  - `OverloadingE2E.CLinkageNameOnlyAppliesToExternSignature`、`VarArgOverloadHasDistinctSymbol`、`FunctionSymbolDoesNotConsumeGlobalVariableName`。
+- 验证：
+  - 全量 **2149/2149** 通过。
+  - `examples/all_features.cdd` 编译运行输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 提交：`f9134aa`。
