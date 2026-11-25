@@ -1965,3 +1965,19 @@
 - 修复：`CallExprAST` 新增 `resolvedCalleeGlobalName`；sema 在函数指针变量为静态存储时填入 `Symbol::mangledName`；间接调用优先按该模块限定符号取 `GlobalVariable`，本地变量仍走作用域查找。新增跨模块回归测试。
 - 验证：全量 **2150/2150** 通过；`examples/all_features.cdd` 输出 `ALL FEATURES OK`；16 个 quick benchmark 校验和一致。
 - 提交：`3d91efc`。
+
+## 2026-11-25 — 符号解析结构简化
+
+- 背景：上一轮修复符号隔离后，sema 中多处重复“优先使用 `FunctionType::symbolName`，否则重新 `mangleFunction`，再补模块限定”的分支，容易在新增调用路径时漏掉模块限定或 fallback。
+- 重构：
+  - `Mangle.h/cpp` 新增 `resolveFunctionSymbol(preferredSymbol, name, paramTypes, isVarArg, moduleName)`：有 sema 选定符号时只补模块限定，否则按声明签名重新修饰。
+  - `SemanticAnalyzer` 的声明/函数引用/直接调用/方法调用/成员与自由运算符/`operator()`/`operator[]` 统一改走该 helper，删除重复的 `symbolName.empty()` + `qualifyFunctionSymbolForModule` + `mangleFunction` 三段分支。
+  - `CodegenContext::tryUserConversion` 同步使用 helper。
+  - `Mangle.cpp` 用 `kFunctionPrefix` / `kModuleFunctionPrefix` / `kVariablePrefix` 常量替换散落字符串与 `substr(6)` 魔数；`mangleGlobalVariable` 改为直接拼接前缀 + 模块标记 + 名字。
+  - `TranslationUnitAST::codegen` 的前置函数原型递归和全局变量预扫提取为文件内 `predeclareFunctions` / `isGlobalVariableContainer` helper，主流程只保留三段预扫的意图。
+  - 新增 `resolveFunctionSymbol` 单测（已有符号补模块、空符号走 fallback）。
+- 验证：
+  - 全量 **2150/2150** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
+  - `git diff --check` 无输出。
