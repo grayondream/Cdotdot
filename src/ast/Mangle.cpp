@@ -265,6 +265,10 @@ std::string typeToMangledSignature(Type* type) {
 }
 
 namespace {
+const std::string kFunctionPrefix = "cdd$f$";
+const std::string kModuleFunctionPrefix = "cdd$fm";
+const std::string kVariablePrefix = "cdd$v";
+
 std::string mangleFunctionCpp(const std::string& name,
                               const std::vector<Type*>& paramTypes,
                               bool isVarArg, const std::string& moduleName) {
@@ -273,9 +277,9 @@ std::string mangleFunctionCpp(const std::string& name,
     // and identifier-like spellings such as `f_int32`. Participating modules
     // add their module name so module-private same-name functions do not
     // collide in the shared object-file symbol space.
-    std::string result = "cdd$f$";
+    std::string result = kFunctionPrefix;
     if (!moduleName.empty())
-        result = "cdd$fm" + lengthPrefixedName(moduleName) + "$";
+        result = kModuleFunctionPrefix + lengthPrefixedName(moduleName) + "$";
     result += escapeMangledName(name);
     for (auto* type : paramTypes) {
         result += "_" + typeToMangledSignature(type);
@@ -290,9 +294,9 @@ std::string mangleFunctionCpp(const std::string& name,
 
 namespace {
 bool hasModuleQualifier(const std::string& symbol) {
-    if (symbol.rfind("cdd$fm", 0) != 0) return false;
-    size_t pos = 6; // cdd$fm
-    size_t digits = pos;
+    if (symbol.rfind(kModuleFunctionPrefix, 0) != 0) return false;
+    size_t pos = kModuleFunctionPrefix.size();
+    const size_t digits = pos;
     while (pos < symbol.size() && symbol[pos] >= '0' && symbol[pos] <= '9') ++pos;
     return pos > digits && pos < symbol.size() && symbol[pos] == ':';
 }
@@ -300,22 +304,29 @@ bool hasModuleQualifier(const std::string& symbol) {
 
 std::string qualifyFunctionSymbolForModule(const std::string& symbol,
                                            const std::string& moduleName) {
-    if (moduleName.empty() || symbol.rfind("cdd$f$", 0) != 0 ||
+    if (moduleName.empty() || symbol.rfind(kFunctionPrefix, 0) != 0 ||
         hasModuleQualifier(symbol)) {
         return symbol;
     }
-    return "cdd$fm" + lengthPrefixedName(moduleName) + "$" + symbol.substr(6);
+    return kModuleFunctionPrefix + lengthPrefixedName(moduleName) + "$" +
+           symbol.substr(kFunctionPrefix.size());
+}
+
+std::string resolveFunctionSymbol(const std::string& preferredSymbol,
+                                  const std::string& name,
+                                  const std::vector<Type*>& paramTypes,
+                                  bool isVarArg,
+                                  const std::string& moduleName) {
+    if (!preferredSymbol.empty())
+        return qualifyFunctionSymbolForModule(preferredSymbol, moduleName);
+    return mangleFunction(name, paramTypes, isVarArg, moduleName);
 }
 
 std::string mangleGlobalVariable(const std::string& name,
                                  const std::string& moduleName) {
-    std::string result = "cdd$v";
-    if (!moduleName.empty())
-        result += "m" + lengthPrefixedName(moduleName) + "$";
-    else
-        result += "$";
-    result += name;
-    return result;
+    const std::string moduleMarker =
+        moduleName.empty() ? "$" : "m" + lengthPrefixedName(moduleName) + "$";
+    return kVariablePrefix + moduleMarker + name;
 }
 
 std::string mangleFunction(const std::string& name,

@@ -1597,6 +1597,37 @@ llvm::Value* DeclStmtAST::codegen(CodegenContext& ctx) {
     return nullptr;
 }
 
+namespace {
+// Function prototypes must exist before any global initializer or function
+// body can refer to them. Recurse through namespaces, records, and multi-var
+// declarations so imported namespace functions are visible too.
+void predeclareFunctions(DeclAST* decl, CodegenContext& ctx) {
+    if (!decl) return;
+    if (auto* fn = dynamic_cast<FunctionDeclAST*>(decl)) {
+        fn->codegenPrototype(ctx);
+    } else if (auto* ns = dynamic_cast<NamespaceDeclAST*>(decl)) {
+        for (auto& child : ns->declarations)
+            predeclareFunctions(child.get(), ctx);
+    } else if (auto* st = dynamic_cast<StructDeclAST*>(decl)) {
+        for (auto& method : st->methods)
+            predeclareFunctions(method.get(), ctx);
+        for (auto& member : st->staticMembers)
+            predeclareFunctions(member.get(), ctx);
+        for (auto& nested : st->nestedTypes)
+            predeclareFunctions(nested.get(), ctx);
+    } else if (auto* mv = dynamic_cast<MultiVarDeclAST*>(decl)) {
+        for (auto& child : mv->decls)
+            predeclareFunctions(child.get(), ctx);
+    }
+}
+
+bool isGlobalVariableContainer(DeclAST* decl) {
+    return dynamic_cast<VarDeclAST*>(decl) ||
+           dynamic_cast<ArrayDeclAST*>(decl) ||
+           dynamic_cast<MultiVarDeclAST*>(decl);
+}
+} // namespace
+
 llvm::Value* TranslationUnitAST::codegen(CodegenContext& ctx) {
     // 预扫 1：struct/class 布局——模板实例（名字含 '$'）先行，且按基类
     // 依赖序出码（评审 C3：模板类继承非模板基类时，基类子对象槽依赖基类
@@ -1632,39 +1663,15 @@ llvm::Value* TranslationUnitAST::codegen(CodegenContext& ctx) {
     }
 
     // 预扫 2：函数签名声明——调用点（含前向引用的模板实例方法/函数）按需
-    // 解析符号。递归进 namespace/record，使全局常量的函数指针初始化器在
-    // 普通声明循环之前就能解析到被导入模块的函数。
-    std::function<void(DeclAST*)> predeclareFunctions = [&](DeclAST* decl) {
-        if (!decl) return;
-        if (auto* fn = dynamic_cast<FunctionDeclAST*>(decl)) {
-            fn->codegenPrototype(ctx);
-        } else if (auto* ns = dynamic_cast<NamespaceDeclAST*>(decl)) {
-            for (auto& child : ns->declarations)
-                predeclareFunctions(child.get());
-        } else if (auto* st = dynamic_cast<StructDeclAST*>(decl)) {
-            for (auto& method : st->methods)
-                predeclareFunctions(method.get());
-            for (auto& member : st->staticMembers)
-                predeclareFunctions(member.get());
-            for (auto& nested : st->nestedTypes)
-                predeclareFunctions(nested.get());
-        } else if (auto* mv = dynamic_cast<MultiVarDeclAST*>(decl)) {
-            for (auto& child : mv->decls)
-                predeclareFunctions(child.get());
-        }
-    };
-    for (auto& decl : declarations) predeclareFunctions(decl.get());
+    // 解析符号。全局常量的函数指针初始化器因此在普通声明循环之前即可解析。
+    for (auto& decl : declarations) predeclareFunctions(decl.get(), ctx);
 
     // Pre-scan 3: file-scope variables/arrays. Function bodies may reference
     // them, so create their definitions before any body is emitted; otherwise
     // a body's external declaration claims the symbol and the real definition
     // is auto-renamed to `name.1`.
     for (auto& decl : declarations) {
-        if (dynamic_cast<VarDeclAST*>(decl.get()) ||
-            dynamic_cast<ArrayDeclAST*>(decl.get()) ||
-            dynamic_cast<MultiVarDeclAST*>(decl.get())) {
-            decl->codegen(ctx);
-        }
+        if (isGlobalVariableContainer(decl.get())) decl->codegen(ctx);
     }
 
     llvm::Value* last = nullptr;

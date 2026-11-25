@@ -764,10 +764,8 @@ llvm::Value* CodegenContext::tryUserConversion(llvm::Value* val, Type* fromAST,
         objPtr = createEntryAlloca(val->getType(), "conv.tmp");
         builder.CreateStore(val, objPtr);
     }
-    llvm::Function* fn = getModule().getFunction(
-        chosen->symbolName.empty()
-            ? mangleFunction(chosenName, chosen->paramTypes, chosen->isVarArg)
-            : chosen->symbolName);
+    llvm::Function* fn = getModule().getFunction(resolveFunctionSymbol(
+        chosen->symbolName, chosenName, chosen->paramTypes, chosen->isVarArg));
     if (!fn) return nullptr;
     llvm::Value* result = builder.CreateCall(fn, {objPtr}, "conv");
     if (targetLLVMType->isIntegerTy(1) &&

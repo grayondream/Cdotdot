@@ -211,6 +211,10 @@ TEST_F(TypeNodeTest, CDDFunctionSymbolsUseReservedNamespace) {
               "cdd$fm1:a$f_int32");
     EXPECT_EQ(qualifyFunctionSymbolForModule("cdd$fm1:a$f_int32", "b"),
               "cdd$fm1:a$f_int32");
+    EXPECT_EQ(resolveFunctionSymbol("cdd$f$f_int32", "ignored", {}, false, "a"),
+              "cdd$fm1:a$f_int32");
+    EXPECT_EQ(resolveFunctionSymbol("", "f", {typeCtx->getInt32()}, false, "a"),
+              "cdd$fm1:a$f_int32");
     EXPECT_EQ(mangleGlobalVariable("g"), "cdd$v$g");
     EXPECT_EQ(mangleGlobalVariable("g", "a"), "cdd$vm1:a$g");
 }
