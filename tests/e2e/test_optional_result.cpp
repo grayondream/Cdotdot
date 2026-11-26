@@ -217,3 +217,35 @@ TEST_F(OptionalResultE2E, UsingRvalueMember) {
         int32 main() { return make(1).value; }
     )", "optres10.cdd"), 7);
 }
+
+// P0: aggregate copy-initialization of a result field must not read an
+// uninitialized destination discriminant.
+TEST_F(OptionalResultE2E, ResultFieldCopyInitSafe) {
+    EXPECT_EQ(runSource(R"(
+        struct U { result<string, string> r; };
+        int32 main() {
+            U a;
+            a.r.ok = true;
+            a.r.value = string.new("V");
+            U b = a;
+            if (!b.r.ok) { return 1; }
+            string_view v = b.r.value;
+            if (v != "V") { return 2; }
+            a.r.value.destroy(); b.r.value.destroy();
+            return 0;
+        }
+    )", "optres_p0_init.cdd"), 0);
+}
+
+// P0: direct optional assignment must use the field-aware path.
+TEST_F(OptionalResultE2E, OptionalDirectAssignCopies) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            optional<string> a = { true, string.new("hello") };
+            optional<string> b = { true, string.new("old") };
+            b = a;
+            a.value.destroy(); b.value.destroy();
+            return 0;
+        }
+    )", "optres_p0_assign.cdd"), 0);
+}

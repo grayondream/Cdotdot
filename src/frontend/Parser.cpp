@@ -3389,6 +3389,15 @@ std::unique_ptr<DeclAST> Parser::parseDeclarationImpl() {
             } else {
                 markNamespaceCName(fn->name, externParamTypes, fn->isVarArg);
             }
+        } else {
+            std::function<void(DeclAST*)> markExtern = [&](DeclAST* d) {
+                if (auto* var = dynamic_cast<VarDeclAST*>(d)) {
+                    var->isExternLocal = true;
+                } else if (auto* multi = dynamic_cast<MultiVarDeclAST*>(d)) {
+                    for (auto& sub : multi->decls) markExtern(sub.get());
+                }
+            };
+            markExtern(decl.get());
         }
         return decl;
     }

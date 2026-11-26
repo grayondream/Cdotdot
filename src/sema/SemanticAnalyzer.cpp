@@ -2517,6 +2517,54 @@ std::optional<SemanticAnalyzer::ConstValue> SemanticAnalyzer::evaluateConstexpr(
     return std::nullopt;
 }
 
+bool SemanticAnalyzer::isConstantInitializerExpr(ExprAST* expr) {
+    if (!expr) return true;
+    if (evaluateConstexpr(expr)) return true;
+    // Address constants and null pointers are valid static initializers even
+    // though the compile-time interpreter does not fold them.
+    if (dynamic_cast<NullExprAST*>(expr)) return true;
+    if (auto* un = dynamic_cast<UnaryExprAST*>(expr)) {
+        if (un->op == UnaryOp::AddressOf) {
+            auto* var = dynamic_cast<VariableExprAST*>(un->operand.get());
+            if (!var) return false;
+            if (var->isFunctionRef) return true;
+            if (currentScope && currentScope->lookup(var->name)) return true;
+            if (globalScope && globalScope->lookup(var->name)) return true;
+            return false;
+        }
+        return isConstantInitializerExpr(un->operand.get());
+    }
+    if (auto* bin = dynamic_cast<BinaryExprAST*>(expr)) {
+        return isConstantInitializerExpr(bin->left.get()) &&
+               isConstantInitializerExpr(bin->right.get());
+    }
+    if (auto* tern = dynamic_cast<TernaryExprAST*>(expr)) {
+        return isConstantInitializerExpr(tern->cond.get()) &&
+               isConstantInitializerExpr(tern->then.get()) &&
+               isConstantInitializerExpr(tern->elseExpr.get());
+    }
+    if (auto* cast = dynamic_cast<CastExprAST*>(expr)) {
+        return isConstantInitializerExpr(cast->expr.get());
+    }
+    if (auto* list = dynamic_cast<InitializerListExprAST*>(expr)) {
+        for (auto& item : list->initializers)
+            if (!isConstantInitializerExpr(item.get())) return false;
+        return true;
+    }
+    if (auto* lit = dynamic_cast<CompoundLiteralExprAST*>(expr)) {
+        return isConstantInitializerExpr(lit->initList.get());
+    }
+    if (auto* var = dynamic_cast<VariableExprAST*>(expr)) {
+        if (var->isFunctionRef || var->isEnumConstant) return true;
+        Symbol* sym = currentScope ? currentScope->lookup(var->name) : nullptr;
+        if (!sym && globalScope) sym = globalScope->lookup(var->name);
+        if (!sym) return false;
+        Type* t = stripTypedef(sym->type);
+        return t && t->isConst && sym->isStaticStorage;
+    }
+    return false;
+}
+
 bool SemanticAnalyzer::constValueTruthy(const ConstValue& v) {
     return ctTruthy(v);
 }
@@ -9104,12 +9152,46 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
             checkList(node.type, initList);
         }
     }
+    // Global/static initialization requires a constant expression. Previously
+    // an unrepresentable initializer was silently zeroed (or crashed codegen
+    // while emitting a call with no insertion block).
+    if (atGlobalLevel() && !node.isCompileTime && node.initExpr && !referenceVar) {
+        auto folded = evaluateConstexpr(node.initExpr.get());
+        if (folded) {
+            if (folded->type == ConstValue::INT ||
+                folded->type == ConstValue::DOUBLE ||
+                folded->type == ConstValue::CHAR) {
+                FoldedValue fv;
+                fv.type = static_cast<FoldedValue::Type>(folded->type);
+                if (folded->type == ConstValue::INT) fv.intVal = folded->intVal;
+                if (folded->type == ConstValue::DOUBLE) fv.doubleVal = folded->doubleVal;
+                if (folded->type == ConstValue::CHAR) fv.charVal = folded->charVal;
+                node.foldedValue = fv;
+                Type* declared = stripTypedef(node.type);
+                if (declared && declared->isConst)
+                    compileTimeValues[node.name] = *folded;
+            }
+            // Aggregates/containers are still emitted by the existing
+            // aggregate-constant builder (designators, bit-fields and base
+            // subobjects have specialized layouts there).
+        } else if (!isConstantInitializerExpr(node.initExpr.get())) {
+            emitError("global variable '" + node.name +
+                          "' must be initialized with a constant expression",
+                      node);
+        }
+    }
     if (node.isExternLocal) {
         Symbol* outer = globalScope->lookup(node.name);
         if (!outer && activeModuleScope)
             outer = activeModuleScope->lookup(node.name);
-        if (outer && !outer->mangledName.empty())
+        if (outer && outer->type &&
+            outer->type->kind == TypeKind::Function) {
+            emitError("extern object '" + node.name +
+                          "' conflicts with a function of the same name",
+                      node);
+        } else if (outer && !outer->mangledName.empty()) {
             node.externSymbolName = outer->mangledName;
+        }
     }
     Symbol* declaredVar = declareSymbol(node.name, node.type);
     if (!declaredVar) {
@@ -9227,6 +9309,12 @@ void SemanticAnalyzer::visit(ArrayDeclAST& node) {
             initList->isLValue = false;
             for (auto& e : initList->initializers) getExprType(*e);
             resolveDesignators(*initList, arrayType, node.name);
+            if (atGlobalLevel() &&
+                !isConstantInitializerExpr(node.initExpr.get())) {
+                emitError("global array '" + node.name +
+                              "' must be initialized with a constant expression",
+                          node);
+            }
         } else {
             // A non-list initializer cannot populate an array: at global scope
             // it was silently zero-filled, locally it stored a scalar into an
@@ -9876,11 +9964,46 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
 void SemanticAnalyzer::visit(UnionDeclAST& node) {
     // P1-05 / ANN-06: union 与成员注解验证。
     validateAnnotations(node.annotations, node, "union");
+    std::function<bool(Type*)> ownsString = [&](Type* t) -> bool {
+        t = stripTypedef(t);
+        if (!t) return false;
+        switch (t->kind) {
+            case TypeKind::String: return true;
+            case TypeKind::Array:
+                return ownsString(static_cast<ArrayType*>(t)->elementType);
+            case TypeKind::Optional:
+                return ownsString(static_cast<OptionalType*>(t)->elementType);
+            case TypeKind::Result: {
+                auto* rt = static_cast<ResultType*>(t);
+                return ownsString(rt->successType) || ownsString(rt->errorType);
+            }
+            case TypeKind::Struct:
+                for (auto& f : static_cast<StructType*>(t)->fields)
+                    if (ownsString(f.type)) return true;
+                return false;
+            case TypeKind::Class: {
+                auto* ct = static_cast<ClassType*>(t);
+                for (auto& f : ct->fields)
+                    if (ownsString(f.type)) return true;
+                return ct->base && ownsString(ct->base);
+            }
+            case TypeKind::Union:
+                for (auto& m : static_cast<UnionType*>(t)->members)
+                    if (ownsString(m.type)) return true;
+                return false;
+            default: return false;
+        }
+    };
     for (auto& member : node.members) {
         validateAnnotations(member.annotations, node, "field");
         // PAR-24: a private class-scoped alias may not name a union member.
         checkNestedTypeAccess(member.type, node);
         checkRestrictPlacement(member.type, node);
+        if (ownsString(member.type)) {
+            emitError("union member '" + member.name +
+                          "' cannot have owning 'string' storage",
+                      node);
+        }
         if (isReferenceType(member.type)) {
             emitError(DiagnosticCode::SemInvalidReferenceBinding,
                       "union reference members are not supported", node);

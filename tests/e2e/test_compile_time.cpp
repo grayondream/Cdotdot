@@ -376,3 +376,19 @@ TEST_F(CompileTimeE2E, CTDepthLimitE2E) {
     analyzer.analyze(*ast);
     EXPECT_FALSE(analyzer.getErrors().empty());
 }
+
+// P0: compile_time layout queries must use the host ABI layout (x86-64:
+// int64 aligns at 8, so S is 16 bytes and O.b is at offset 8).
+TEST_F(CompileTimeE2E, LayoutQueriesUseHostABI) {
+    EXPECT_EQ(runSource(R"(
+        struct S { int64 i; int8 c; };
+        union U { int64 i; int8 c; };
+        struct O { int8 a; int64 b; };
+        int32 main() {
+            if (compile_time.size_of(S) != 16) return 1;
+            if (compile_time.align_of(U) != 8) return 2;
+            if (compile_time.offset_of(O, b) != 8) return 3;
+            return 0;
+        }
+    )", "ct_layout_host.cdd"), 0);
+}

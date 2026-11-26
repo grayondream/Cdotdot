@@ -1,5 +1,6 @@
 #include "Stmt.h"
 #include "Expr.h"
+#include "TypeUtils.h"
 #include "codegen/CodegenContext.h"
 #include "support/Log.h"
 
@@ -108,13 +109,24 @@ llvm::Value* ReturnStmtAST::codegen(CodegenContext& ctx) {
         while (rt && rt->kind == TypeKind::Typedef)
             rt = static_cast<TypedefType*>(rt)->aliasedType;
         if (rt && rt->kind == TypeKind::String &&
+            ctx.getLLVMType(rt) == func->getReturnType() &&
             !ctx.isFreshStringValue(*value)) {
             auto& builder = ctx.getBuilder();
             llvm::Value* srcAddr = nullptr;
+            bool sourceIsReference = false;
             if (auto* varExpr = dynamic_cast<VariableExprAST*>(value.get())) {
                 srcAddr = ctx.lookupVariableAddr(varExpr->name);
+                if (Symbol* sym = ctx.currentScope()->lookup(varExpr->name)) {
+                    sourceIsReference = isReferenceType(sym->type);
+                }
             }
-            if (srcAddr && llvm::isa<llvm::AllocaInst>(srcAddr)) {
+            // Only a direct non-reference local/parameter of exactly the
+            // return type can be moved. A reference variable's alloca holds a
+            // pointer, not a string header; storing the header there corrupts
+            // the stack and aliases the referent.
+            auto* srcAlloca = srcAddr ? llvm::dyn_cast<llvm::AllocaInst>(srcAddr) : nullptr;
+            if (srcAlloca && !sourceIsReference &&
+                srcAlloca->getAllocatedType() == func->getReturnType()) {
                 // 移动局部/形参：源存储清零，返回值独占缓冲。
                 builder.CreateStore(
                     llvm::Constant::getNullValue(func->getReturnType()), srcAddr);

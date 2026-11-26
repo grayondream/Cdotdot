@@ -73,6 +73,7 @@ public:
     // LEX-15: fixed-width base type for a numeric literal kind (nullptr for None).
     Type* typeForLiteralKind(LiteralKind kind);
     std::optional<ConstValue> evaluateConstexpr(ExprAST* expr);
+    bool isConstantInitializerExpr(ExprAST* expr);
     // P1-04 评审 I1: 以已折叠实参解释 constexpr 函数体（求值器委托用，
     // 避免 evaluateConstexpr 整树 CT 委托互递归）。
     std::optional<ConstValue> evalConstexprCallCT(CallExprAST& call,

@@ -218,3 +218,12 @@ TEST_F(TernaryE2E, PrefixIncOnMember) {
         }
     )", "ternary11.cdd"), 6);
 }
+
+// P0: a ternary whose arms are void must not emit a `phi void`.
+TEST_F(TernaryE2E, VoidArmsEmitValidIR) {
+    EXPECT_EQ(runSource(R"(
+        void a() {}
+        void b() {}
+        int32 main() { bool c = true; c ? a() : b(); return 0; }
+    )", "ternary12.cdd"), 0);
+}

@@ -7,10 +7,16 @@
 #include "ast/TypeUtils.h"
 #include "ast/Symbol.h"
 #include "sema/SemanticAnalyzer.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -23,6 +29,38 @@
 #include <unordered_set>
 
 using ConstValue = CompileTimeEvaluator::ConstValue;
+
+// The evaluator's independent module must use the same host DataLayout as
+// codegen; LLVM's bare default gives i64 4-byte ABI alignment and makes
+// compile_time.size_of/offset_of disagree with runtime sizeof/offsetof.
+static std::string ctHostDataLayoutString() {
+    static const std::string cached = [] {
+        llvm::InitializeAllTargetInfos();
+        llvm::InitializeAllTargets();
+        llvm::InitializeAllTargetMCs();
+        const std::string triple = llvm::sys::getDefaultTargetTriple();
+        llvm::Triple tt(triple);
+        std::string error;
+#if LLVM_VERSION_MAJOR >= 19
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(tt, error);
+#else
+        const llvm::Target* target =
+            llvm::TargetRegistry::lookupTarget(triple, error);
+#endif
+        if (!target) return std::string();
+        llvm::TargetOptions options;
+#if LLVM_VERSION_MAJOR >= 19
+        std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+            tt, "generic", std::string(), options, llvm::Reloc::PIC_));
+#else
+        std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+            triple, "generic", std::string(), options, llvm::Reloc::PIC_));
+#endif
+        if (!tm) return std::string();
+        return tm->createDataLayout().getStringRepresentation();
+    }();
+    return cached;
+}
 
 // P1-04 / CT-04: host 目标映射（spec §4）：triple → os/arch/cpu 查询值。
 static std::string ctTargetOs() {
@@ -75,10 +113,12 @@ static bool ctVersionAtLeast(const std::string& requested) {
 
 CompileTimeEvaluator::CompileTimeEvaluator(SemanticAnalyzer& sema)
     : m_sema(sema) {
-    // P1-04 / CT-06: 独立 LLVMContext/Module 承载布局查询（DataLayout 与
-    // codegen 的 host 目标一致——默认布局即 64-bit LP64，与 x86_64/aarch64 匹配）。
+    // P1-04 / CT-06: 独立 LLVMContext/Module 承载布局查询（DataLayout 使用
+    // host TargetMachine，与 codegen 的 driver 目标一致，避免默认 i64 4-byte
+    // ABI 对齐导致 compile_time.size_of/offset_of 与运行时不一致）。
     m_llvmCtx = std::make_unique<llvm::LLVMContext>();
     m_module = std::make_unique<llvm::Module>("compile_time_layout", *m_llvmCtx);
+    m_module->setDataLayout(ctHostDataLayoutString());
 }
 
 CompileTimeEvaluator::~CompileTimeEvaluator() = default;

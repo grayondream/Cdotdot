@@ -105,3 +105,67 @@ TEST_F(GlobalsE2E, GlobalSliceZeroInitialized) {
         int32 main() { return g.len == 0 ? 0 : 1; }
     )", "test_global_slice.cdd"), 0);
 }
+
+// P0: a global initializer that needs runtime evaluation must be diagnosed;
+// it must not be silently zero-initialized or crash codegen.
+TEST_F(GlobalsE2E, NonConstantGlobalInitializerRejected) {
+    Lexer lexer("test_global_dynamic_init.cdd",
+        "int32 f() { return 7; }\n"
+        "int32 g = f();\n"
+        "int32 main() { return g; }\n");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    EXPECT_FALSE(analyzer.getErrors().empty());
+}
+
+// P0: a const global referenced by another global initializer is a constant
+// expression; it must fold to its value, not emit ptrtoint(address).
+TEST_F(GlobalsE2E, ConstGlobalReferenceFolds) {
+    EXPECT_EQ(runSource(R"(
+        const int32 a = 5;
+        int32 b = a;
+        int32 main() { return b - 5; }
+    )", "test_global_const_ref.cdd"), 0);
+}
+
+// P0: a block-scope extern object declaration must not bind to a same-named
+// function and emit a `.1` global.
+TEST_F(GlobalsE2E, BlockExternObjectCannotBindFunction) {
+    Lexer lexer("test_block_extern_function.cdd",
+        "int32 f(int32 x) { return x + 1; }\n"
+        "int32 main() { extern int32 f; return f; }\n");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    EXPECT_FALSE(analyzer.getErrors().empty());
+}
+
+// P0: a file-scope extern object is a raw C declaration, not a zero-initialized
+// CDD definition.
+TEST_F(GlobalsE2E, FileScopeExternObjectIsDeclaration) {
+    Lexer lexer("test_global_extern_object.cdd",
+        "extern int32 cextern;\n"
+        "int32 main() { return cextern; }\n");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    ASSERT_TRUE(analyzer.getErrors().empty());
+    CodegenContext ctx;
+    ctx.setSourceFile("test_global_extern_object.cdd");
+    ast->codegen(ctx);
+    llvm::GlobalVariable* gv =
+        ctx.getModule().getGlobalVariable("cextern", /*AllowInternal=*/true);
+    ASSERT_NE(gv, nullptr);
+    EXPECT_TRUE(gv->isDeclaration());
+    EXPECT_FALSE(gv->hasInitializer());
+}

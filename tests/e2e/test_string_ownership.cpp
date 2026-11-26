@@ -600,3 +600,76 @@ TEST_F(StringOwnershipE2E, OptionalInvalidateThenRevalidateSafe) {
         }
     )", "own_opt_retrans.cdd"), 0);
 }
+
+// P0: returning a string& must copy, not move the referent slot or store a
+// 24-byte string header into the reference's 8-byte alloca.
+TEST_F(StringOwnershipE2E, ReturnStringReferenceCopies) {
+    EXPECT_EQ(runSource(R"(
+        string byval(string& r) { return r; }
+        int32 main() {
+            string s = string.new("hello");
+            string t = byval(s);
+            string_view v = t;
+            if (v != "hello") { return 1; }
+            s.destroy(); t.destroy();
+            return 0;
+        }
+    )", "own_return_ref.cdd"), 0);
+}
+
+// P0: by-value aggregate parameters must deep-copy owning string fields.
+TEST_F(StringOwnershipE2E, AggregateByValueArgumentCopies) {
+    EXPECT_EQ(runSource(R"(
+        struct S { string s; };
+        void kill(S x) { x.s.destroy(); }
+        int32 main() {
+            struct S a = { string.new("hello") };
+            kill(a);
+            a.s.destroy();
+            return 0;
+        }
+    )", "own_agg_arg.cdd"), 0);
+}
+
+// P0: a local array of owning strings is zero-initialized before use.
+TEST_F(StringOwnershipE2E, StringArrayZeroInitialized) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            string arr[2];
+            arr[0] = string.new("aa");
+            arr[0].destroy();
+            return 0;
+        }
+    )", "own_string_array.cdd"), 0);
+}
+
+// P0: unions cannot provide safe ownership for an owning string; reject
+// instead of shallow-copying and double-freeing.
+TEST_F(StringOwnershipE2E, StringUnionRejected) {
+    Lexer lexer("own_string_union.cdd", R"(
+        union U { string s; int32 i; };
+        int32 main() { return 0; }
+    )");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    EXPECT_FALSE(analyzer.getErrors().empty());
+}
+
+// P0: expression temporaries in loops must not grow the stack (nested
+// string-by-value call). Keep the count high enough to expose the old leak.
+TEST_F(StringOwnershipE2E, LoopStringArgumentNoStackGrowth) {
+    EXPECT_EQ(runSource(R"(
+        void take(string s) { s.destroy(); }
+        int32 main() {
+            string a = string.new("x");
+            int32 i = 0;
+            while (i < 2000000) { take(a); i = i + 1; }
+            a.destroy();
+            return 0;
+        }
+    )", "own_loop_strarg.cdd"), 0);
+}

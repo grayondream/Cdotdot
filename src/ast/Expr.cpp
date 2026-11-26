@@ -42,12 +42,36 @@ static llvm::Value* emitStringArgCopy(CodegenContext& ctx, llvm::Value* argVal,
                                       Type* paramType) {
     auto& builder = ctx.getBuilder();
     llvm::Type* llvmTy = ctx.getLLVMType(paramType);
-    llvm::Value* tmp = builder.CreateAlloca(llvmTy, nullptr, "strarg");
+    llvm::Value* tmp = ctx.createEntryAlloca(llvmTy, "strarg");
     auto savedIP = builder.saveIP();
     llvm::Function* copyFn = ctx.getStringCopyFn();
     builder.restoreIP(savedIP);
     builder.CreateCall(copyFn, {tmp, argVal});
     return builder.CreateLoad(llvmTy, tmp, "strarg.v");
+}
+
+// By-value aggregates with owning string fields need the same caller-side
+// deep copy as `string`: otherwise callee destroy/mutation frees the caller's
+// buffer.
+static bool isOwningAggregateParam(CodegenContext& ctx, Type* t) {
+    t = stripTypedefsT12(t);
+    if (!t) return false;
+    if (t->kind != TypeKind::Struct && t->kind != TypeKind::Class &&
+        t->kind != TypeKind::Array && t->kind != TypeKind::Optional &&
+        t->kind != TypeKind::Result) {
+        return false;
+    }
+    return ctx.aggregateHasStringField(t);
+}
+
+static llvm::Value* emitAggregateArgCopy(CodegenContext& ctx,
+                                         llvm::Value* argVal,
+                                         Type* paramType) {
+    auto& builder = ctx.getBuilder();
+    llvm::Type* llvmTy = ctx.getLLVMType(paramType);
+    llvm::Value* tmp = ctx.createEntryAlloca(llvmTy, "aggarg");
+    ctx.emitAggregateStringCopy(tmp, argVal, paramType, /*assign=*/false);
+    return builder.CreateLoad(llvmTy, tmp, "aggarg.v");
 }
 
 // TYP-12: strip typedefs, then report whether the value is an array being
@@ -1629,6 +1653,9 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
             if (pt && isStringType(pt) &&
                 !ctx.isFreshStringValue(*args[i])) {
                 argVal = emitStringArgCopy(ctx, argVal, pt);
+            } else if (pt && !isReferenceType(pt) &&
+                       isOwningAggregateParam(ctx, pt)) {
+                argVal = emitAggregateArgCopy(ctx, argVal, pt);
             }
             argsV.push_back(argVal);
         }
@@ -1705,6 +1732,9 @@ llvm::Value* CallExprAST::codegen(CodegenContext& ctx) {
         if (paramType && isStringType(paramType) &&
             !ctx.isFreshStringValue(*args[i])) {
             argVal = emitStringArgCopy(ctx, argVal, paramType);
+        } else if (paramType && !isReferenceType(paramType) &&
+                   isOwningAggregateParam(ctx, paramType)) {
+            argVal = emitAggregateArgCopy(ctx, argVal, paramType);
         }
         argsV.push_back(argVal);
     }
@@ -1904,6 +1934,9 @@ llvm::Value* MethodCallExprAST::codegen(CodegenContext& ctx) {
         if (paramType && isStringType(paramType) &&
             !ctx.isFreshStringValue(*args[i])) {
             argVal = emitStringArgCopy(ctx, argVal, paramType);
+        } else if (paramType && !isReferenceType(paramType) &&
+                   isOwningAggregateParam(ctx, paramType)) {
+            argVal = emitAggregateArgCopy(ctx, argVal, paramType);
         }
         argsV.push_back(argVal);
     }
@@ -2123,7 +2156,8 @@ llvm::Value* AssignmentExprAST::codegen(CodegenContext& ctx) {
         }
         // I4 (D7): 聚合含 string 字段 → 字段感知赋值（string 字段 free 旧 + 拷贝）。
         if (lt && op == AssignOp::Assign &&
-            (lt->kind == TypeKind::Struct || lt->kind == TypeKind::Class) &&
+            (lt->kind == TypeKind::Struct || lt->kind == TypeKind::Class ||
+             lt->kind == TypeKind::Optional || lt->kind == TypeKind::Result) &&
             ctx.aggregateHasStringField(lt)) {
             ctx.emitAggregateStringCopy(lhsVal, result, lt, /*assign=*/true);
             return result;
@@ -2205,6 +2239,12 @@ llvm::Value* TernaryExprAST::codegen(CodegenContext& ctx) {
     builder.CreateBr(mergeBB);
 
     builder.SetInsertPoint(mergeBB);
+    // Void arms have no value; a `phi void` is invalid IR. Both branches have
+    // already emitted their side effects and branched here.
+    if ((commonLLVM && commonLLVM->isVoidTy()) ||
+        thenVal->getType()->isVoidTy()) {
+        return nullptr;
+    }
     llvm::PHINode* phi = builder.CreatePHI(thenVal->getType(), 2, "ternarytmp");
     phi->addIncoming(thenVal, thenPred);
     phi->addIncoming(elseVal, elsePred);

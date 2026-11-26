@@ -402,3 +402,58 @@ TEST_F(ClassCodegenE2E, RedefStructE2E) {
     // 内存 Diagnostic::format() 不含码位（E2004 由驱动打印时附加），断言消息文本。
     EXPECT_NE(analyzer.getErrors().front().format().find("redefinition of type"), std::string::npos);
 }
+
+// P0: derived base subobject containing no string must still be copied.
+TEST_F(ClassCodegenE2E, DerivedBaseSubobjectCopied) {
+    EXPECT_EQ(runSource(R"(
+        class B { public: int32 x; int32 y; };
+        class D : public B { public: string s; };
+        int32 main() {
+            D a; a.x = 7; a.y = 8; a.s = string.new("hello");
+            D b; b.x = 99; b.y = 88; b.s = string.new("old");
+            b = a;
+            if (b.x != 7) return 1;
+            if (b.y != 8) return 2;
+            if (b.s.len() != 5) return 3;
+            a.s.destroy(); b.s.destroy();
+            return 0;
+        }
+    )", "test_inh_base_copy.cdd"), 0);
+}
+
+// P0: materialized derived layout (bit-field) must copy strings without
+// indexing past the LLVM struct.
+TEST_F(ClassCodegenE2E, DerivedMaterializedStringCopySafe) {
+    EXPECT_EQ(runSource(R"(
+        class B { public: int32 x; };
+        class D : public B { public: string s; int32 bf : 3; };
+        int32 main() {
+            D a; a.s = string.new("hello"); a.bf = 3;
+            D b; b = a;
+            if (b.s.len() != 5) return 1;
+            a.s.destroy(); b.s.destroy();
+            return 0;
+        }
+    )", "test_inh_materialized_copy.cdd"), 0);
+}
+
+// P0: a method body's reference to a later/other global must not pre-claim the
+// symbol as an external declaration and suppress its real definition.
+TEST_F(ClassCodegenE2E, MethodBodyGlobalDefinitionStaysDefined) {
+    EXPECT_EQ(runSource(R"(
+        int32 g = 5;
+        struct S { int32 get() { return g; } };
+        int32 main() { S s; return s.get() - 5; }
+    )", "test_method_global_def.cdd"), 0);
+}
+
+// P0: an out-of-class static data definition must not define a bare-name
+// global that steals an unrelated module global.
+TEST_F(ClassCodegenE2E, OutOfClassStaticDoesNotStealGlobal) {
+    EXPECT_EQ(runSource(R"(
+        struct S { static int32 count; };
+        int32 S::count = 10;
+        int32 count = 3;
+        int32 main() { return (count + S::count) == 13 ? 0 : 1; }
+    )", "test_ooc_static_global.cdd"), 0);
+}

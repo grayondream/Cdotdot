@@ -2119,6 +2119,12 @@ bool CodegenContext::aggregateHasStringField(Type* t) {
             return aggregateHasStringField(rt->successType) ||
                    aggregateHasStringField(rt->errorType);
         }
+        case TypeKind::Union: {
+            auto* ut = static_cast<UnionType*>(t);
+            for (auto& m : ut->members)
+                if (aggregateHasStringField(m.type)) return true;
+            return false;
+        }
         default:
             return false;
     }
@@ -2167,6 +2173,12 @@ void CodegenContext::emitAggregateStringCopy(llvm::Value* dst, llvm::Value* srcV
     if (!aggType) {
         return;
     }
+    // Initialization writes a fresh object: zero it first so inactive
+    // optional/result slots and unspecified aggregate padding never expose
+    // garbage owning pointers to a later assign/release.
+    if (!assign) {
+        builder.CreateStore(llvm::Constant::getNullValue(getLLVMType(aggType)), dst);
+    }
     llvm::LLVMContext& c = *context;
     // 注意：不 save/restore 外层插入点——Struct/Class/Array 不改变插入块；
     // Optional/Result 的收尾块（doneBB）是控制流汇合点，调用方必须从其继续。
@@ -2176,20 +2188,28 @@ void CodegenContext::emitAggregateStringCopy(llvm::Value* dst, llvm::Value* srcV
             llvm::Type* llvmTy = getLLVMType(aggType);
             std::vector<FieldInfo>* fields = nullptr;
             Type* baseType = nullptr;
-            unsigned baseOffset = 0;
+            bool materialized = false;
             if (aggType->kind == TypeKind::Struct) {
-                fields = &static_cast<StructType*>(aggType)->fields;
+                auto* st = static_cast<StructType*>(aggType);
+                fields = &st->fields;
+                baseType = st->base;
+                materialized = st->layoutMaterialized;
             } else {
                 auto* ct = static_cast<ClassType*>(aggType);
                 fields = &ct->fields;
                 baseType = ct->base;
-                if (!ct->baseClass.empty()) baseOffset = 1;
+                materialized = ct->layoutMaterialized;
             }
-            // 基类子对象占 slot 0（INH-01），递归。
-            if (baseType && aggregateHasStringField(baseType)) {
+            const bool hasBase = baseType != nullptr;
+            // Materialized layouts already contain the base pseudo-field in
+            // `fields`; default layouts keep a separate slot 0.
+            const unsigned baseOffset = (hasBase && !materialized) ? 1 : 0;
+            // 基类子对象占 slot 0（INH-01），递归。Even a base without string
+            // must be copied; otherwise derived assignment loses its fields.
+            if (hasBase && !materialized) {
                 llvm::Value* baseAddr = builder.CreateStructGEP(llvmTy, dst, 0, "agg.basep");
                 llvm::Value* baseVal = builder.CreateExtractValue(srcVal, 0, "agg.base");
-                emitAggregateStringCopy(baseAddr, baseVal, baseType, assign);
+                emitStringValueCopy(baseAddr, baseVal, baseType, assign);
             }
             for (size_t i = 0; i < fields->size(); ++i) {
                 unsigned idx = baseOffset + (unsigned)i;
@@ -2221,6 +2241,20 @@ void CodegenContext::emitAggregateStringCopy(llvm::Value* dst, llvm::Value* srcV
             llvm::Value* srcV = builder.CreateExtractValue(srcVal, 1, "agg.opt.v");
             llvm::Value* dstValidSlot = builder.CreateStructGEP(optLLVM, dst, 0, "agg.opt.vp");
             llvm::Value* dstVSlot = builder.CreateStructGEP(optLLVM, dst, 1, "agg.opt.vp.v");
+            // Initialization has no old discriminant to release; reading it
+            // would inspect an uninitialized stack slot.
+            if (!assign) {
+                llvm::Function* initFn = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock* initBody = llvm::BasicBlock::Create(c, "agg.opt.init", initFn);
+                llvm::BasicBlock* initDone = llvm::BasicBlock::Create(c, "agg.opt.initdone", initFn);
+                builder.CreateCondBr(srcValid, initBody, initDone);
+                builder.SetInsertPoint(initBody);
+                emitStringValueCopy(dstVSlot, srcV, optTy->elementType, false);
+                builder.CreateBr(initDone);
+                builder.SetInsertPoint(initDone);
+                builder.CreateStore(srcValid, dstValidSlot);
+                break;
+            }
             // 遗留缺陷修复：目标"变为失效"（srcValid=false）时 value 槽必须释放
             // 旧缓冲——先读旧 valid 位，旧有效则 free+置零槽位；否则旧缓冲泄漏
             // 且槽位残留（破坏"valid⟹value 含缓冲"不变量）。
@@ -2254,6 +2288,22 @@ void CodegenContext::emitAggregateStringCopy(llvm::Value* dst, llvm::Value* srcV
             llvm::Value* dstOkSlot = builder.CreateStructGEP(resLLVM, dst, 0, "agg.res.okp");
             llvm::Value* dstVSlot = builder.CreateStructGEP(resLLVM, dst, 1, "agg.res.vp");
             llvm::Value* dstESlot = builder.CreateStructGEP(resLLVM, dst, 2, "agg.res.ep");
+            if (!assign) {
+                llvm::Function* initFn = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock* initOk = llvm::BasicBlock::Create(c, "agg.res.initok", initFn);
+                llvm::BasicBlock* initErr = llvm::BasicBlock::Create(c, "agg.res.initerr", initFn);
+                llvm::BasicBlock* initDone = llvm::BasicBlock::Create(c, "agg.res.initdone", initFn);
+                builder.CreateCondBr(srcOk, initOk, initErr);
+                builder.SetInsertPoint(initOk);
+                emitStringValueCopy(dstVSlot, srcV, rt->successType, false);
+                builder.CreateBr(initDone);
+                builder.SetInsertPoint(initErr);
+                emitStringValueCopy(dstESlot, srcE, rt->errorType, false);
+                builder.CreateBr(initDone);
+                builder.SetInsertPoint(initDone);
+                builder.CreateStore(srcOk, dstOkSlot);
+                break;
+            }
             // 遗留缺陷修复：变为失效的槽位须释放旧缓冲——ok→err 时旧 value 缓冲
             // （oldOk 为真）、err→ok 时旧 error 缓冲（oldOk 为假）free+置零。
             llvm::Value* oldOk = builder.CreateLoad(
@@ -2266,19 +2316,13 @@ void CodegenContext::emitAggregateStringCopy(llvm::Value* dst, llvm::Value* srcV
             llvm::BasicBlock* doneBB = llvm::BasicBlock::Create(c, "agg.res.done", curFn);
             builder.CreateCondBr(srcOk, okBB, errBB);
             builder.SetInsertPoint(okBB);
-            if (aggregateHasStringField(rt->successType))
-                emitStringValueCopy(dstVSlot, srcV, rt->successType, assign);
-            else
-                builder.CreateStore(srcV, dstVSlot);
+            emitStringValueCopy(dstVSlot, srcV, rt->successType, assign);
             builder.CreateCondBr(oldOk, doneBB, freeErrBB);
             builder.SetInsertPoint(freeErrBB);
             emitStringValueRelease(dstESlot, rt->errorType);
             builder.CreateBr(doneBB);
             builder.SetInsertPoint(errBB);
-            if (aggregateHasStringField(rt->errorType))
-                emitStringValueCopy(dstESlot, srcE, rt->errorType, assign);
-            else
-                builder.CreateStore(srcE, dstESlot);
+            emitStringValueCopy(dstESlot, srcE, rt->errorType, assign);
             builder.CreateCondBr(oldOk, freeValBB, doneBB);
             builder.SetInsertPoint(freeValBB);
             emitStringValueRelease(dstVSlot, rt->successType);
@@ -2350,18 +2394,23 @@ void CodegenContext::emitAggregateStringRelease(llvm::Value* dst, Type* aggType)
             llvm::Type* llvmTy = getLLVMType(aggType);
             std::vector<FieldInfo>* fields = nullptr;
             Type* baseType = nullptr;
-            unsigned baseOffset = 0;
+            bool materialized = false;
             if (aggType->kind == TypeKind::Struct) {
-                fields = &static_cast<StructType*>(aggType)->fields;
+                auto* st = static_cast<StructType*>(aggType);
+                fields = &st->fields;
+                baseType = st->base;
+                materialized = st->layoutMaterialized;
             } else {
                 auto* ct = static_cast<ClassType*>(aggType);
                 fields = &ct->fields;
                 baseType = ct->base;
-                if (!ct->baseClass.empty()) baseOffset = 1;
+                materialized = ct->layoutMaterialized;
             }
-            if (baseType && aggregateHasStringField(baseType)) {
+            const bool hasBase = baseType != nullptr;
+            const unsigned baseOffset = (hasBase && !materialized) ? 1 : 0;
+            if (hasBase && !materialized) {
                 llvm::Value* baseAddr = builder.CreateStructGEP(llvmTy, dst, 0, "rel.basep");
-                emitAggregateStringRelease(baseAddr, baseType);
+                emitStringValueRelease(baseAddr, baseType);
             }
             for (size_t i = 0; i < fields->size(); ++i) {
                 unsigned idx = baseOffset + (unsigned)i;

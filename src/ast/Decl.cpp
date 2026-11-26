@@ -521,7 +521,7 @@ llvm::Value* emitSliceLiteral(CodegenContext& ctx, Type* sliceType,
     llvm::LLVMContext& c = ctx.getContext();
     auto& builder = ctx.getBuilder();
     auto* anonArrTy = llvm::ArrayType::get(elemTy, n);
-    llvm::AllocaInst* anon = builder.CreateAlloca(anonArrTy, nullptr, "slice.lit");
+    llvm::AllocaInst* anon = ctx.createEntryAlloca(anonArrTy, "slice.lit");
     builder.CreateStore(llvm::Constant::getNullValue(anonArrTy), anon);
     auto* i64 = llvm::Type::getInt64Ty(c);
     for (size_t i = 0; i < n; ++i) {
@@ -1207,6 +1207,22 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
         return global;
     }
 
+    // C file-scope `extern` variable: a raw external declaration, never a CDD
+    // zero-initialized definition.
+    if (isExternLocal && ctx.isGlobalScope()) {
+        const std::string symbol = name;
+        llvm::GlobalVariable* global = ctx.getModule().getGlobalVariable(
+            symbol, /*AllowInternal=*/true);
+        if (!global) {
+            global = new llvm::GlobalVariable(
+                ctx.getModule(), llvmType, /*isConstant=*/type->isConst,
+                llvm::GlobalVariable::ExternalLinkage, /*Initializer=*/nullptr,
+                symbol);
+        }
+        ctx.declareVariable(name, global, type);
+        return global;
+    }
+
     // C static local: emit one module-scope global and bind the function-local
     // name to it. Sema has already proven the initializer is constant.
     if (isStaticLocal && !ctx.isGlobalScope()) {
@@ -1249,20 +1265,27 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
     if (ctx.isGlobalScope()) {
         const std::string globalSymbol =
             mangleGlobalVariable(name, moduleName);
-        if (llvm::GlobalVariable* existing =
-                ctx.getModule().getGlobalVariable(globalSymbol, /*AllowInternal=*/true)) {
+        if (isOutOfClassStatic) {
+            // The initializer was attached to the in-class static member by
+            // sema; emitting a second bare-name global would steal an
+            // unrelated variable with the same spelling.
+            return nullptr;
+        }
+        llvm::GlobalVariable* existing =
+            ctx.getModule().getGlobalVariable(globalSymbol, /*AllowInternal=*/true);
+        if (existing && existing->hasInitializer()) {
             ctx.declareVariable(name, existing, type);
             return existing;
         }
         llvm::Constant* initConstant = nullptr;
-        if (isCompileTime && foldedContainer) {
+        if (foldedContainer) {
             initConstant = buildCtContainerConstant(ctx, type, *foldedContainer);
-        } else if (isCompileTime && foldedAggregate) {
+        } else if (foldedAggregate) {
             CtValue cv;
             cv.type = CtValue::AGGREGATE;
             cv.aggregate = foldedAggregate;
             initConstant = ctValueToConstant(ctx, type, cv);
-        } else if (isCompileTime && foldedValue) {
+        } else if (foldedValue) {
             initConstant = foldToConstant(ctx, *foldedValue);
         } else if (initExpr) {
             if (auto* initList = dynamic_cast<InitializerListExprAST*>(initExpr.get())) {
@@ -1286,6 +1309,18 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
         llvm::GlobalVariable::LinkageTypes linkage = readOnlyGlobal
             ? llvm::GlobalVariable::PrivateLinkage
             : llvm::GlobalVariable::ExternalLinkage;
+        if (existing) {
+            // A function/method body emitted before this pre-scan may have
+            // created an external declaration. Upgrade it in place instead of
+            // returning an undefined symbol.
+            existing->setInitializer(initConstant);
+            existing->setLinkage(linkage);
+            existing->setConstant(readOnlyGlobal);
+            if (isThreadLocal) existing->setThreadLocal(true);
+            if (declAlign) existing->setAlignment(llvm::Align(declAlign));
+            ctx.declareVariable(name, existing, type);
+            return existing;
+        }
         llvm::GlobalVariable* global = new llvm::GlobalVariable(
             ctx.getModule(), llvmType, readOnlyGlobal, linkage, initConstant,
             globalSymbol);
@@ -1331,7 +1366,8 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                             st->kind == TypeKind::String ||
                             st->kind == TypeKind::Optional ||
                             st->kind == TypeKind::Result ||
-                            ((st->kind == TypeKind::Struct || st->kind == TypeKind::Class) &&
+                            ((st->kind == TypeKind::Struct || st->kind == TypeKind::Class ||
+                              st->kind == TypeKind::Array || st->kind == TypeKind::Union) &&
                              ctx.aggregateHasStringField(st));
             if (needZero) {
                 ctx.storeValue(alloca, llvm::Constant::getNullValue(llvmType), type);
@@ -1417,7 +1453,9 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
                     ctx.getBuilder().CreateCall(copyFn, {alloca, initVal});
                 } else if (strType && !isCompileTime &&
                            (strType->kind == TypeKind::Struct ||
-                            strType->kind == TypeKind::Class) &&
+                            strType->kind == TypeKind::Class ||
+                            strType->kind == TypeKind::Optional ||
+                            strType->kind == TypeKind::Result) &&
                            ctx.aggregateHasStringField(strType)) {
                     // I4 (D7): 聚合含 string 字段 → 字段感知深拷贝
                     //（`struct S y = x;` 后 x/y 字段各自独立）。
@@ -1734,6 +1772,11 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
             ArrayType astArray(elementType, effectiveSize);
             ctx.storeValue(alloca, initVal, &astArray);
         }
+    } else if (ctx.aggregateHasStringField(elementType)) {
+        // Uninitialized local arrays of owning elements must not expose
+        // garbage string headers to assignment/destroy paths.
+        ArrayType astArray(elementType, effectiveSize);
+        ctx.storeValue(alloca, llvm::Constant::getNullValue(arrType), &astArray);
     }
 
     ctx.declareVariable(name, alloca, elementType);

@@ -1981,3 +1981,27 @@
   - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；生成的临时基线文件已删除。
   - `git diff --check` 无输出。
+
+## 2026-11-26 — 修复 P0 codegen/所有权批次
+
+- 背景：review 确认了一批会直接 SIGSEGV、double free 或静默错码的 codegen/所有权问题；本轮按 TDD 先补回归测试，再修实现。
+- 修复：
+  - `Stmt.cpp`：`string&` 返回只在“非引用、alloca 实际类型等于返回类型”时移动；引用/错误宽度走深拷贝，消除 24B 写 8B 槽和别名 double free。
+  - `CodegenContext.cpp`：optional/result 初始化 `assign=false` 先清零目标、不读旧判别位；直接 optional/result 赋值/初始化接入 `emitAggregateStringCopy`；派生类普通/物化布局都拷贝基子对象并修正 GEP 索引；`aggregateHasStringField` 支持 union。
+  - `Decl.cpp`：局部 string 数组未初始化时零化；全局初始化器必须为常量表达式，const 全局引用可折叠且不再生成 `ptrtoint` 地址；全局预扫可原地升级方法体创建 external 声明；类外 static 定义跳过 codegen；文件作用域 extern 变量生成裸 C external 声明；`string[]` slice literal 使用 entry alloca。
+  - `Expr.cpp`：按值 aggregate 形参字段感知深拷贝；string 形参临时使用 entry alloca；`void` 三元不再生成 `phi void`。
+  - `CompileTimeEvaluator.cpp`：布局查询 module 使用 host TargetMachine DataLayout，修复 `size_of/align_of/offset_of` 与运行时不一致。
+  - `SemanticAnalyzer.cpp`：新增全局常量初始化校验/const 全局折叠；owning union 显式诊断；块级 extern 对象不得绑定同名函数。
+- 测试：
+  - `test_string_ownership.cpp`：引用返回、aggregate 形参、string 数组、owning union 拒绝、循环 string 实参。
+  - `test_optional_result.cpp`：result 字段初始化、optional 直接赋值。
+  - `test_class_codegen.cpp`：派生基子对象、物化布局、方法体全局定义、类外 static 不抢全局。
+  - `test_compile_time.cpp`：host ABI 布局查询。
+  - `test_ternary.cpp`：void 三元有效 IR。
+  - `test_globals.cpp`：非常量全局初始化拒绝、const 全局引用折叠、块级 extern 冲突、file-scope extern 声明。
+- 验证：
+  - 全量 **2167/2167** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 遗留：跨模块 C linkage/compile_time/template 表、file-scope static linkage、brace-init 元素级类型检查、不完整 record、auto 数组等上一轮 P0 未在本轮处理。
