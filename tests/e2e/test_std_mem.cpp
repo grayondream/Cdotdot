@@ -257,6 +257,26 @@ TEST_F(StdMemTest, PoolReusesBlocks) {
     )", "mem_pool.cdd"), 0);
 }
 
+TEST_F(StdMemTest, PoolSmallBlocksArePointerSafe) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.mem;
+        int32 main() {
+            std::Pool p;
+            std::pool_init(&p, 1, 1);
+            void* a = std::pool_alloc(&p);
+            void* b = std::pool_alloc(&p);
+            if (a == nullptr || b == nullptr || a == b) return 1;
+            std::pool_free(&p, a);
+            void* c = std::pool_alloc(&p);
+            if (c != a) return 2;
+            std::pool_free(&p, b);
+            std::pool_free(&p, c);
+            std::pool_destroy(&p);
+            return 0;
+        }
+    )", "mem_pool_small.cdd"), 0);
+}
+
 TEST_F(StdMemTest, AlignedMallocAliases) {
     EXPECT_EQ(runWithImports(R"(
         import std.mem;

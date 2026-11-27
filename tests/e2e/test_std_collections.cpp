@@ -186,6 +186,29 @@ TEST_F(StdCollectionsTest, HashMapPutGetRemoveTombstone) {
     )", "coll_map.cdd"), 0);
 }
 
+TEST_F(StdCollectionsTest, HashMapTombstoneDoesNotDuplicateExistingKey) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.hashmap;
+        usize zero_hash(uint32 key) { return 0; }
+        bool same_u32(uint32 a, uint32 b) { return a == b; }
+        int32 main() {
+            std::HashMap<uint32,int32> m;
+            m.init(zero_hash, same_u32);
+            if (!m.put(1, 10)) return 1;
+            if (!m.put(2, 20)) return 2;
+            if (!m.remove(1)) return 3;
+            if (!m.put(2, 200)) return 4;
+            if (m.size() != 1) return 5;
+            int32 out = 0;
+            if (!m.get(2, &out) || out != 200) return 6;
+            if (!m.remove(2)) return 7;
+            if (m.size() != 0 || m.contains(2)) return 8;
+            m.destroy();
+            return 0;
+        }
+    )", "coll_map_tombstone.cdd"), 0);
+}
+
 TEST_F(StdCollectionsTest, HashSetInsertRemove) {
     EXPECT_EQ(runWithImports(R"(
         import std.hashset;

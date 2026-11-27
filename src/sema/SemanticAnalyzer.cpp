@@ -5748,7 +5748,7 @@ bool SemanticAnalyzer::tryAnalyzeTemplateCall(CallExprAST& node) {
 
     const std::string tplModule = tpl->moduleName;
     std::string instName = TemplateRegistry::instanceName(
-        node.callee, typeArgs, valueArgs, tplModule);
+        node.callee, typeArgs, valueArgs, tplModule, tpl->isExported);
     auto* inst = reg.instantiateFunction(node.callee, typeArgs, valueArgs, argTypes,
                                          tplModule);
     if (!inst) {
@@ -9617,15 +9617,31 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
             if (valueFieldType->kind == TypeKind::Struct) {
                 auto* st = static_cast<StructType*>(valueFieldType);
                 fieldTypeName = st->name;
-                complete = st->isComplete;
+                // Anonymous record definitions are complete at parse time;
+                // closure structs are synthesized complete by lambda lowering.
+                // Named records must have been completed by sema in order.
+                const bool anonymous =
+                    st->name.rfind("__anon_", 0) == 0;
+                const bool nestedDefinition =
+                    st->parsedDefinition && st->name.find('.') != std::string::npos;
+                complete = st->isComplete || st->isClosure || anonymous ||
+                           nestedDefinition;
             } else if (valueFieldType->kind == TypeKind::Class) {
                 auto* ct = static_cast<ClassType*>(valueFieldType);
                 fieldTypeName = ct->name;
-                complete = ct->isComplete;
+                const bool nestedDefinition =
+                    ct->parsedDefinition && ct->name.find('.') != std::string::npos;
+                complete = ct->isComplete ||
+                           ct->name.rfind("__anon_", 0) == 0 ||
+                           nestedDefinition;
             } else {
                 auto* ut = static_cast<UnionType*>(valueFieldType);
                 fieldTypeName = ut->name;
-                complete = ut->isComplete;
+                const bool nestedDefinition =
+                    ut->parsedDefinition && ut->name.find('.') != std::string::npos;
+                complete = ut->isComplete ||
+                           ut->name.rfind("__anon_", 0) == 0 ||
+                           nestedDefinition;
             }
             if (!complete &&
                 std::find(m_definingStack.begin(), m_definingStack.end(),
@@ -9800,7 +9816,7 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
                 }
                 const std::string tplModule = baseTpl->moduleName;
                 std::string instName = TemplateRegistry::instanceName(
-                    tplName, baseArgs, {}, tplModule);
+                    tplName, baseArgs, {}, tplModule, baseTpl->isExported);
                 auto* inst = TemplateRegistry::instance().instantiateClass(
                     tplName, baseArgs, {}, tplModule);
                 if (!inst) {
@@ -10774,8 +10790,10 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
                 if (existing->paramTypes.size() != funcType->paramTypes.size())
                     continue;
                 std::string existingSignature =
-                    mangleFunction(node.name, existing->paramTypes,
-                                   existing->isVarArg);
+                    existing->symbolName.empty()
+                        ? mangleCddFunction(node.name, existing->paramTypes,
+                                            existing->isVarArg, node.moduleName)
+                        : existing->symbolName;
                 if (existingSignature == signature) continue;
                 bool same = true;
                 for (size_t i = 0; i < existing->paramTypes.size(); ++i) {
@@ -11034,10 +11052,11 @@ void SemanticAnalyzer::analyzeTopLevelDecl(DeclAST& decl) {
             tplName.rfind(namespacePrefix, 0) != 0) {
             tplName = namespacePrefix + tplName;
         }
+        tplDecl->isExported = tplDecl->isExported || currentDeclExported;
         TemplateRegistry::instance().registerTemplate(
             tplDecl, tplName,
             tplDecl->moduleName.empty() ? currentModule : tplDecl->moduleName,
-            currentDeclExported);
+            tplDecl->isExported);
     } else if (auto* multi = dynamic_cast<MultiVarDeclAST*>(&decl)) {
         for (auto& d : multi->decls) {
             if (d && d->moduleName.empty()) d->moduleName = decl.moduleName;
@@ -11314,7 +11333,8 @@ Type* SemanticAnalyzer::resolveTypeInstanceUse(TypeInstanceType* use, ASTNode& a
     // 类型立即补 visit——字段访问要求布局当场完整。
     if (tpl && dynamic_cast<UsingDeclAST*>(tpl->decl.get())) {
         std::string name = TemplateRegistry::instanceName(
-            use->templateName, use->typeArgs, use->valueArgs, tpl->moduleName);
+            use->templateName, use->typeArgs, use->valueArgs, tpl->moduleName,
+            tpl->isExported);
         if (m_aliasCache.count(name)) return m_aliasCache[name];
         std::unordered_map<std::string, Type*> typeArgMap;
         std::unordered_map<std::string, long long> valueArgMap;
@@ -11340,7 +11360,8 @@ Type* SemanticAnalyzer::resolveTypeInstanceUse(TypeInstanceType* use, ASTNode& a
     }
     const std::string tplModule = tpl->moduleName;
     std::string name = TemplateRegistry::instanceName(
-        use->templateName, use->typeArgs, use->valueArgs, tplModule);
+        use->templateName, use->typeArgs, use->valueArgs, tplModule,
+        tpl->isExported);
     auto* decl = reg.instantiateClass(use->templateName, use->typeArgs,
                                       use->valueArgs, tplModule);
     if (!decl) {

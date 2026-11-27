@@ -73,9 +73,12 @@ TemplateDeclAST* TemplateRegistry::find(const std::string& name,
 std::string TemplateRegistry::instanceName(const std::string& name,
                                            const std::vector<Type*>& typeArgs,
                                            const std::vector<long long>& valueArgs,
-                                           const std::string& moduleName) {
+                                           const std::string& moduleName,
+                                           bool exported) {
     std::string s = canonicalName(name);
-    if (!moduleName.empty()) {
+    // Exported/global templates keep the historical unqualified instance name
+    // (std.Vec$int32); only module-private templates need the module prefix.
+    if (!moduleName.empty() && !exported) {
         s = "$tplm" + std::to_string(moduleName.size()) + ":" + moduleName +
             "$" + s;
     }
@@ -156,6 +159,7 @@ StructDeclAST* TemplateRegistry::instantiateClass(const std::string& name,
     if (!tpl) return nullptr;
     if (!dynamic_cast<StructDeclAST*>(tpl->decl.get())) return nullptr;
     const std::string tplModule = tpl->moduleName;
+    const bool exported = tpl->isExported;
 
     std::unordered_map<std::string, Type*> typeArgMap;
     std::unordered_map<std::string, long long> valueArgMap;
@@ -168,7 +172,7 @@ StructDeclAST* TemplateRegistry::instantiateClass(const std::string& name,
         }
     }
 
-    std::string key = instanceName(name, typeArgs, valueArgs, tplModule);
+    std::string key = instanceName(name, typeArgs, valueArgs, tplModule, exported);
     return static_cast<StructDeclAST*>(instantiateByKey(
         key, name, key, typeArgMap, valueArgMap, /*wantClass=*/true, tplModule));
 }
@@ -181,6 +185,7 @@ FunctionDeclAST* TemplateRegistry::instantiateFunction(
     if (!tpl) return nullptr;
     if (!dynamic_cast<FunctionDeclAST*>(tpl->decl.get())) return nullptr;
     const std::string tplModule = tpl->moduleName;
+    const bool exported = tpl->isExported;
 
     std::unordered_map<std::string, Type*> typeArgMap;
     std::unordered_map<std::string, long long> valueArgMap;
@@ -196,7 +201,7 @@ FunctionDeclAST* TemplateRegistry::instantiateFunction(
     // 键 = 显示名（含显式/推导类型实参）+ 推导后参数类型拼写（计划钉死的
     // 三段式键）；decl 名不含推导参数段，符号唯一性由既有 mangleFunction
     // 追加参数类型保证。
-    std::string key = instanceName(name, typeArgs, valueArgs, tplModule);
+    std::string key = instanceName(name, typeArgs, valueArgs, tplModule, exported);
     std::string display = key;
     for (auto* pt : deducedParamTypes)
         if (pt) key += "$" + typeToMangled(pt);
@@ -257,7 +262,8 @@ Type* TemplateRegistry::resolveInstance(
         return nullptr;
     }
     const std::string tplModule = tpl->moduleName;
-    std::string name = instanceName(use->templateName, args, values, tplModule);
+    std::string name = instanceName(use->templateName, args, values, tplModule,
+                                    tpl->isExported);
 
     // 按实例名注册 StructType 占位（INH-01 reuse-registration 模式：sema
     // visit 实例 decl 时补全字段并置 isComplete）。

@@ -114,6 +114,7 @@ template<typename K, typename V> struct HashMap {
         bool (*ef)(K, K) = this->eq_fn;
         if (hf == nullptr || ef == nullptr) return;
         usize at = hf(key) & (this->cap - 1);
+        usize first_tombstone = this->cap;
         usize probes = 0;
         while (probes < this->cap) {
             uint8 state = this->states[at];
@@ -121,18 +122,32 @@ template<typename K, typename V> struct HashMap {
                 this->values[at] = value;
                 return;
             }
-            if (state == 0 || state == 2) {
-                this->keys[at] = key;
-                this->values[at] = value;
-                if (state == 2) {
+            if (state == 2 && first_tombstone == this->cap) {
+                first_tombstone = at;
+            }
+            if (state == 0) {
+                if (first_tombstone != this->cap) {
+                    at = first_tombstone;
                     this->tombstones = this->tombstones - 1;
                 }
+                this->keys[at] = key;
+                this->values[at] = value;
                 this->states[at] = 1;
                 this->len = this->len + 1;
                 return;
             }
             at = (at + 1) & (this->cap - 1);
             probes = probes + 1;
+        }
+        // Table is all live+tombstone: reuse the first tombstone so a full
+        // table does not silently drop an insert (grow policy normally avoids
+        // this path).
+        if (first_tombstone != this->cap) {
+            this->keys[first_tombstone] = key;
+            this->values[first_tombstone] = value;
+            this->states[first_tombstone] = 1;
+            this->tombstones = this->tombstones - 1;
+            this->len = this->len + 1;
         }
     }
 

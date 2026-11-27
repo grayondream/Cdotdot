@@ -256,7 +256,10 @@ struct Pool {
 void pool_init(Pool* p, usize block_size, usize align) {
     p->free_list = nullptr;
     p->block_size = block_size;
-    p->block_align = align == 0 ? 1 : align;
+    // Free-list links live in the block; at least pointer alignment/size is
+    // required even for tiny logical blocks or alignment 1.
+    usize link_size = compile_time.size_of(usize);
+    p->block_align = align < link_size ? link_size : align;
 }
 
 void* pool_alloc(Pool* p) {
@@ -265,7 +268,14 @@ void* pool_alloc(Pool* p) {
         p->free_list = *(void**)block;
         return block;
     }
-    return mi_malloc_aligned(p->block_size, p->block_align);
+    // The free-list link is stored in the block itself; allocate at least one
+    // pointer even for smaller logical block sizes.
+    usize need = p->block_size;
+    usize link_size = compile_time.size_of(usize);
+    if (need < link_size) {
+        need = link_size;
+    }
+    return mi_malloc_aligned(need, p->block_align);
 }
 
 void pool_free(Pool* p, void* block) {

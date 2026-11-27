@@ -84,7 +84,8 @@ public:
     static std::string instanceName(const std::string& name,
                                     const std::vector<Type*>& typeArgs,
                                     const std::vector<long long>& valueArgs,
-                                    const std::string& moduleName = {});
+                                    const std::string& moduleName = {},
+                                    bool exported = false);
 
 private:
     enum class State { NotInstantiated, Instantiating, Done };

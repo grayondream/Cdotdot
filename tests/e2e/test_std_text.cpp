@@ -145,6 +145,42 @@ TEST_F(StdTextTest, ParseAndRenderIntegers) {
     )", "text_parse.cdd"), 0);
 }
 
+TEST_F(StdTextTest, ParseOverflowAndTrailingJunkRejected) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.parse;
+        int32 main() {
+            int32 i = 0;
+            if (std::parse_i32("2147483648", &i)) return 1;
+            if (std::parse_i32("-2147483649", &i)) return 2;
+            int64 v = 0;
+            if (std::parse_i64("9223372036854775808", 10, &v)) return 3;
+            if (std::parse_i64("-9223372036854775809", 10, &v)) return 4;
+            uint64 u = 0;
+            if (std::parse_u64("18446744073709551616", 10, &u)) return 5;
+            float64 f = 0.0;
+            if (std::parse_float64("12x", &f)) return 6;
+            if (std::parse_float64("1e999999999", &f)) return 7;
+            string s = std::to_string_u64(18446744073709551615ul, 10);
+            string_view sv = s;
+            if (sv != "18446744073709551615") return 8;
+            s.destroy();
+            return 0;
+        }
+    )", "text_parse_limits.cdd"), 0);
+}
+
+TEST_F(StdTextTest, HashBytesMatchesStringForUtf8) {
+    EXPECT_EQ(runWithImports(R"(
+        import std.hash;
+        int32 main() {
+            string_view s = "é";
+            uint64 a = std::hash_string(s);
+            uint64 b = std::hash_bytes((void*)s.data, s.len());
+            return a == b ? 0 : 1;
+        }
+    )", "text_hash_utf8.cdd"), 0);
+}
+
 TEST_F(StdTextTest, AsciiAndPath) {
     EXPECT_EQ(runWithImports(R"(
         import std.ascii;

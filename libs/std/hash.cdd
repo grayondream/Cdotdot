@@ -8,7 +8,7 @@ export namespace std {
 
 // FNV-1a 64-bit over arbitrary bytes.
 uint64 hash_bytes(void* data, usize len) {
-    uint64 h = 1469598103934665603ul;
+    uint64 h = 14695981039346656037ul;
     uint64 prime = 1099511628211ul;
     uint8* p = (uint8*)data;
     usize i = 0;
@@ -22,11 +22,11 @@ uint64 hash_bytes(void* data, usize len) {
 
 // FNV-1a over a string_view; not NUL-terminated-dependent.
 uint64 hash_string(string_view s) {
-    uint64 h = 1469598103934665603ul;
+    uint64 h = 14695981039346656037ul;
     uint64 prime = 1099511628211ul;
     usize i = 0;
     while (i < s.len()) {
-        h = h ^ (uint64)s.char_at(i);
+        h = h ^ (uint64)(uint8)s.char_at(i);
         h = h * prime;
         i = i + 1;
     }
