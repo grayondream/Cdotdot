@@ -18,6 +18,14 @@ std::string mangleFunction(const std::string& name,
                            bool isVarArg = false,
                            const std::string& moduleName = {});
 
+// CDD (non-C-linkage) function symbol, bypassing the process-wide C-signature
+// set. Used by sema for a function definition that happens to share a source
+// name/signature with an unrelated `extern` declaration.
+std::string mangleCddFunction(const std::string& name,
+                              const std::vector<Type*>& paramTypes,
+                              bool isVarArg = false,
+                              const std::string& moduleName = {});
+
 // Add the module qualifier to an already-mangled CDD function symbol when it
 // carries none. Raw C names and `main` are returned unchanged.
 std::string qualifyFunctionSymbolForModule(const std::string& symbol,

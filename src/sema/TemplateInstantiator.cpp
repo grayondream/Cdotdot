@@ -514,6 +514,7 @@ std::unique_ptr<DeclAST> TemplateInstantiator::cloneDeclInternal(const DeclAST& 
         auto* cloned = new FunctionDeclAST(fn->name, rewrite(fn->returnType), params,
                                            body, fn->isCompileTime, fn->isVarArg);
         cloned->isStatic = fn->isStatic;
+        cloned->isStaticLinkage = fn->isStaticLinkage;
         cloned->isExtern = fn->isExtern;
         cloned->isConstMethod = fn->isConstMethod;
         cloned->isCompileOnly = fn->isCompileOnly;

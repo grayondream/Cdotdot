@@ -20,21 +20,26 @@ public:
     // 同名重复注册覆盖（单测重建用）。`qualifiedName` 由 sema 在命名空间
     // 上下文传入（`NsTpl_id`）；省略时使用声明自身的名字。
     void registerTemplate(TemplateDeclAST* decl,
-                          const std::string& qualifiedName = {});
-    TemplateDeclAST* find(const std::string& name) const;
+                          const std::string& qualifiedName = {},
+                          const std::string& moduleName = {},
+                          bool exported = false);
+    TemplateDeclAST* find(const std::string& name,
+                          const std::string& moduleName = {}) const;
 
     // 类模板实例化：克隆模板体、按实参重写、改名 mangled 拼写
     // （`Box$i32` / `Array$i32$8`），实例 decl 进入 pendingInstances 待 sema。
     // 命中缓存直接返回同一 decl 指针（去重）。
     StructDeclAST* instantiateClass(const std::string& name,
                                     const std::vector<Type*>& typeArgs,
-                                    const std::vector<long long>& valueArgs);
+                                    const std::vector<long long>& valueArgs,
+                                    const std::string& moduleName = {});
 
     // 函数模板实例化：同上，typeArgs 为显式实参与推导结果并集。
     FunctionDeclAST* instantiateFunction(const std::string& name,
                                          const std::vector<Type*>& typeArgs,
                                          const std::vector<long long>& valueArgs,
-                                         const std::vector<Type*>& deducedParamTypes);
+                                         const std::vector<Type*>& deducedParamTypes,
+                                         const std::string& moduleName = {});
 
     // TypeInstance 占位的解析入口（TemplateInstantiator::rewrite 调用）：
     // 命中 Instantiating 同名同参 = 递归实例化，报错；否则触发实例化并返回
@@ -78,7 +83,8 @@ public:
     // `Box<T>` 命中同一实例。
     static std::string instanceName(const std::string& name,
                                     const std::vector<Type*>& typeArgs,
-                                    const std::vector<long long>& valueArgs);
+                                    const std::vector<long long>& valueArgs,
+                                    const std::string& moduleName = {});
 
 private:
     enum class State { NotInstantiated, Instantiating, Done };
@@ -90,7 +96,7 @@ private:
                               const std::string& displayName,
                               const std::unordered_map<std::string, Type*>& typeArgMap,
                               const std::unordered_map<std::string, long long>& valueArgMap,
-                              bool wantClass);
+                              bool wantClass, const std::string& moduleName);
 
     std::unordered_map<std::string, TemplateDeclAST*> m_templates;
     std::map<std::string, State> m_states;

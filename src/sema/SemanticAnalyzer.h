@@ -79,6 +79,11 @@ public:
     std::optional<ConstValue> evalConstexprCallCT(CallExprAST& call,
                                                   const std::vector<ConstValue>& argValues);
     const std::unordered_map<std::string, ConstValue>& getCompileTimeValues() const { return compileTimeValues; }
+    // Resolve through the current scope and prefer the symbol's module-qualified
+    // key, so a private module `compile_time x` can never shadow an exported
+    // `x` from another module.
+    std::optional<ConstValue> findCompileTimeValue(const std::string& name);
+    void recordCompileTimeValue(const VarDeclAST& node, const ConstValue& value);
 
     // ---- P1-04 / CT-04/05/12: compile_time 特判 ----
     // 根标识符为 `compile_time` 的成员链判定（含嵌套链 target.os）；
@@ -263,6 +268,7 @@ private:
     bool isConstexprContainerExpr(const ExprAST* expr);
     bool isCompileTimeVariableExpr(const ExprAST* expr) const;
     FunctionDeclAST* findCtFunction(const std::string& name);
+    FunctionDeclAST* findCtFunctionForCall(CallExprAST& call);
     std::optional<ConstValue> evalCtFunction(FunctionDeclAST* fn,
                                              const std::vector<ConstValue>& args,
                                              int depth);

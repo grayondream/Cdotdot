@@ -6,13 +6,25 @@
 #include "ast/Mangle.h"
 #include "sema/TemplateInstantiator.h"
 
+namespace {
+std::string templateModuleKey(const std::string& moduleName,
+                              const std::string& name) {
+    std::string canonical = TemplateRegistry::canonicalName(name);
+    if (moduleName.empty()) return canonical;
+    return "$tplm" + std::to_string(moduleName.size()) + ":" + moduleName +
+           "$" + canonical;
+}
+} // namespace
+
 TemplateRegistry& TemplateRegistry::instance() {
     static TemplateRegistry reg;
     return reg;
 }
 
 void TemplateRegistry::registerTemplate(TemplateDeclAST* decl,
-                                        const std::string& qualifiedName) {
+                                        const std::string& qualifiedName,
+                                        const std::string& moduleName,
+                                        bool exported) {
     std::string name = qualifiedName;
     if (name.empty()) {
         if (auto* fn = dynamic_cast<FunctionDeclAST*>(decl->decl.get())) {
@@ -23,10 +35,14 @@ void TemplateRegistry::registerTemplate(TemplateDeclAST* decl,
             name = ud->name;
         }
     }
-    m_templates[name] = decl;
-    // Namespaced templates are registered under the parser's qualified key
-    // (`std.Box`); also accept the source spelling as a defensive alias.
-    m_templates[canonicalName(name)] = decl;
+    m_templates[templateModuleKey(moduleName, name)] = decl;
+    // Exported/global templates are reachable from importers under their bare
+    // spelling. Private module templates are deliberately absent from this
+    // fallback key, so two modules may define same-named private templates.
+    if (moduleName.empty() || exported || decl->isExported) {
+        m_templates[name] = decl;
+        m_templates[canonicalName(name)] = decl;
+    }
 
     // 模板体 parse 走了普通声明路径，把类型名注册成了占位 StructType/
     // ClassType——撤销，保证裸模板名（无实参）在类型位置报错而非静默解析。
@@ -40,7 +56,12 @@ std::string TemplateRegistry::canonicalName(const std::string& name) {
     return mangleQualifiedName(name);
 }
 
-TemplateDeclAST* TemplateRegistry::find(const std::string& name) const {
+TemplateDeclAST* TemplateRegistry::find(const std::string& name,
+                                         const std::string& moduleName) const {
+    if (!moduleName.empty()) {
+        auto it = m_templates.find(templateModuleKey(moduleName, name));
+        if (it != m_templates.end()) return it->second;
+    }
     auto it = m_templates.find(name);
     if (it != m_templates.end()) return it->second;
     std::string canonical = canonicalName(name);
@@ -51,8 +72,13 @@ TemplateDeclAST* TemplateRegistry::find(const std::string& name) const {
 
 std::string TemplateRegistry::instanceName(const std::string& name,
                                            const std::vector<Type*>& typeArgs,
-                                           const std::vector<long long>& valueArgs) {
+                                           const std::vector<long long>& valueArgs,
+                                           const std::string& moduleName) {
     std::string s = canonicalName(name);
+    if (!moduleName.empty()) {
+        s = "$tplm" + std::to_string(moduleName.size()) + ":" + moduleName +
+            "$" + s;
+    }
     for (auto* t : typeArgs)
         if (t) s += "$" + typeToMangled(t);
     for (auto v : valueArgs) s += "$" + std::to_string(v);
@@ -72,7 +98,8 @@ DeclAST* TemplateRegistry::instanceDeclFor(const std::string& instanceName) cons
 DeclAST* TemplateRegistry::instantiateByKey(
     const std::string& key, const std::string& tplName, const std::string& displayName,
     const std::unordered_map<std::string, Type*>& typeArgMap,
-    const std::unordered_map<std::string, long long>& valueArgMap, bool wantClass) {
+    const std::unordered_map<std::string, long long>& valueArgMap, bool wantClass,
+    const std::string& moduleName) {
     auto st = m_states.find(key);
     if (st != m_states.end() && st->second == State::Done) {
         return m_done[key];
@@ -90,7 +117,7 @@ DeclAST* TemplateRegistry::instantiateByKey(
     m_states[key] = State::Instantiating;
     m_depth++;
 
-    std::string tplKey = canonicalName(tplName);
+    std::string tplKey = templateModuleKey(moduleName, tplName);
     auto tplIt = m_templates.find(tplKey);
     if (tplIt == m_templates.end()) {
         m_depth--;
@@ -123,10 +150,12 @@ DeclAST* TemplateRegistry::instantiateByKey(
 
 StructDeclAST* TemplateRegistry::instantiateClass(const std::string& name,
                                                   const std::vector<Type*>& typeArgs,
-                                                  const std::vector<long long>& valueArgs) {
-    auto* tpl = find(name);
+                                                  const std::vector<long long>& valueArgs,
+                                                  const std::string& moduleName) {
+    auto* tpl = find(name, moduleName);
     if (!tpl) return nullptr;
     if (!dynamic_cast<StructDeclAST*>(tpl->decl.get())) return nullptr;
+    const std::string tplModule = tpl->moduleName;
 
     std::unordered_map<std::string, Type*> typeArgMap;
     std::unordered_map<std::string, long long> valueArgMap;
@@ -139,17 +168,19 @@ StructDeclAST* TemplateRegistry::instantiateClass(const std::string& name,
         }
     }
 
-    std::string key = instanceName(name, typeArgs, valueArgs);
-    return static_cast<StructDeclAST*>(instantiateByKey(key, name, key, typeArgMap,
-                                                        valueArgMap, /*wantClass=*/true));
+    std::string key = instanceName(name, typeArgs, valueArgs, tplModule);
+    return static_cast<StructDeclAST*>(instantiateByKey(
+        key, name, key, typeArgMap, valueArgMap, /*wantClass=*/true, tplModule));
 }
 
 FunctionDeclAST* TemplateRegistry::instantiateFunction(
     const std::string& name, const std::vector<Type*>& typeArgs,
-    const std::vector<long long>& valueArgs, const std::vector<Type*>& deducedParamTypes) {
-    auto* tpl = find(name);
+    const std::vector<long long>& valueArgs, const std::vector<Type*>& deducedParamTypes,
+    const std::string& moduleName) {
+    auto* tpl = find(name, moduleName);
     if (!tpl) return nullptr;
     if (!dynamic_cast<FunctionDeclAST*>(tpl->decl.get())) return nullptr;
+    const std::string tplModule = tpl->moduleName;
 
     std::unordered_map<std::string, Type*> typeArgMap;
     std::unordered_map<std::string, long long> valueArgMap;
@@ -165,13 +196,13 @@ FunctionDeclAST* TemplateRegistry::instantiateFunction(
     // 键 = 显示名（含显式/推导类型实参）+ 推导后参数类型拼写（计划钉死的
     // 三段式键）；decl 名不含推导参数段，符号唯一性由既有 mangleFunction
     // 追加参数类型保证。
-    std::string key = instanceName(name, typeArgs, valueArgs);
+    std::string key = instanceName(name, typeArgs, valueArgs, tplModule);
     std::string display = key;
     for (auto* pt : deducedParamTypes)
         if (pt) key += "$" + typeToMangled(pt);
 
-    return static_cast<FunctionDeclAST*>(instantiateByKey(key, name, display, typeArgMap,
-                                                          valueArgMap, /*wantClass=*/false));
+    return static_cast<FunctionDeclAST*>(instantiateByKey(
+        key, name, display, typeArgMap, valueArgMap, /*wantClass=*/false, tplModule));
 }
 
 Type* TemplateRegistry::resolveInstance(
@@ -220,7 +251,13 @@ Type* TemplateRegistry::resolveInstance(
         values[i] = it->second;
     }
 
-    std::string name = instanceName(use->templateName, args, values);
+    auto* tpl = find(use->templateName, use->moduleName);
+    if (!tpl) {
+        m_errors.push_back("unknown template '" + use->templateName + "'");
+        return nullptr;
+    }
+    const std::string tplModule = tpl->moduleName;
+    std::string name = instanceName(use->templateName, args, values, tplModule);
 
     // 按实例名注册 StructType 占位（INH-01 reuse-registration 模式：sema
     // visit 实例 decl 时补全字段并置 isComplete）。
@@ -230,7 +267,7 @@ Type* TemplateRegistry::resolveInstance(
         TypeContext::instance().addStruct(name, placeholder);
     }
 
-    DeclAST* inst = instantiateClass(use->templateName, args, values);
+    DeclAST* inst = instantiateClass(use->templateName, args, values, tplModule);
     if (!inst) return nullptr;
     return placeholder;
 }

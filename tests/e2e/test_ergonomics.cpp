@@ -211,6 +211,17 @@ TEST_F(ErgonomicsE2E, AutoStoresNoCaptureLambda) {
     )"), 0);
 }
 
+TEST_F(ErgonomicsE2E, AutoArrayInitializerDecaysToPointer) {
+    EXPECT_EQ(runSource(R"(
+        int32 main() {
+            int32 a[3] = {1, 2, 3};
+            auto r = a;
+            if (r[0] != 1 || r[1] != 2 || r[2] != 3) return 1;
+            return 0;
+        }
+    )"), 0);
+}
+
 TEST_F(ErgonomicsE2E, AutoWithoutInitializerFails) {
     EXPECT_FALSE(compiles("int32 main() { auto x; return 0; }"));
 }

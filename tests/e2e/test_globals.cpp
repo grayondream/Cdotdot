@@ -147,6 +147,53 @@ TEST_F(GlobalsE2E, BlockExternObjectCannotBindFunction) {
     EXPECT_FALSE(analyzer.getErrors().empty());
 }
 
+// P0: file-scope `static` is internal linkage for functions, variables and
+// arrays, not merely a dropped storage-class keyword.
+TEST_F(GlobalsE2E, FileScopeStaticHasInternalLinkage) {
+    Lexer lexer("test_static_linkage.cdd", R"(
+        static int32 hidden() { return 1; }
+        static int32 hidden_var = 7;
+        static int32 hidden_arr[2] = {1, 2};
+        int32 main() { return hidden() + hidden_var + hidden_arr[0]; }
+    )");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    ASSERT_NE(ast, nullptr);
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(*ast);
+    ASSERT_TRUE(analyzer.getErrors().empty());
+    CodegenContext ctx;
+    ctx.setSourceFile("test_static_linkage.cdd");
+    ast->codegen(ctx);
+
+    bool foundFn = false;
+    for (auto& fn : ctx.getModule()) {
+        if (fn.getName().contains("hidden")) {
+            foundFn = true;
+            EXPECT_TRUE(fn.hasInternalLinkage())
+                << "static function is not internal: " << fn.getName().str();
+        }
+    }
+    bool foundVar = false;
+    bool foundArr = false;
+    for (auto& gv : ctx.getModule().globals()) {
+        if (gv.getName().contains("hidden_var")) {
+            foundVar = true;
+            EXPECT_TRUE(gv.hasInternalLinkage())
+                << "static variable is not internal: " << gv.getName().str();
+        }
+        if (gv.getName().contains("hidden_arr")) {
+            foundArr = true;
+            EXPECT_TRUE(gv.hasInternalLinkage())
+                << "static array is not internal: " << gv.getName().str();
+        }
+    }
+    EXPECT_TRUE(foundFn);
+    EXPECT_TRUE(foundVar);
+    EXPECT_TRUE(foundArr);
+}
+
 // P0: a file-scope extern object is a raw C declaration, not a zero-initialized
 // CDD definition.
 TEST_F(GlobalsE2E, FileScopeExternObjectIsDeclaration) {

@@ -71,6 +71,8 @@ public:
     bool typeIncompleteAtParse = false;
     // C static local: function-scoped declaration with static storage duration.
     bool isStaticLocal = false;
+    // File-scope `static`: internal linkage (not merely static duration).
+    bool isStaticLinkage = false;
     // C block-scope `extern`: refers to an existing/global symbol; no local
     // storage is allocated for it.
     bool isExternLocal = false;
@@ -117,6 +119,9 @@ public:
     // AGG-10: class-body `static` method — no `this` insertion; sema rewrites
     // the name to the desugared `Class_method` global symbol.
     bool isStatic = false;
+    // File-scope `static`: internal linkage (module-private symbol). Distinct
+    // from `isStatic`, which means a class static method (no `this`).
+    bool isStaticLinkage = false;
     // SG-11 / conversion operator: `operator T()` has no written return type;
     // returnType is the target type and this flag lets sema/codegen find it.
     bool isConversionOperator = false;
@@ -132,6 +137,11 @@ public:
     // (unmangled, no namespace prefix), and the call site resolves through
     // the bare C name.
     bool isExtern = false;
+    // LLVM symbol selected by sema for this declaration. Empty means codegen
+    // should fall back to signature mangling (hand-built ASTs in unit tests).
+    // Keeping the sema choice here prevents a private definition from being
+    // captured by an unrelated same-signature `extern` C declaration.
+    std::string symbolName;
     // CON-04: `thread_local` storage class is invalid on a function — set by
     // the parser so sema can diagnose SemInvalidThreadLocalOnFunction.
     bool isThreadLocal = false;
@@ -181,6 +191,8 @@ public:
     // CT-25: first dimension named by a compile_time variable, resolved in sema.
     std::string sizeName;
     std::unique_ptr<ExprAST> initExpr;
+    // File-scope `static`: internal linkage.
+    bool isStaticLinkage = false;
 
     ArrayDeclAST(const std::string& n, Type* elemType, int sz, std::unique_ptr<ExprAST> init = nullptr)
         : name(n), elementType(elemType), size(sz), initExpr(std::move(init)) {}

@@ -262,12 +262,7 @@ std::optional<ConstValue> CompileTimeEvaluator::eval(ExprAST* expr, ASTNode& at)
     // constexpr 变量（DEC-05：共享 compileTimeValues）；constexpr 函数调用
     // 委托既有解释内核（evalConstexprCall/evalConstexprStmt，含 ConstEnv）。
     if (auto* var = dynamic_cast<VariableExprAST*>(expr)) {
-        const auto& values = m_sema.getCompileTimeValues();
-        auto it = values.find(var->name);
-        if (it != values.end()) {
-            return it->second;
-        }
-        return std::nullopt;
+        return m_sema.findCompileTimeValue(var->name);
     }
 
     if (auto* call = dynamic_cast<CallExprAST*>(expr)) {

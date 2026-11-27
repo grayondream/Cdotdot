@@ -139,6 +139,36 @@ TEST_F(InitializationAnalysisTest, WarnsOnUninitializedPointerDeref) {
     EXPECT_TRUE(warnedAbout(r, "p"));
 }
 
+TEST_F(InitializationAnalysisTest, RejectsIncompleteByValueFields) {
+    auto forward = analyze(
+        "struct FA; struct FS { FA a; }; struct FA { int32 x; }; int32 main() { return 0; }");
+    EXPECT_FALSE(forward.errors.empty());
+
+    auto mutual = analyze(
+        "struct MB; struct MA { MB b; }; struct MB { MA a; }; int32 main() { return 0; }");
+    EXPECT_FALSE(mutual.errors.empty());
+
+    auto pointer = analyze(
+        "struct PA; struct PS { PA* p; }; struct PA { int32 x; }; int32 main() { return 0; }");
+    EXPECT_TRUE(pointer.errors.empty()) << (pointer.errors.empty() ? "" : pointer.errors.front());
+}
+
+TEST_F(InitializationAnalysisTest, RejectsBraceElementTypeMismatch) {
+    auto arrayResult = analyze(
+        "int32 main() { int32 a[2] = { \"bad\", 2 }; return a[0]; }");
+    EXPECT_FALSE(arrayResult.errors.empty());
+
+    auto structResult = analyze(
+        "struct S { int32 x; int32 y; }; "
+        "int32 main() { S s = { \"bad\", 2 }; return s.x; }");
+    EXPECT_FALSE(structResult.errors.empty());
+
+    auto nestedResult = analyze(
+        "struct S { int32 x; int32 y; }; "
+        "int32 main() { S a[1] = { { \"bad\", 2 } }; return a[0].x; }");
+    EXPECT_FALSE(nestedResult.errors.empty());
+}
+
 TEST_F(InitializationAnalysisTest, AssignedBeforeReadIsFine) {
     auto r = analyze("int32 main() { int32 y; y = 4; return y; }");
     ASSERT_TRUE(r.errors.empty());

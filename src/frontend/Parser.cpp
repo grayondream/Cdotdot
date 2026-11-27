@@ -2998,6 +2998,7 @@ Type* Parser::parseBaseType() {
                     }
                 };
                 auto* inst = new TypeInstanceType(name);
+                inst->moduleName = m_currentModuleName;
                 while (true) {
                     Type* argType = nullptr;
                     long long argValue = 0;
@@ -3399,6 +3400,26 @@ std::unique_ptr<DeclAST> Parser::parseDeclarationImpl() {
             };
             markExtern(decl.get());
         }
+        return decl;
+    }
+
+    // File/namespace-scope `static`: internal linkage. Block-scope `static`
+    // is handled by parseStatement before this entry point.
+    if (check(TokenType::TOKEN_STATIC)) {
+        advance();
+        auto decl = parseDeclaration();
+        std::function<void(DeclAST*)> markStatic = [&](DeclAST* d) {
+            if (auto* fn = dynamic_cast<FunctionDeclAST*>(d)) {
+                fn->isStaticLinkage = true;
+            } else if (auto* var = dynamic_cast<VarDeclAST*>(d)) {
+                var->isStaticLinkage = true;
+            } else if (auto* arr = dynamic_cast<ArrayDeclAST*>(d)) {
+                arr->isStaticLinkage = true;
+            } else if (auto* multi = dynamic_cast<MultiVarDeclAST*>(d)) {
+                for (auto& sub : multi->decls) markStatic(sub.get());
+            }
+        };
+        markStatic(decl.get());
         return decl;
     }
 

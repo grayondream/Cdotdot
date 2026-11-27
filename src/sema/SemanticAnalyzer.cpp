@@ -420,6 +420,35 @@ void SemanticAnalyzer::enterModuleContext(const std::string& moduleName) {
     }
 }
 
+std::optional<SemanticAnalyzer::ConstValue>
+SemanticAnalyzer::findCompileTimeValue(const std::string& name) {
+    // Prefer the symbol the current scope actually sees. Its module-qualified
+    // mangled name is the authoritative map key; bare names are only a
+    // compatibility fallback for local/anonymous declarations.
+    for (const auto& candidate : namespaceCandidates(name)) {
+        Symbol* sym = currentScope ? currentScope->lookup(candidate) : nullptr;
+        if (!sym && globalScope) sym = globalScope->lookup(candidate);
+        if (sym && !sym->mangledName.empty()) {
+            auto it = compileTimeValues.find(sym->mangledName);
+            if (it != compileTimeValues.end()) return it->second;
+        }
+        auto it = compileTimeValues.find(candidate);
+        if (it != compileTimeValues.end()) return it->second;
+    }
+    auto it = compileTimeValues.find(name);
+    return it == compileTimeValues.end() ? std::nullopt
+                                         : std::optional<ConstValue>(it->second);
+}
+
+void SemanticAnalyzer::recordCompileTimeValue(const VarDeclAST& node,
+                                              const ConstValue& value) {
+    compileTimeValues[node.name] = value;
+    if (atGlobalLevel()) {
+        compileTimeValues[mangleGlobalVariable(node.name, node.moduleName)] =
+            value;
+    }
+}
+
 std::string SemanticAnalyzer::resolveNamespaceName(const std::string& name) const {
     for (const auto& candidate : namespaceCandidates(name)) {
         if (OverloadSet* set = currentScope->lookupOverload(candidate)) {
@@ -2046,10 +2075,10 @@ SemanticAnalyzer::evalConstexprCallCT(CallExprAST& call,
         return nullptr;
     };
     std::string calleeName = call.callee;
-    FunctionDeclAST* fn = nullptr;
-    // Prefer the sema-resolved signature so overloads do not collapse to the
-    // last function registered under the bare name.
-    if (!call.resolvedParamTypes.empty()) {
+    FunctionDeclAST* fn = findCtFunctionForCall(call);
+    // Fall back to the signature/bare-name tables for callbacks that have not
+    // been through normal call resolution.
+    if (!fn && !call.resolvedParamTypes.empty()) {
         fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes,
                                    call.resolvedVarArg));
     }
@@ -2489,9 +2518,8 @@ std::optional<SemanticAnalyzer::ConstValue> SemanticAnalyzer::evaluateConstexpr(
                 return envIt->second;
             }
         }
-        auto it = compileTimeValues.find(var->name);
-        if (it != compileTimeValues.end()) {
-            return it->second;
+        if (auto value = findCompileTimeValue(var->name)) {
+            return value;
         }
         // Enumerator constant.
         for (const auto& candidate : namespaceCandidates(var->name)) {
@@ -2591,10 +2619,8 @@ SemanticAnalyzer::evalConstexprCall(CallExprAST& call, int depth) {
         return nullptr;
     };
     std::string calleeName = call.callee;
-    FunctionDeclAST* fn = nullptr;
-    // Prefer the sema-resolved signature so overloads do not collapse to the
-    // last function registered under the bare name.
-    if (!call.resolvedParamTypes.empty()) {
+    FunctionDeclAST* fn = findCtFunctionForCall(call);
+    if (!fn && !call.resolvedParamTypes.empty()) {
         fn = lookup(mangleFunction(call.callee, call.resolvedParamTypes,
                                    call.resolvedVarArg));
     }
@@ -2874,6 +2900,39 @@ FunctionDeclAST* SemanticAnalyzer::findCtFunction(const std::string& name) {
         if (ct != compileTimeFunctions.end()) return ct->second;
         co = compileOnlyFunctions.find(resolved);
         if (co != compileOnlyFunctions.end()) return co->second;
+    }
+    return nullptr;
+}
+
+FunctionDeclAST* SemanticAnalyzer::findCtFunctionForCall(CallExprAST& call) {
+    auto lookupKey = [&](const std::string& key) -> FunctionDeclAST* {
+        if (key.empty()) return nullptr;
+        auto ct = compileTimeFunctions.find(key);
+        if (ct != compileTimeFunctions.end()) return ct->second;
+        auto co = compileOnlyFunctions.find(key);
+        if (co != compileOnlyFunctions.end()) return co->second;
+        // Ordinary runtime functions are only visible to the interpreter while
+        // evaluating a compile_time function body (callbacks such as std.hash's
+        // equality functions). At a global/static initializer they must not be
+        // folded: `int32 g = f();` is a diagnostic, not a constant.
+        if (m_ctInFunctionBody) {
+            auto all = m_allFunctions.find(key);
+            if (all != m_allFunctions.end()) return all->second;
+        }
+        return nullptr;
+    };
+    // Sema's call resolution is scope/module aware and already selected the
+    // exact symbol. Prefer it over the bare-name table, which is process-wide
+    // and can be overwritten by a private same-named function in another
+    // module.
+    if (auto* fn = lookupKey(call.mangledCallee)) return fn;
+    for (const auto& candidate : namespaceCandidates(call.callee)) {
+        Symbol* sym = currentScope ? currentScope->lookup(candidate) : nullptr;
+        if (!sym && globalScope) sym = globalScope->lookup(candidate);
+        if (!sym || !sym->type || sym->type->kind != TypeKind::Function) continue;
+        if (auto* fn = lookupKey(sym->mangledName)) return fn;
+        auto* ft = static_cast<FunctionType*>(sym->type);
+        if (auto* fn = lookupKey(ft->symbolName)) return fn;
     }
     return nullptr;
 }
@@ -5277,7 +5336,8 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
     // P1-03 / GEN-03/06: 函数模板调用（显式实参或推导）。模板命中但普通
     // 函数精确匹配可行时走普通路径（SEM-16 最小规则）；诊断型失败返回
     // true 就地结束。
-    if (node.hasTemplateArgs || TemplateRegistry::instance().find(node.callee)) {
+    if (node.hasTemplateArgs ||
+        TemplateRegistry::instance().find(node.callee, currentModule)) {
         if (tryAnalyzeTemplateCall(node)) return;
     }
 
@@ -5561,7 +5621,7 @@ void SemanticAnalyzer::visit(CallExprAST& node) {
 // 后把 callee 重写为实例名，走普通调用解析。返回 true = 已处理。
 bool SemanticAnalyzer::tryAnalyzeTemplateCall(CallExprAST& node) {
     auto& reg = TemplateRegistry::instance();
-    TemplateDeclAST* tpl = reg.find(node.callee);
+    TemplateDeclAST* tpl = reg.find(node.callee, currentModule);
     if (!tpl) return false;
     auto* fnTpl = dynamic_cast<FunctionDeclAST*>(tpl->decl.get());
     if (!fnTpl) return false; // 类模板命中——让普通路径给出诊断
@@ -5686,8 +5746,11 @@ bool SemanticAnalyzer::tryAnalyzeTemplateCall(CallExprAST& node) {
     std::vector<long long> valueArgs;
     for (auto* vp : valueParams) valueArgs.push_back(valueArgMap[vp->name]);
 
-    std::string instName = TemplateRegistry::instanceName(node.callee, typeArgs, valueArgs);
-    auto* inst = reg.instantiateFunction(node.callee, typeArgs, valueArgs, argTypes);
+    const std::string tplModule = tpl->moduleName;
+    std::string instName = TemplateRegistry::instanceName(
+        node.callee, typeArgs, valueArgs, tplModule);
+    auto* inst = reg.instantiateFunction(node.callee, typeArgs, valueArgs, argTypes,
+                                         tplModule);
     if (!inst) {
         emitError("cannot instantiate template '" + node.callee + "'", node);
         return true;
@@ -8152,10 +8215,20 @@ void SemanticAnalyzer::resolveDesignators(InitializerListExprAST& node, Type* ag
         if (chain.empty()) continue;
         node.resolvedTargets[i] = std::move(chain);
 
-        if (elemType && !dynamic_cast<InitializerListExprAST*>(&item)) {
+        if (elemType && !isReferenceType(elemType) &&
+            !dynamic_cast<InitializerListExprAST*>(&item)) {
             Type* itemType = getExprType(item);
-            if (itemType)
-                checkNullPointerConversion(elemType, itemType, &item, node);
+            if (itemType) {
+                if (!checkNullPointerConversion(elemType, itemType, &item, node))
+                    continue;
+                if (!isImplicitlyConvertibleTo(elemType, itemType, item) &&
+                    !hasUserConversion(itemType, elemType)) {
+                    emitError("initializer element type mismatch: expected '" +
+                                  typeToString(elemType) + "', got '" +
+                                  typeToString(itemType) + "'",
+                              node);
+                }
+            }
         }
 
         // 嵌套列表递归：目标类型 = 链末元素类型。
@@ -8639,6 +8712,15 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
             node.type = nullptr;
             return;
         }
+        // `auto x = arr;` follows the language's ordinary array-decay rule
+        // (same as auto-return): the variable is a pointer to the first
+        // element, not an array object. Storing the array type here made
+        // codegen load a pointer-sized value into an array slot.
+        Type* inferredStripped = stripTypedef(inferred);
+        if (inferredStripped && inferredStripped->kind == TypeKind::Array) {
+            inferred = new Type(TypeKind::Pointer,
+                                static_cast<ArrayType*>(inferredStripped)->elementType);
+        }
         node.type = inferred;
     }
     // AGG-10: out-of-class static data definition. Attach its initializer to
@@ -8846,7 +8928,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                               node);
                 }
             } else {
-                compileTimeValues[node.name] = *folded;
+                recordCompileTimeValue(node, *folded);
                 if (folded->type == ConstValue::CONTAINER) {
                     node.foldedContainer = folded->container;
                 } else if (folded->type == ConstValue::AGGREGATE) {
@@ -9169,7 +9251,7 @@ void SemanticAnalyzer::visit(VarDeclAST& node) {
                 node.foldedValue = fv;
                 Type* declared = stripTypedef(node.type);
                 if (declared && declared->isConst)
-                    compileTimeValues[node.name] = *folded;
+                    recordCompileTimeValue(node, *folded);
             }
             // Aggregates/containers are still emitted by the existing
             // aggregate-constant builder (designators, bit-fields and base
@@ -9267,17 +9349,18 @@ void SemanticAnalyzer::visit(ArrayDeclAST& node) {
 
     checkNestedTypeAccess(node.elementType, node);
     if (!node.sizeName.empty()) {
-        const std::string key = resolveNamespaceName(node.sizeName);
-        auto it = compileTimeValues.find(key);
-        if (it == compileTimeValues.end() && key != node.sizeName)
-            it = compileTimeValues.find(node.sizeName);
-        if (it == compileTimeValues.end() || it->second.type != ConstValue::INT ||
-            it->second.intVal <= 0) {
+        auto value = findCompileTimeValue(node.sizeName);
+        if (!value) {
+            const std::string key = resolveNamespaceName(node.sizeName);
+            auto it = compileTimeValues.find(key);
+            if (it != compileTimeValues.end()) value = it->second;
+        }
+        if (!value || value->type != ConstValue::INT || value->intVal <= 0) {
             emitError("array size '" + node.sizeName +
                           "' must be a positive compile_time integer", node);
             node.size = 0;
         } else {
-            node.size = static_cast<int>(it->second.intVal);
+            node.size = static_cast<int>(value->intVal);
         }
         node.sizeName.clear();
     }
@@ -9517,6 +9600,42 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
         // this diagnostic catches pointer/enum/aggregate/float/int128 instead
         // of silently dropping atomicity.
         Type* ft = stripTypedef(f.type);
+        // A by-value field needs a complete record. Arrays recurse to their
+        // element type; pointers/slices stop here because they do not embed
+        // the record. Self-recursion is diagnosed below with its dedicated
+        // message.
+        Type* valueFieldType = ft;
+        while (valueFieldType && valueFieldType->kind == TypeKind::Array)
+            valueFieldType = stripTypedef(
+                static_cast<ArrayType*>(valueFieldType)->elementType);
+        if (valueFieldType &&
+            (valueFieldType->kind == TypeKind::Struct ||
+             valueFieldType->kind == TypeKind::Class ||
+             valueFieldType->kind == TypeKind::Union)) {
+            std::string fieldTypeName;
+            bool complete = false;
+            if (valueFieldType->kind == TypeKind::Struct) {
+                auto* st = static_cast<StructType*>(valueFieldType);
+                fieldTypeName = st->name;
+                complete = st->isComplete;
+            } else if (valueFieldType->kind == TypeKind::Class) {
+                auto* ct = static_cast<ClassType*>(valueFieldType);
+                fieldTypeName = ct->name;
+                complete = ct->isComplete;
+            } else {
+                auto* ut = static_cast<UnionType*>(valueFieldType);
+                fieldTypeName = ut->name;
+                complete = ut->isComplete;
+            }
+            if (!complete &&
+                std::find(m_definingStack.begin(), m_definingStack.end(),
+                          fieldTypeName) == m_definingStack.end()) {
+                emitError("field '" + f.name + "' has incomplete type '" +
+                              typeToString(f.type) +
+                              "'; define the type before using it by value",
+                          node);
+            }
+        }
         if (ft && ft->isAtomic && !isSupportedAtomicIntegerScalar(ft)) {
             emitError(DiagnosticCode::SemAtomicNonScalar,
                       "atomic field requires a 1/2/4/8-byte integer scalar type "
@@ -9670,8 +9789,20 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
                 else if (argsSpelling[i] != ' ') cur += argsSpelling[i];
             }
             if (!baseArgs.empty() && std::all_of(baseArgs.begin(), baseArgs.end(), [](Type* t) { return t; })) {
-                std::string instName = TemplateRegistry::instanceName(tplName, baseArgs, {});
-                auto* inst = TemplateRegistry::instance().instantiateClass(tplName, baseArgs, {});
+                const std::string findModule =
+                    node.moduleName.empty() ? currentModule : node.moduleName;
+                auto* baseTpl = TemplateRegistry::instance().find(tplName, findModule);
+                if (!baseTpl) {
+                    emitError("cannot instantiate template base class '" +
+                                  node.baseClass + "'",
+                              node);
+                    return;
+                }
+                const std::string tplModule = baseTpl->moduleName;
+                std::string instName = TemplateRegistry::instanceName(
+                    tplName, baseArgs, {}, tplModule);
+                auto* inst = TemplateRegistry::instance().instantiateClass(
+                    tplName, baseArgs, {}, tplModule);
                 if (!inst) {
                     emitError("cannot instantiate template base class '" + node.baseClass + "'", node);
                     return;
@@ -9780,9 +9911,10 @@ void SemanticAnalyzer::visitStructDeclImpl(StructDeclAST& node) {
                                                     std::move(paramTypes),
                                                     method->isVarArg);
                 methodType->isConstMethod = method->isConstMethod;
-                methodType->symbolName = resolveFunctionSymbol(
-                    "", scopedName(method->name), methodType->paramTypes,
+                methodType->symbolName = mangleCddFunction(
+                    scopedName(method->name), methodType->paramTypes,
                     methodType->isVarArg, node.moduleName);
+                method->symbolName = methodType->symbolName;
                 classType->addMethod(method->name, methodType);
             }
             if (lazyMethods) {
@@ -10589,11 +10721,17 @@ void SemanticAnalyzer::visit(FunctionDeclAST& node) {
     }
     auto* funcType = new FunctionType(node.returnType, std::move(paramTypes), node.isVarArg);
     funcType->isConstMethod = node.isConstMethod;
+    // A definition/declaration's linkage is determined by *this* declaration.
+    // The process-wide C-signature set only marks an extern declaration's
+    // spelling; it must not capture a later private CDD definition with the
+    // same source name/signature (e.g. two modules defining `abs`).
     std::string signature =
-        mangleFunction(node.name, funcType->paramTypes, funcType->isVarArg);
-    funcType->symbolName = resolveFunctionSymbol(
-        "", node.name, funcType->paramTypes, funcType->isVarArg,
-        node.moduleName);
+        node.isExtern
+            ? node.name
+            : mangleCddFunction(node.name, funcType->paramTypes,
+                                funcType->isVarArg, node.moduleName);
+    funcType->symbolName = signature;
+    node.symbolName = signature;
     m_allFunctions[node.name] = &node;
     m_allFunctions[signature] = &node;
     m_allFunctions[funcType->symbolName] = &node;
@@ -10896,7 +11034,10 @@ void SemanticAnalyzer::analyzeTopLevelDecl(DeclAST& decl) {
             tplName.rfind(namespacePrefix, 0) != 0) {
             tplName = namespacePrefix + tplName;
         }
-        TemplateRegistry::instance().registerTemplate(tplDecl, tplName);
+        TemplateRegistry::instance().registerTemplate(
+            tplDecl, tplName,
+            tplDecl->moduleName.empty() ? currentModule : tplDecl->moduleName,
+            currentDeclExported);
     } else if (auto* multi = dynamic_cast<MultiVarDeclAST*>(&decl)) {
         for (auto& d : multi->decls) {
             if (d && d->moduleName.empty()) d->moduleName = decl.moduleName;
@@ -11165,13 +11306,15 @@ Type* SemanticAnalyzer::resolveTypeInstanceUse(TypeInstanceType* use, ASTNode& a
     for (auto*& arg : use->typeArgs) arg = resolveTypeInstance(arg, at);
 
     auto& reg = TemplateRegistry::instance();
-    std::string name =
-        TemplateRegistry::instanceName(use->templateName, use->typeArgs, use->valueArgs);
+    const std::string findModule =
+        use->moduleName.empty() ? currentModule : use->moduleName;
+    auto* tpl = reg.find(use->templateName, findModule);
 
     // 别名模板：展开目标类型（键缓存防重复展开），产物中的实例
     // 类型立即补 visit——字段访问要求布局当场完整。
-    auto* tpl = reg.find(use->templateName);
     if (tpl && dynamic_cast<UsingDeclAST*>(tpl->decl.get())) {
+        std::string name = TemplateRegistry::instanceName(
+            use->templateName, use->typeArgs, use->valueArgs, tpl->moduleName);
         if (m_aliasCache.count(name)) return m_aliasCache[name];
         std::unordered_map<std::string, Type*> typeArgMap;
         std::unordered_map<std::string, long long> valueArgMap;
@@ -11191,7 +11334,15 @@ Type* SemanticAnalyzer::resolveTypeInstanceUse(TypeInstanceType* use, ASTNode& a
         return expanded;
     }
 
-    auto* decl = reg.instantiateClass(use->templateName, use->typeArgs, use->valueArgs);
+    if (!tpl) {
+        emitError("cannot instantiate template '" + use->templateName + "'", at);
+        return nullptr;
+    }
+    const std::string tplModule = tpl->moduleName;
+    std::string name = TemplateRegistry::instanceName(
+        use->templateName, use->typeArgs, use->valueArgs, tplModule);
+    auto* decl = reg.instantiateClass(use->templateName, use->typeArgs,
+                                      use->valueArgs, tplModule);
     if (!decl) {
         emitError("cannot instantiate template '" + use->templateName + "'", at);
         return nullptr;

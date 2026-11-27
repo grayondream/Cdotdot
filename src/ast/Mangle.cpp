@@ -339,3 +339,10 @@ std::string mangleFunction(const std::string& name,
     if (isCNameSignature(name, paramTypes, isVarArg)) return name;
     return mangleFunctionCpp(name, paramTypes, isVarArg, moduleName);
 }
+
+std::string mangleCddFunction(const std::string& name,
+                              const std::vector<Type*>& paramTypes,
+                              bool isVarArg, const std::string& moduleName) {
+    if (name == "main") return "main";
+    return mangleFunctionCpp(name, paramTypes, isVarArg, moduleName);
+}

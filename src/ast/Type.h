@@ -326,6 +326,9 @@ public:
 class TypeInstanceType : public Type {
 public:
     std::string templateName;
+    // Parsing module; used to resolve a private module template before falling
+    // back to an exported/global template of the same spelling.
+    std::string moduleName;
     std::vector<Type*> typeArgs;
     std::vector<long long> valueArgs;
     // SG-01: parallel symbolic value arguments, resolved during outer template

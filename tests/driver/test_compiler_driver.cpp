@@ -465,6 +465,228 @@ TEST_F(CompilerDriverTest, PrivateFunctionsInDifferentModulesKeepDistinctSymbols
     std::filesystem::remove_all(dir);
 }
 
+TEST_F(CompilerDriverTest, PrivateCLinkageSignatureDoesNotLeakAcrossModules) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_c_signature_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "int32 abs(int32 x) { return x * 2; }\n"
+               "export int32 a_abs() { return abs(-7); }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "int32 abs(int32 x) { return x * 3; }\n"
+               "export int32 b_abs() { return abs(-3); }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return (a_abs() == -14 && b_abs() == -9) ? 0 : 1; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateCompileTimeValuesKeepModuleVisibility) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_ct_values_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "export compile_time int32 ct_value = 5;\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "compile_time int32 ct_value = 100;\n"
+               "export int32 b_ct() { return ct_value; }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "compile_time int32 selected = ct_value;\n"
+               "int32 main() { return selected - 5; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateFunctionTemplatesKeepModuleBodies) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_templates_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "template<typename T> T module_tpl_probe(T x) { return x + 1; }\n"
+               "export int32 a_pick() { return module_tpl_probe(10); }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "template<typename T> T module_tpl_probe(T x) { return x + 2; }\n"
+               "export int32 b_pick() { return module_tpl_probe(10); }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return (a_pick() == 11 && b_pick() == 12) ? 0 : 1; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateCompileTimeFunctionsKeepModuleBodies) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_ct_functions_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "export compile_time int32 module_ct_pick(int32 x) { return x + 1; }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "compile_time int32 module_ct_pick(int32 x) { return x + 100; }\n"
+               "export int32 b_dummy() { return 0; }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "compile_time int32 useit() { return module_ct_pick(10); }\n"
+               "int32 main() { return useit() - 11; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, GlobalCompileTimeCallUsesVisibleModuleFunction) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_ct_global_call_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "export compile_time int32 module_ct_global_pick(int32 x) { return x + 1; }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "compile_time int32 module_ct_global_pick(int32 x) { return x + 100; }\n"
+               "export int32 b_dummy() { return 0; }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "compile_time int32 g = module_ct_global_pick(10);\n"
+               "int32 main() { return g - 11; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(CompilerDriverTest, PrivateClassTemplatesKeepModuleInstances) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("cdd_private_class_templates_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.cdd");
+        out << "module a;\n"
+               "template<typename T> struct ModuleBoxProbe {\n"
+               "    T v;\n"
+               "    T get() { return v + 1; }\n"
+               "};\n"
+               "export int32 a_box() { ModuleBoxProbe<int32> b; b.v = 1; return b.get(); }\n";
+    }
+    {
+        std::ofstream out(dir / "b.cdd");
+        out << "module b;\n"
+               "template<typename T> struct ModuleBoxProbe {\n"
+               "    T v;\n"
+               "    T get() { return v + 2; }\n"
+               "};\n"
+               "export int32 b_box() { ModuleBoxProbe<int32> b; b.v = 1; return b.get(); }\n";
+    }
+    {
+        std::ofstream out(dir / "main.cdd");
+        out << "module main;\n"
+               "import a;\n"
+               "import b;\n"
+               "int32 main() { return (a_box() == 2 && b_box() == 3) ? 0 : 1; }\n";
+    }
+    const std::string mainPath = (dir / "main.cdd").string();
+    const std::string outPath = (dir / "app").string();
+    const std::string modulePath = dir.string();
+    const char* argv[] = {"cdd", "-M", modulePath.c_str(), mainPath.c_str(),
+                          "-o", outPath.c_str()};
+    ASSERT_TRUE(driver.parseArguments(6, argv));
+    EXPECT_EQ(driver.run(), 0);
+    EXPECT_EQ(std::system(outPath.c_str()), 0);
+    std::filesystem::remove_all(dir);
+}
+
 TEST_F(CompilerDriverTest, ModuleOperatorOverloadUsesQualifiedSymbol) {
     const std::filesystem::path dir =
         std::filesystem::temp_directory_path() /

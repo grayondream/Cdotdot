@@ -1306,9 +1306,10 @@ llvm::Value* VarDeclAST::codegen(CodegenContext& ctx) {
         }
         
         const bool readOnlyGlobal = type->isConst || isCompileTime;
-        llvm::GlobalVariable::LinkageTypes linkage = readOnlyGlobal
-            ? llvm::GlobalVariable::PrivateLinkage
-            : llvm::GlobalVariable::ExternalLinkage;
+        llvm::GlobalVariable::LinkageTypes linkage = isStaticLinkage
+            ? llvm::GlobalVariable::InternalLinkage
+            : (readOnlyGlobal ? llvm::GlobalVariable::PrivateLinkage
+                              : llvm::GlobalVariable::ExternalLinkage);
         if (existing) {
             // A function/method body emitted before this pre-scan may have
             // created an external declaration. Upgrade it in place instead of
@@ -1498,8 +1499,9 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName =
-        mangleFunction(name, astParamTypes, isVarArg, moduleName);
+    std::string mangledName = !symbolName.empty()
+        ? symbolName
+        : mangleFunction(name, astParamTypes, isVarArg, moduleName);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {
@@ -1507,6 +1509,7 @@ llvm::Value* FunctionDeclAST::codegenPrototype(CodegenContext& ctx) {
         function = llvm::Function::Create(
             funcType, llvm::Function::ExternalLinkage, mangledName, ctx.getModule());
     }
+    if (isStaticLinkage) function->setLinkage(llvm::GlobalValue::InternalLinkage);
     // MEM-04: restrict pointer parameters/returns carry the LLVM noalias
     // contract. The attribute is attached to declarations and definitions; add
     // is idempotent for the same attribute.
@@ -1552,13 +1555,15 @@ llvm::Value* FunctionDeclAST::codegen(CodegenContext& ctx) {
     for (auto& param : params) {
         astParamTypes.push_back(param->type);
     }
-    std::string mangledName =
-        mangleFunction(name, astParamTypes, isVarArg, moduleName);
+    std::string mangledName = !symbolName.empty()
+        ? symbolName
+        : mangleFunction(name, astParamTypes, isVarArg, moduleName);
 
     llvm::Function* function = ctx.getModule().getFunction(mangledName);
     if (!function) {
         function = static_cast<llvm::Function*>(codegenPrototype(ctx));
     }
+    if (isStaticLinkage) function->setLinkage(llvm::GlobalValue::InternalLinkage);
     // P1-03 / GEN-05: 函数体只生成一次——TU 预扫（实例 struct 布局先行）
     // 与主循环可能两次到达同一方法定义。
     if (function->size() > 0) {
@@ -1740,6 +1745,8 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
             mangleGlobalVariable(name, moduleName);
         if (llvm::GlobalVariable* existing =
                 ctx.getModule().getGlobalVariable(globalSymbol, /*AllowInternal=*/true)) {
+            if (isStaticLinkage)
+                existing->setLinkage(llvm::GlobalValue::InternalLinkage);
             ctx.declareVariable(name, existing,
                                 new ArrayType(elementType, effectiveSize));
             return existing;
@@ -1754,7 +1761,9 @@ llvm::Value* ArrayDeclAST::codegen(CodegenContext& ctx) {
         }
         llvm::GlobalVariable* global = new llvm::GlobalVariable(
             ctx.getModule(), arrType, elementType->isConst,
-            llvm::GlobalVariable::ExternalLinkage, initConstant, globalSymbol);
+            isStaticLinkage ? llvm::GlobalVariable::InternalLinkage
+                            : llvm::GlobalVariable::ExternalLinkage,
+            initConstant, globalSymbol);
         ctx.declareVariable(name, global, new ArrayType(elementType, effectiveSize));
         return global;
     }
