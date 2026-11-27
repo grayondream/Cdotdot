@@ -2005,3 +2005,23 @@
   - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；临时基线文件已删除。
   - `git diff --check` 无输出。
 - 遗留：跨模块 C linkage/compile_time/template 表、file-scope static linkage、brace-init 元素级类型检查、不完整 record、auto 数组等上一轮 P0 未在本轮处理。
+
+## 2026-11-28 — 收口剩余 P0（模块符号/compile_time/template/静态链接/初始化/stdlib）
+
+- 背景：继续上一轮 review 的剩余 P0，重点处理跨模块符号污染、compile_time 可见性、模板注册表、file-scope static、brace-init 类型漏洞、不完整 record、auto 数组以及 stdlib 解析/容器问题。
+- 修复：
+  - 函数符号：sema 为每个函数声明保存 `FunctionDeclAST::symbolName`，codegen 优先使用；新增 `mangleCddFunction` 强制 CDD 修饰，C linkage 只由 `extern` 声明自身决定。两个模块的私有同名函数不再被 prelude C 签名捕获。
+  - 全局/方法/TU 预扫：`FunctionType::symbolName`、方法表与模板实例的模块名保持一致；原型与定义复用同一符号；static 函数/变量/数组改为 `InternalLinkage`。
+  - compile_time：`compileTimeValues` 同时保留 bare 兼容键与符号的模块限定键；`findCompileTimeValue` 先解析当前作用域可见符号；compile_time 函数调用优先 `call.mangledCallee`/可见符号，普通 runtime 函数不会被误折叠。
+  - Templates：registry key 加模块维度；私有模板实例名加模块前缀，导出模板保留历史实例名；`TypeInstanceType` 记录解析模块；函数/类模板的实例缓存、TypeContext 类型名、调用点 callee 与定义侧一致。
+  - 初始化/record：brace-init 非引用元素新增 implicit-conversion 检查；按值字段必须是完整 record（前向/互递归诊断）；匿名/嵌套 record、closure 类型不误报；`auto x = arr` decays 到元素指针。
+  - stdlib：HashMap `put_raw` 在 tombstone 上继续探测，避免重复 key；parse 整数按无符号边界检查并校验 i32 范围，float 拒绝尾随垃圾/超大指数，`to_string_u64` 走无符号转换；FNV-1a offset/signed-byte 修复；Pool 小块至少按指针大小/对齐分配。
+- 测试：
+  - 新增 driver 测试：私有 C 签名不跨模块、私有 compile_time 值/函数可见性、私有函数/类模板实例隔离。
+  - 新增/扩展 e2e：static internal linkage、brace-init 元素类型、不完整 record、auto 数组 decay、HashMap tombstone、parse 溢出/尾随垃圾、UTF-8 hash、Pool 小块。
+- 验证：
+  - 全量 **2181/2181** 通过。
+  - `examples/all_features.cdd` 输出 `ALL FEATURES OK`。
+  - `python3 benchmarks/run.py --quick`：16 个负载全部通过，`checksum_ok` 无失败；临时基线文件已删除。
+  - `git diff --check` 无输出。
+- 提交：`5946397`（模块/静态/初始化等主修复）、`d69bb7a`（模板导出实例名与 stdlib 收口）。未 push。
